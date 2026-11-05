@@ -22,6 +22,11 @@ import {
   updateUserSchema,
   insertRoleSchema,
   updateRoleSchema,
+  DEPARTMENT_KIND_LABELS,
+  insertDepartmentSchema,
+  insertDoctorSchema,
+  updateDepartmentSchema,
+  updateDoctorSchema,
   type PublicUser,
   type SessionUser,
 } from "@shared/schema";
@@ -1101,6 +1106,9 @@ export async function registerRoutes(app: Express): Promise<void> {
           });
         }
       }
+      // A doctor profile means nothing without its account.
+      const profile = await storage.getDoctorByUser(req.params.id).catch(() => undefined);
+      if (profile) await storage.deleteDoctor(profile.id);
       const ok = await storage.deleteUser(req.params.id);
       forgetSessionUser(req.params.id);
       if (!ok) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
@@ -1234,12 +1242,214 @@ export async function registerRoutes(app: Express): Promise<void> {
     }),
   );
 
+  // ---------------------------------------------------------- departments
+
+  /**
+   * Lists are readable by every signed-in user: the registrar picks a doctor
+   * and a department when booking, and the doctor's own screens show them.
+   * Before `npm run db:clinic` has run the tables do not exist; the lists then
+   * answer empty instead of failing the whole page.
+   */
+  const emptyIfMissing = <T>(err: unknown, empty: T): T => {
+    if ((err as { code?: string } | null)?.code === "42P01") return empty;
+    throw err;
+  };
+
+  app.get(
+    "/api/departments",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.json(await storage.listDepartments().catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  /** Names are compared without case or surrounding space: "UZI" and "uzi " are one department. */
+  async function departmentNameTaken(name: string, exceptId?: string): Promise<boolean> {
+    const key = name.trim().toLowerCase();
+    return (await storage.listDepartments()).some((d) => d.id !== exceptId && d.name.trim().toLowerCase() === key);
+  }
+
+  app.post(
+    "/api/departments",
+    requirePermission("departments.manage"),
+    handle(async (req, res) => {
+      const input = insertDepartmentSchema.parse(req.body);
+      if (await departmentNameTaken(input.name)) {
+        return res.status(409).json({ message: "Bunday nomli bo'lim allaqachon bor" });
+      }
+      const dept = await storage.createDepartment(input, actorOf(req));
+      await audit(req, "create", "department", dept.id, `"${dept.name}" bo'limi qo'shildi (${DEPARTMENT_KIND_LABELS[dept.kind]})`);
+      res.status(201).json({ ...dept, doctorCount: 0 });
+    }),
+  );
+
+  app.patch(
+    "/api/departments/:id",
+    requirePermission("departments.manage"),
+    handle(async (req, res) => {
+      const input = updateDepartmentSchema.parse(req.body);
+      const before = await storage.getDepartment(req.params.id);
+      if (!before) return res.status(404).json({ message: "Bo'lim topilmadi" });
+      if (input.name && (await departmentNameTaken(input.name, before.id))) {
+        return res.status(409).json({ message: "Bunday nomli bo'lim allaqachon bor" });
+      }
+      const dept = await storage.updateDepartment(req.params.id, input, actorOf(req));
+      if (!dept) return res.status(404).json({ message: "Bo'lim topilmadi" });
+
+      const changes: string[] = [];
+      if (input.name && input.name !== before.name) changes.push(`nomi: ${before.name} → ${dept.name}`);
+      if (input.kind && input.kind !== before.kind) changes.push(`turi: ${DEPARTMENT_KIND_LABELS[dept.kind]}`);
+      if (input.isActive !== undefined && input.isActive !== before.isActive) {
+        changes.push(dept.isActive ? "qayta ochildi" : "yopildi");
+      }
+      await audit(req, "update", "department", dept.id, `"${dept.name}" bo'limi — ${changes.join(", ") || "tavsif yangilandi"}`);
+      const doctorCount = (await storage.listDoctors({ departmentId: dept.id })).length;
+      res.json({ ...dept, doctorCount });
+    }),
+  );
+
+  app.delete(
+    "/api/departments/:id",
+    requirePermission("departments.manage"),
+    handle(async (req, res) => {
+      const dept = (await storage.listDepartments()).find((d) => d.id === req.params.id);
+      if (!dept) return res.status(404).json({ message: "Bo'lim topilmadi" });
+      // Deleting would leave doctors pointing at nothing. Closing the
+      // department (isActive = false) is the way to retire one in use.
+      if (dept.doctorCount > 0) {
+        return res.status(409).json({
+          message: `Bu bo'limda ${dept.doctorCount} ta shifokor bor. Ularni boshqa bo'limga o'tkazing yoki bo'limni yoping.`,
+        });
+      }
+      await storage.deleteDepartment(dept.id);
+      await audit(req, "delete", "department", dept.id, `"${dept.name}" bo'limi o'chirildi`);
+      res.sendStatus(204);
+    }),
+  );
+
+  // -------------------------------------------------------------- doctors
+
+  app.get(
+    "/api/doctors",
+    requireAuth,
+    handle(async (req, res) => {
+      const list = await storage
+        .listDoctors({
+          activeOnly: req.query.active === "1",
+          departmentId: stringParam(req.query.departmentId),
+        })
+        .catch((e) => emptyIfMissing(e, []));
+      res.json(list);
+    }),
+  );
+
+  /**
+   * Accounts that can be given a doctor profile: active, and without one yet.
+   * Served here rather than from /api/users so that managing doctors does not
+   * require the right to manage every account.
+   */
+  app.get(
+    "/api/doctors/candidates",
+    requirePermission("doctors.manage"),
+    handle(async (_req, res) => {
+      const taken = new Set((await storage.listDoctors().catch((e) => emptyIfMissing(e, []))).map((d) => d.userId));
+      const users = (await storage.listUsers())
+        .filter((u) => u.isActive && !taken.has(u.id))
+        // Doctors first: they are who this list is nearly always for.
+        .sort((a, b) => Number(b.role === "shifokor") - Number(a.role === "shifokor") || a.fullName.localeCompare(b.fullName));
+      const named = await Promise.all(users.map(async (u) => ({ id: u.id, fullName: u.fullName, role: u.role, roleName: (await toSessionUser(u)).roleName })));
+      res.json(named);
+    }),
+  );
+
+  async function checkDepartment(res: Response, id: string | null | undefined): Promise<boolean> {
+    if (!id) return true;
+    const dept = await storage.getDepartment(id);
+    if (!dept) {
+      res.status(400).json({ message: "Bo'lim topilmadi" });
+      return false;
+    }
+    if (!dept.isActive) {
+      res.status(400).json({ message: `"${dept.name}" bo'limi yopilgan` });
+      return false;
+    }
+    return true;
+  }
+
+  app.post(
+    "/api/doctors",
+    requirePermission("doctors.manage"),
+    handle(async (req, res) => {
+      const input = insertDoctorSchema.parse(req.body);
+      const user = await storage.getUser(input.userId);
+      if (!user) return res.status(400).json({ message: "Xodim topilmadi" });
+      if (await storage.getDoctorByUser(input.userId)) {
+        return res.status(409).json({ message: "Bu xodimning shifokor profili allaqachon bor" });
+      }
+      if (!(await checkDepartment(res, input.departmentId))) return;
+      const doctor = await storage.createDoctor(input, actorOf(req));
+      await audit(req, "create", "doctor", doctor.id, `${doctor.fullName} — shifokor profili (${doctor.specialty})`);
+      res.status(201).json(doctor);
+    }),
+  );
+
+  app.patch(
+    "/api/doctors/:id",
+    requirePermission("doctors.manage"),
+    handle(async (req, res) => {
+      const input = updateDoctorSchema.parse(req.body);
+      const before = await storage.getDoctor(req.params.id);
+      if (!before) return res.status(404).json({ message: "Shifokor topilmadi" });
+      if (input.departmentId && input.departmentId !== before.departmentId) {
+        if (!(await checkDepartment(res, input.departmentId))) return;
+      }
+      const doctor = await storage.updateDoctor(req.params.id, input, actorOf(req));
+      if (!doctor) return res.status(404).json({ message: "Shifokor topilmadi" });
+
+      const changes: string[] = [];
+      if (input.specialty && input.specialty !== before.specialty) changes.push(`mutaxassislik: ${doctor.specialty}`);
+      if (input.departmentId !== undefined && doctor.departmentId !== before.departmentId) {
+        changes.push(`bo'lim: ${before.departmentName ?? "—"} → ${doctor.departmentName ?? "—"}`);
+      }
+      if (input.room !== undefined && (input.room ?? null) !== before.room) changes.push(`kabinet: ${doctor.room ?? "—"}`);
+      if (input.consultationPrice !== undefined && input.consultationPrice !== before.consultationPrice) {
+        changes.push(`narx: ${before.consultationPrice} → ${doctor.consultationPrice}`);
+      }
+      if (input.schedule !== undefined) changes.push("ish jadvali yangilandi");
+      if (input.isActive !== undefined && input.isActive !== before.isActive) {
+        changes.push(doctor.isActive ? "qabul qayta ochildi" : "qabul to'xtatildi");
+      }
+      await audit(req, "update", "doctor", doctor.id, `${doctor.fullName} — ${changes.join(", ") || "profil yangilandi"}`);
+      res.json(doctor);
+    }),
+  );
+
+  app.delete(
+    "/api/doctors/:id",
+    requirePermission("doctors.manage"),
+    handle(async (req, res) => {
+      // TODO(B2.7): once appointments reference doctors, refuse here when any
+      // exist and tell the user to deactivate the profile instead.
+      const before = await storage.getDoctor(req.params.id);
+      if (!before) return res.status(404).json({ message: "Shifokor topilmadi" });
+      await storage.deleteDoctor(before.id);
+      await audit(req, "delete", "doctor", before.id, `${before.fullName} — shifokor profili o'chirildi`);
+      res.sendStatus(204);
+    }),
+  );
+
   // Turn validation and storage rejections into clean Uzbek API errors before
   // they reach the generic 500 handler in index.ts.
   app.use("/api", (err: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(err);
     if (err instanceof ZodError) {
       return res.status(400).json({ message: fromZodError(err).toString() });
+    }
+    // A table from a newer release that this database has not been migrated to.
+    if ((err as { code?: string } | null)?.code === "42P01") {
+      return res.status(503).json({
+        message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyani ishga tushirishi kerak (npm run db:clinic).",
+      });
     }
     if (err instanceof Error) {
       return res.status(400).json({ message: err.message });

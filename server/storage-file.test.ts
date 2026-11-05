@@ -483,3 +483,66 @@ describe("roles", () => {
     expect(kassir?.userCount).toBe(1);
   });
 });
+
+describe("departments and doctors", () => {
+  async function makeDoctorUser(username = "dr1") {
+    return storage.createUser({ username, password: "parol123", fullName: "Karimov Anvar", role: "shifokor", isActive: true });
+  }
+
+  it("creates a department and counts its doctors", async () => {
+    const dept = await storage.createDepartment({ name: "Kardiologiya", kind: "ambulator", isActive: true }, ACTOR);
+    const user = await makeDoctorUser();
+    await storage.createDoctor(
+      { userId: user.id, departmentId: dept.id, specialty: "Kardiolog", consultationPrice: 150000, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const [listed] = await storage.listDepartments();
+    expect(listed.doctorCount).toBe(1);
+    expect(listed.updatedBy).toBe(ACTOR.id);
+  });
+
+  it("joins the doctor with the account and department name", async () => {
+    const dept = await storage.createDepartment({ name: "Terapiya", kind: "ambulator", isActive: true }, ACTOR);
+    const user = await makeDoctorUser();
+    const doc = await storage.createDoctor(
+      {
+        userId: user.id,
+        departmentId: dept.id,
+        specialty: "Terapevt",
+        room: "204",
+        consultationPrice: 100000,
+        slotMinutes: 15,
+        schedule: [{ day: 1, start: "08:00", end: "17:00" }],
+        isActive: true,
+      },
+      ACTOR,
+    );
+    expect(doc).toMatchObject({ fullName: "Karimov Anvar", username: "dr1", departmentName: "Terapiya", room: "204" });
+    expect((await storage.getDoctorByUser(user.id))?.id).toBe(doc.id);
+  });
+
+  it("allows one profile per account", async () => {
+    const user = await makeDoctorUser();
+    const base = { userId: user.id, specialty: "Terapevt", consultationPrice: 0, slotMinutes: 20, schedule: [], isActive: true };
+    await storage.createDoctor(base, ACTOR);
+    await expect(storage.createDoctor(base, ACTOR)).rejects.toThrow();
+  });
+
+  it("filters to doctors who are taking patients", async () => {
+    const a = await makeDoctorUser("dr_a");
+    const b = await makeDoctorUser("dr_b");
+    const base = { specialty: "Terapevt", consultationPrice: 0, slotMinutes: 20, schedule: [], isActive: true };
+    await storage.createDoctor({ ...base, userId: a.id }, ACTOR);
+    const off = await storage.createDoctor({ ...base, userId: b.id }, ACTOR);
+    await storage.updateDoctor(off.id, { isActive: false }, ACTOR);
+    expect((await storage.listDoctors({ activeOnly: true })).map((d) => d.username)).toEqual(["dr_a"]);
+    expect(await storage.listDoctors()).toHaveLength(2);
+  });
+
+  it("hides a doctor whose account is blocked from the active list", async () => {
+    const user = await makeDoctorUser();
+    await storage.createDoctor({ userId: user.id, specialty: "Terapevt", consultationPrice: 0, slotMinutes: 20, schedule: [], isActive: true }, ACTOR);
+    await storage.updateUser(user.id, { isActive: false });
+    expect(await storage.listDoctors({ activeOnly: true })).toHaveLength(0);
+  });
+});

@@ -101,7 +101,13 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Testlar: `shared/permissions.test.ts`, `server/storage-file.test.ts` (roles), 60 ta API e2e tekshiruv (vaqtinchalik skript bilan).
   - Neon'da `npm run db:roles` bajarildi (2026-11-05): `roles` jadvali, 11 tizim roli, admin → `super_admin`.
   - **Qoldi:** `api/index.js` (Vercel) ni `npm run build:api` bilan qayta yig‘ish, deploydan oldin.
-- [ ] **B1.5** `departments` (bo‘limlar) va `doctors` (shifokor profili: user + mutaxassislik + bo‘lim + kabinet). Navbat va statsionar shunga tayanadi.
+- [x] **B1.5** Bo'limlar va shifokorlar (`§10` `departments`, `doctors`).
+  - Bo'lim: nom (takrorlanmas), tur (ambulator / diagnostika / laboratoriya / statsionar / boshqa), tavsif, faol/yopilgan. Shifokori bor bo'lim o'chirilmaydi, yopiladi.
+  - Shifokor profili: xodimga 1:1 bog'langan; mutaxassislik, bo'lim, kabinet, qabul narxi, qabul davomiyligi (daqiqa), haftalik ish jadvali (`scheduleSchema`: ustma-ust oraliqlar va noto'g'ri vaqt rad etiladi). Xodim o'chirilsa profil ham o'chadi.
+  - Ruxsatlar: `departments.manage`, `doctors.manage` (yangi "Klinika tuzilmasi" guruhi). Ro'yxatlarni (`GET /api/departments`, `/api/doctors`) har bir xodim ko'radi.
+  - UI: Sozlamalar → Bo'limlar (kartalar, namuna to'plam), Shifokorlar (jadval, filtr, ish jadvali muharriri va tayyor shablonlar).
+  - Migratsiya: `npm run db:clinic`. Jadvallar yo'q bo'lsa ro'yxatlar bo'sh qaytadi, yozish 503 va tushunarli xabar beradi.
+  - **B2.7 uchun eslatma:** qabullar shifokorga bog'langach `DELETE /api/doctors/:id` ni bloklash kerak (routes.ts dagi TODO).
 - [~] **B1.6** Audit jurnali (`§12`): yozish amallari bor. **Qoldi:** tibbiy ma'lumotlarni *ko‘rish* jurnali (kim, qachon, qaysi bemor kartasini ochdi), auditor uchun filtrli ko‘rish sahifasi.
 - [ ] **B1.7** Sessiya xavfsizligi (`§12`): faol bo‘lmagan seansni yopish (sozlanadigan, masalan 30 daqiqa; hozir 1 yillik `rolling` cookie). Xodim uchun aktiv seanslar ro‘yxati.
 - [ ] **B1.8** Ikki bosqichli autentifikatsiya (`§12`): TOTP (Google Authenticator), ixtiyoriy, rol bo‘yicha majburiy qilish imkoni bilan.
@@ -224,3 +230,4 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · — · TZ ([docs/TZ.md](docs/TZ.md)) va shu ish rejasi yaratildi.
 - 2026-11-05 · D-1 · Stack qarori: Django o‘rniga joriy Node/Express/TS stack qoladi.
 - 2026-11-05 · B1.4 · RBAC: 11 rol, 26 ruxsat, rollar ekrani, server himoyasi. Yo‘l-yo‘lakay: bazasiz (JSON) rejimni buzayotgan `db-pg` importi tuzatildi; registrator API orqali buyurtmani bekor qila olishi va pul qaytara olishi yopildi.
+- 2026-11-05 · B1.5 · Bo'limlar va shifokorlar: jadvallar, API, Sozlamalar tablari, ish jadvali muharriri.

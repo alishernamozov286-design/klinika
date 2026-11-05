@@ -6,6 +6,8 @@ import {
   Building2,
   FlaskConical,
   KeyRound,
+  Network,
+  Stethoscope,
   Loader2,
   Lock,
   LockOpen,
@@ -60,6 +62,7 @@ import type { ExportColumn } from "@/lib/export-types";
 import { AuditPanel, BackupPanel, PasswordPanel } from "@/components/settings-security";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RolesPanel, roleIcon } from "@/components/roles-panel";
+import { DepartmentsPanel, DoctorsPanel } from "@/components/clinic-panels";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -90,6 +93,20 @@ const TABS: SettingsTab[] = [
   },
   { value: "tests", label: "Tahlillar", icon: FlaskConical, needs: ["tests.manage"], render: () => <TestsPanel /> },
   { value: "users", label: "Xodimlar", icon: UserCog, needs: ["users.manage"], render: () => <UsersPanel /> },
+  {
+    value: "departments",
+    label: "Bo'limlar",
+    icon: Network,
+    needs: ["departments.manage"],
+    render: () => <DepartmentsPanel />,
+  },
+  {
+    value: "doctors",
+    label: "Shifokorlar",
+    icon: Stethoscope,
+    needs: ["doctors.manage"],
+    render: () => <DoctorsPanel />,
+  },
   {
     value: "roles",
     label: "Rollar",

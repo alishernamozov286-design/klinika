@@ -3,6 +3,8 @@ import fsSync from "fs";
 import path from "path";
 import type {
   AuditEntry,
+  Department,
+  Doctor,
   Expense,
   LabSettings,
   Order,
@@ -19,6 +21,8 @@ import type {
 export type DbShape = {
   users: User[];
   roles: RoleRecord[];
+  departments: Department[];
+  doctors: Doctor[];
   patients: Patient[];
   tests: Test[];
   orders: Order[];
@@ -47,6 +51,8 @@ const TMP_FILE = path.join(DATA_DIR, "db.tmp.json");
 export const emptyDb = (): DbShape => ({
   users: [],
   roles: [],
+  departments: [],
+  doctors: [],
   patients: [],
   tests: [],
   orders: [],

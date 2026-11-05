@@ -2,6 +2,8 @@ import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-
 import { defaultTests, testReferences } from "@shared/tests-data";
 import {
   auditLog,
+  departments,
+  doctors,
   expenses,
   labSettings,
   orderTests,
@@ -15,6 +17,12 @@ import {
   users,
   type AuditEntry,
   type CreatePaymentInput,
+  type Department,
+  type DepartmentKind,
+  type DepartmentWithUsage,
+  type DoctorWithDetails,
+  type InsertDepartment,
+  type InsertDoctor,
   type DashboardStatsData,
   type Expense,
   type InsertExpense,
@@ -39,6 +47,8 @@ import {
   type SampleStatus,
   type TelegramContact,
   type Test,
+  type UpdateDepartmentInput,
+  type UpdateDoctorInput,
   type UpdateOrderInput,
   type UpdateRoleInput,
   type UpdateSampleInput,
@@ -127,6 +137,44 @@ const mapRole = (row: typeof roles.$inferSelect): RoleRecord => ({
   createdAt: iso(row.createdAt) ?? row.createdAt,
   updatedAt: iso(row.updatedAt),
   permissions: (row.permissions ?? []).filter(isPermission) as Permission[],
+});
+
+const mapDepartment = (row: typeof departments.$inferSelect): Department => ({
+  ...row,
+  kind: row.kind as DepartmentKind,
+  createdAt: iso(row.createdAt) ?? row.createdAt,
+  updatedAt: iso(row.updatedAt),
+});
+
+/**
+ * One query for a doctor and everything a screen shows next to them. The
+ * account and the department are LEFT JOINed so a profile whose department was
+ * removed still lists, rather than silently vanishing.
+ */
+const doctorSelect = () =>
+  db
+    .select({
+      doctor: doctors,
+      fullName: users.fullName,
+      username: users.username,
+      userActive: users.isActive,
+      departmentName: departments.name,
+    })
+    .from(doctors)
+    .leftJoin(users, eq(users.id, doctors.userId))
+    .leftJoin(departments, eq(departments.id, doctors.departmentId));
+
+type DoctorRow = Awaited<ReturnType<ReturnType<typeof doctorSelect>["execute"]>>[number];
+
+const mapDoctor = (row: DoctorRow): DoctorWithDetails => ({
+  ...row.doctor,
+  schedule: row.doctor.schedule ?? [],
+  createdAt: iso(row.doctor.createdAt) ?? row.doctor.createdAt,
+  updatedAt: iso(row.doctor.updatedAt),
+  fullName: row.fullName ?? "—",
+  username: row.username ?? "",
+  userActive: row.userActive ?? false,
+  departmentName: row.departmentName ?? null,
 });
 
 /** Postgres "undefined_table": the roles migration has not been run yet. */
@@ -265,6 +313,117 @@ export class PgStorage implements IStorage {
       .delete(roles)
       .where(and(eq(roles.key, key), eq(roles.isSystem, false)))
       .returning({ key: roles.key });
+    return rows.length > 0;
+  }
+
+  // ---------------------------------------------------------- departments
+
+  async listDepartments(): Promise<DepartmentWithUsage[]> {
+    const rows = await db
+      .select({
+        dept: departments,
+        doctorCount: sql<number>`(SELECT count(*)::int FROM ${doctors} WHERE ${doctors.departmentId} = ${departments.id})`,
+      })
+      .from(departments)
+      .orderBy(desc(departments.isActive), asc(departments.name));
+    return rows.map((r) => ({ ...mapDepartment(r.dept), doctorCount: r.doctorCount }));
+  }
+
+  async getDepartment(id: string): Promise<Department | undefined> {
+    const [row] = await db.select().from(departments).where(eq(departments.id, id)).limit(1);
+    return row && mapDepartment(row);
+  }
+
+  async createDepartment(input: InsertDepartment, actor: Actor): Promise<Department> {
+    const [row] = await db
+      .insert(departments)
+      .values({
+        name: input.name,
+        kind: input.kind,
+        description: input.description ?? null,
+        isActive: input.isActive ?? true,
+        updatedBy: actor.id,
+      })
+      .returning();
+    return mapDepartment(row);
+  }
+
+  async updateDepartment(id: string, input: UpdateDepartmentInput, actor: Actor): Promise<Department | undefined> {
+    const patch: Partial<typeof departments.$inferInsert> = {
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor.id,
+    };
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.kind !== undefined) patch.kind = input.kind;
+    if (input.description !== undefined) patch.description = input.description ?? null;
+    if (input.isActive !== undefined) patch.isActive = input.isActive;
+    const [row] = await db.update(departments).set(patch).where(eq(departments.id, id)).returning();
+    return row && mapDepartment(row);
+  }
+
+  async deleteDepartment(id: string): Promise<boolean> {
+    const rows = await db.delete(departments).where(eq(departments.id, id)).returning({ id: departments.id });
+    return rows.length > 0;
+  }
+
+  // -------------------------------------------------------------- doctors
+
+  async listDoctors(opts: { activeOnly?: boolean; departmentId?: string } = {}): Promise<DoctorWithDetails[]> {
+    const where = [];
+    if (opts.activeOnly) where.push(eq(doctors.isActive, true), eq(users.isActive, true));
+    if (opts.departmentId) where.push(eq(doctors.departmentId, opts.departmentId));
+    const rows = await doctorSelect()
+      .where(where.length ? and(...where) : undefined)
+      .orderBy(desc(doctors.isActive), asc(users.fullName));
+    return rows.map(mapDoctor);
+  }
+
+  async getDoctor(id: string): Promise<DoctorWithDetails | undefined> {
+    const [row] = await doctorSelect().where(eq(doctors.id, id)).limit(1);
+    return row && mapDoctor(row);
+  }
+
+  async getDoctorByUser(userId: string): Promise<DoctorWithDetails | undefined> {
+    const [row] = await doctorSelect().where(eq(doctors.userId, userId)).limit(1);
+    return row && mapDoctor(row);
+  }
+
+  async createDoctor(input: InsertDoctor, actor: Actor): Promise<DoctorWithDetails> {
+    const [row] = await db
+      .insert(doctors)
+      .values({
+        userId: input.userId,
+        departmentId: input.departmentId ?? null,
+        specialty: input.specialty,
+        room: input.room ?? null,
+        consultationPrice: input.consultationPrice,
+        slotMinutes: input.slotMinutes,
+        schedule: input.schedule,
+        isActive: input.isActive ?? true,
+        updatedBy: actor.id,
+      })
+      .returning({ id: doctors.id });
+    return (await this.getDoctor(row.id))!;
+  }
+
+  async updateDoctor(id: string, input: UpdateDoctorInput, actor: Actor): Promise<DoctorWithDetails | undefined> {
+    const patch: Partial<typeof doctors.$inferInsert> = {
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor.id,
+    };
+    if (input.departmentId !== undefined) patch.departmentId = input.departmentId ?? null;
+    if (input.specialty !== undefined) patch.specialty = input.specialty;
+    if (input.room !== undefined) patch.room = input.room ?? null;
+    if (input.consultationPrice !== undefined) patch.consultationPrice = input.consultationPrice;
+    if (input.slotMinutes !== undefined) patch.slotMinutes = input.slotMinutes;
+    if (input.schedule !== undefined) patch.schedule = input.schedule;
+    if (input.isActive !== undefined) patch.isActive = input.isActive;
+    const rows = await db.update(doctors).set(patch).where(eq(doctors.id, id)).returning({ id: doctors.id });
+    return rows.length ? this.getDoctor(id) : undefined;
+  }
+
+  async deleteDoctor(id: string): Promise<boolean> {
+    const rows = await db.delete(doctors).where(eq(doctors.id, id)).returning({ id: doctors.id });
     return rows.length > 0;
   }
 

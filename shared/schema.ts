@@ -86,6 +86,38 @@ export const EXPENSE_CATEGORIES = [
 ] as const;
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 
+/**
+ * What a department does. Drives where it shows up later: ambulator and
+ * diagnostika departments take appointments (B2.7), statsionar ones own wards
+ * and beds (B6), laboratoriya is the LIS.
+ */
+export const DEPARTMENT_KINDS = ["ambulator", "diagnostika", "laboratoriya", "statsionar", "boshqa"] as const;
+export type DepartmentKind = (typeof DEPARTMENT_KINDS)[number];
+
+export const DEPARTMENT_KIND_LABELS: Record<DepartmentKind, string> = {
+  ambulator: "Ambulator qabul",
+  diagnostika: "Diagnostika",
+  laboratoriya: "Laboratoriya",
+  statsionar: "Statsionar",
+  boshqa: "Boshqa",
+};
+
+/** ISO weekday numbers, Monday first. */
+export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+export const WEEKDAY_SHORT: Record<number, string> = { 1: "Du", 2: "Se", 3: "Ch", 4: "Pa", 5: "Ju", 6: "Sh", 7: "Ya" };
+export const WEEKDAY_LABELS: Record<number, string> = {
+  1: "Dushanba",
+  2: "Seshanba",
+  3: "Chorshanba",
+  4: "Payshanba",
+  5: "Juma",
+  6: "Shanba",
+  7: "Yakshanba",
+};
+
+/** One working window. A day may have more than one (around a lunch break). */
+export type ScheduleSlot = { day: number; start: string; end: string };
+
 // ---------------------------------------------------------------- tables
 
 export const users = pgTable("users", {
@@ -130,6 +162,45 @@ export const roles = pgTable("roles", {
   updatedAt: isoTimestamp("updated_at"),
   updatedBy: varchar("updated_by"),
 });
+
+/** Clinic departments (TZ §10 `departments`). */
+export const departments = pgTable("departments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),
+  kind: text("kind").notNull().default("ambulator"),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
+});
+
+/**
+ * A doctor's profile (TZ §10 `doctors`): the clinical side of a staff
+ * account, one per user. Kept apart from `users` because most staff are not
+ * doctors, and what a doctor needs — a room, a price, a weekly timetable — is
+ * what the appointment book (B2.7) is built on.
+ */
+export const doctors = pgTable(
+  "doctors",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().unique(),
+    departmentId: varchar("department_id"),
+    specialty: text("specialty").notNull(),
+    room: text("room"),
+    /** Price of one consultation; the service catalogue (B2.6) will build on it. */
+    consultationPrice: money("consultation_price").notNull().default(0),
+    /** Length of one appointment in minutes: the step of the appointment grid. */
+    slotMinutes: integer("slot_minutes").notNull().default(20),
+    schedule: json("schedule").$type<ScheduleSlot[]>().notNull().default(sql`'[]'::json`),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+  },
+  (t) => ({ departmentIdx: index("IDX_doctors_department").on(t.departmentId) }),
+);
 
 export const patients = pgTable("patients", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -363,6 +434,19 @@ export type SessionUser = PublicUser & {
 };
 
 export type Patient = typeof patients.$inferSelect;
+
+export type Department = Omit<typeof departments.$inferSelect, "kind"> & { kind: DepartmentKind };
+/** A department as the admin screen lists it: with its doctor head count. */
+export type DepartmentWithUsage = Department & { doctorCount: number };
+
+export type Doctor = typeof doctors.$inferSelect;
+/** A doctor joined with the account and department — what every screen renders. */
+export type DoctorWithDetails = Doctor & {
+  fullName: string;
+  username: string;
+  userActive: boolean;
+  departmentName: string | null;
+};
 
 export type Test = typeof tests.$inferSelect;
 
@@ -648,6 +732,63 @@ export const updateRoleSchema = insertRoleSchema.partial();
 
 export type InsertRole = z.infer<typeof insertRoleSchema>;
 export type UpdateRoleInput = z.infer<typeof updateRoleSchema>;
+
+const timeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Vaqtni SS:DD ko'rinishida kiriting");
+
+/**
+ * A weekly timetable. Windows on one day must not overlap and each must end
+ * after it starts — otherwise the appointment grid would offer the same slot
+ * twice, or a slot that ends before it begins.
+ */
+export const scheduleSchema = z
+  .array(z.object({ day: z.number().int().min(1).max(7), start: timeOfDay, end: timeOfDay }))
+  .max(21, "Jadval juda uzun")
+  .superRefine((slots, ctx) => {
+    slots.forEach((s, i) => {
+      if (s.end <= s.start) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${WEEKDAY_LABELS[s.day]}: tugash vaqti boshlanishidan keyin bo'lishi kerak`,
+          path: [i],
+        });
+      }
+    });
+    for (const day of WEEKDAYS) {
+      const same = slots.filter((s) => s.day === day).sort((a, b) => a.start.localeCompare(b.start));
+      for (let i = 1; i < same.length; i++) {
+        if (same[i].start < same[i - 1].end) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${WEEKDAY_LABELS[day]}: vaqt oraliqlari ustma-ust tushgan` });
+        }
+      }
+    }
+  })
+  .transform((slots) => [...slots].sort((a, b) => a.day - b.day || a.start.localeCompare(b.start)));
+
+export const insertDepartmentSchema = z.object({
+  name: z.string().trim().min(2, "Bo'lim nomini kiriting").max(80, "Nom juda uzun"),
+  kind: z.enum(DEPARTMENT_KINDS).default("ambulator"),
+  description: z.string().trim().max(240, "Tavsif juda uzun").nullish(),
+  isActive: z.boolean().default(true),
+});
+export const updateDepartmentSchema = insertDepartmentSchema.partial();
+
+export const insertDoctorSchema = z.object({
+  userId: z.string().min(1, "Xodimni tanlang"),
+  departmentId: z.string().min(1).nullish(),
+  specialty: z.string().trim().min(2, "Mutaxassislikni kiriting").max(80, "Juda uzun"),
+  room: z.string().trim().max(20, "Juda uzun").nullish(),
+  consultationPrice: z.coerce.number().int().min(0, "Narx manfiy bo'lmasligi kerak").default(0),
+  slotMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(240, "Ko'pi bilan 240 daqiqa").default(20),
+  schedule: scheduleSchema.default([]),
+  isActive: z.boolean().default(true),
+});
+/** The account a profile belongs to is fixed once created. */
+export const updateDoctorSchema = insertDoctorSchema.omit({ userId: true }).partial();
+
+export type InsertDepartment = z.infer<typeof insertDepartmentSchema>;
+export type UpdateDepartmentInput = z.infer<typeof updateDepartmentSchema>;
+export type InsertDoctor = z.infer<typeof insertDoctorSchema>;
+export type UpdateDoctorInput = z.infer<typeof updateDoctorSchema>;
 
 export const loginSchema = z.object({
   username: z.string().trim().min(1, "Loginni kiriting"),

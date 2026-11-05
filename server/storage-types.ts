@@ -9,6 +9,11 @@ import type {
   InsertExpense,
   InsertPatient,
   InsertTest,
+  Department,
+  DepartmentWithUsage,
+  DoctorWithDetails,
+  InsertDepartment,
+  InsertDoctor,
   InsertRole,
   InsertUser,
   LabSettings,
@@ -28,6 +33,8 @@ import type {
   Test,
   UpdateOrderInput,
   UpdateSampleInput,
+  UpdateDepartmentInput,
+  UpdateDoctorInput,
   UpdateRoleInput,
   UpdateUserInput,
   User,
@@ -133,6 +140,11 @@ export const SEED_USERS: { username: string; password: string; fullName: string;
   { username: "admin", password: "admin123", fullName: "Administrator", role: SUPER_ADMIN },
 ];
 
+/** Active before inactive, then alphabetical — how every directory list reads. */
+export function byActiveThenName<T extends { isActive: boolean }>(name: (row: T) => string) {
+  return (a: T, b: T) => Number(b.isActive) - Number(a.isActive) || name(a).localeCompare(name(b));
+}
+
 /** System roles in TZ §3 order, then the clinic's own roles by name. */
 export function sortRoles<T extends { key: string; name: string; isSystem: boolean }>(list: T[]): T[] {
   const rank = (r: T) => {
@@ -169,6 +181,22 @@ export interface IStorage {
   updateRole(key: string, input: UpdateRoleInput, actor: Actor): Promise<RoleRecord | undefined>;
   /** Refuses (returns false) for system roles. The route checks for holders first. */
   deleteRole(key: string): Promise<boolean>;
+
+  /** Every department, active first then by name, each with its doctor count. */
+  listDepartments(): Promise<DepartmentWithUsage[]>;
+  getDepartment(id: string): Promise<Department | undefined>;
+  createDepartment(input: InsertDepartment, actor: Actor): Promise<Department>;
+  updateDepartment(id: string, input: UpdateDepartmentInput, actor: Actor): Promise<Department | undefined>;
+  /** The route refuses first when doctors are still attached. */
+  deleteDepartment(id: string): Promise<boolean>;
+
+  /** Doctors joined with their account and department, by name. */
+  listDoctors(opts?: { activeOnly?: boolean; departmentId?: string }): Promise<DoctorWithDetails[]>;
+  getDoctor(id: string): Promise<DoctorWithDetails | undefined>;
+  getDoctorByUser(userId: string): Promise<DoctorWithDetails | undefined>;
+  createDoctor(input: InsertDoctor, actor: Actor): Promise<DoctorWithDetails>;
+  updateDoctor(id: string, input: UpdateDoctorInput, actor: Actor): Promise<DoctorWithDetails | undefined>;
+  deleteDoctor(id: string): Promise<boolean>;
 
   listUsers(): Promise<PublicUser[]>;
   getUser(id: string): Promise<User | undefined>;

@@ -30,6 +30,7 @@ var init_permissions = __esm({
       { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
       { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
       { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
+      { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar va shifokorlar" },
       { key: "system", label: "Tizim", description: "Sozlamalar, xodimlar, rollar va xavfsizlik" }
     ];
     PERMISSION_GROUP_LABEL = Object.fromEntries(
@@ -146,6 +147,16 @@ var init_permissions = __esm({
         description: "Bemorlar, buyurtmalar va xarajatlarni CSV ko'rinishida to'liq yuklab olish",
         sensitive: true
       },
+      "departments.manage": {
+        group: "clinic",
+        label: "Bo'limlar",
+        description: "Klinika bo'limlarini qo'shish, tahrirlash va yopish"
+      },
+      "doctors.manage": {
+        group: "clinic",
+        label: "Shifokorlar",
+        description: "Shifokor profili: mutaxassislik, kabinet, qabul narxi va ish jadvali"
+      },
       "settings.manage": {
         group: "system",
         label: "Klinika sozlamalari",
@@ -190,6 +201,8 @@ var init_permissions = __esm({
         name: "Klinika rahbari",
         description: "Umumiy boshqaruv: barcha ma'lumotlarni ko'rish, hisobotlar, qaytarishlarni tasdiqlash",
         permissions: [
+          "departments.manage",
+          "doctors.manage",
           "patients.read",
           "orders.read",
           "orders.cancel",
@@ -297,6 +310,8 @@ var init_permissions = __esm({
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
+  DEPARTMENT_KINDS: () => DEPARTMENT_KINDS,
+  DEPARTMENT_KIND_LABELS: () => DEPARTMENT_KIND_LABELS,
   EXPENSE_CATEGORIES: () => EXPENSE_CATEGORIES,
   ORDER_STATUSES: () => ORDER_STATUSES,
   ORDER_STATUS_LABELS: () => ORDER_STATUS_LABELS,
@@ -305,11 +320,18 @@ __export(schema_exports, {
   SAMPLE_REJECT_REASONS: () => SAMPLE_REJECT_REASONS,
   SAMPLE_STATUSES: () => SAMPLE_STATUSES,
   SAMPLE_STATUS_LABELS: () => SAMPLE_STATUS_LABELS,
+  WEEKDAYS: () => WEEKDAYS,
+  WEEKDAY_LABELS: () => WEEKDAY_LABELS,
+  WEEKDAY_SHORT: () => WEEKDAY_SHORT,
   auditLog: () => auditLog,
   changePasswordSchema: () => changePasswordSchema,
   createOrderSchema: () => createOrderSchema,
   createPaymentSchema: () => createPaymentSchema,
+  departments: () => departments,
+  doctors: () => doctors,
   expenses: () => expenses,
+  insertDepartmentSchema: () => insertDepartmentSchema,
+  insertDoctorSchema: () => insertDoctorSchema,
   insertExpenseSchema: () => insertExpenseSchema,
   insertPatientSchema: () => insertPatientSchema,
   insertRoleSchema: () => insertRoleSchema,
@@ -328,9 +350,12 @@ __export(schema_exports, {
   roles: () => roles,
   samples: () => samples,
   saveResultsSchema: () => saveResultsSchema,
+  scheduleSchema: () => scheduleSchema,
   sessions: () => sessions,
   telegramContacts: () => telegramContacts,
   tests: () => tests,
+  updateDepartmentSchema: () => updateDepartmentSchema,
+  updateDoctorSchema: () => updateDoctorSchema,
   updateOrderSchema: () => updateOrderSchema,
   updateRoleSchema: () => updateRoleSchema,
   updateSampleSchema: () => updateSampleSchema,
@@ -359,7 +384,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, users, roles, patients, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, labSettings, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, labSettings, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -400,6 +425,25 @@ var init_schema = __esm({
       "Soliq",
       "Boshqa"
     ];
+    DEPARTMENT_KINDS = ["ambulator", "diagnostika", "laboratoriya", "statsionar", "boshqa"];
+    DEPARTMENT_KIND_LABELS = {
+      ambulator: "Ambulator qabul",
+      diagnostika: "Diagnostika",
+      laboratoriya: "Laboratoriya",
+      statsionar: "Statsionar",
+      boshqa: "Boshqa"
+    };
+    WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
+    WEEKDAY_SHORT = { 1: "Du", 2: "Se", 3: "Ch", 4: "Pa", 5: "Ju", 6: "Sh", 7: "Ya" };
+    WEEKDAY_LABELS = {
+      1: "Dushanba",
+      2: "Seshanba",
+      3: "Chorshanba",
+      4: "Payshanba",
+      5: "Juma",
+      6: "Shanba",
+      7: "Yakshanba"
+    };
     users = pgTable("users", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       username: text("username").notNull().unique(),
@@ -433,6 +477,36 @@ var init_schema = __esm({
       updatedAt: isoTimestamp("updated_at"),
       updatedBy: varchar("updated_by")
     });
+    departments = pgTable("departments", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      name: text("name").notNull().unique(),
+      kind: text("kind").notNull().default("ambulator"),
+      description: text("description"),
+      isActive: boolean("is_active").notNull().default(true),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
+    });
+    doctors = pgTable(
+      "doctors",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        userId: varchar("user_id").notNull().unique(),
+        departmentId: varchar("department_id"),
+        specialty: text("specialty").notNull(),
+        room: text("room"),
+        /** Price of one consultation; the service catalogue (B2.6) will build on it. */
+        consultationPrice: money("consultation_price").notNull().default(0),
+        /** Length of one appointment in minutes: the step of the appointment grid. */
+        slotMinutes: integer("slot_minutes").notNull().default(20),
+        schedule: json("schedule").$type().notNull().default(sql`'[]'::json`),
+        isActive: boolean("is_active").notNull().default(true),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by")
+      },
+      (t) => ({ departmentIdx: index("IDX_doctors_department").on(t.departmentId) })
+    );
     patients = pgTable("patients", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       // The number the registrator and the patient actually speak — "bemor №14",
@@ -696,6 +770,44 @@ var init_schema = __esm({
       permissions: permissionList.default([])
     });
     updateRoleSchema = insertRoleSchema.partial();
+    timeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Vaqtni SS:DD ko'rinishida kiriting");
+    scheduleSchema = z.array(z.object({ day: z.number().int().min(1).max(7), start: timeOfDay, end: timeOfDay })).max(21, "Jadval juda uzun").superRefine((slots, ctx) => {
+      slots.forEach((s, i) => {
+        if (s.end <= s.start) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${WEEKDAY_LABELS[s.day]}: tugash vaqti boshlanishidan keyin bo'lishi kerak`,
+            path: [i]
+          });
+        }
+      });
+      for (const day of WEEKDAYS) {
+        const same = slots.filter((s) => s.day === day).sort((a, b) => a.start.localeCompare(b.start));
+        for (let i = 1; i < same.length; i++) {
+          if (same[i].start < same[i - 1].end) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${WEEKDAY_LABELS[day]}: vaqt oraliqlari ustma-ust tushgan` });
+          }
+        }
+      }
+    }).transform((slots) => [...slots].sort((a, b) => a.day - b.day || a.start.localeCompare(b.start)));
+    insertDepartmentSchema = z.object({
+      name: z.string().trim().min(2, "Bo'lim nomini kiriting").max(80, "Nom juda uzun"),
+      kind: z.enum(DEPARTMENT_KINDS).default("ambulator"),
+      description: z.string().trim().max(240, "Tavsif juda uzun").nullish(),
+      isActive: z.boolean().default(true)
+    });
+    updateDepartmentSchema = insertDepartmentSchema.partial();
+    insertDoctorSchema = z.object({
+      userId: z.string().min(1, "Xodimni tanlang"),
+      departmentId: z.string().min(1).nullish(),
+      specialty: z.string().trim().min(2, "Mutaxassislikni kiriting").max(80, "Juda uzun"),
+      room: z.string().trim().max(20, "Juda uzun").nullish(),
+      consultationPrice: z.coerce.number().int().min(0, "Narx manfiy bo'lmasligi kerak").default(0),
+      slotMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(240, "Ko'pi bilan 240 daqiqa").default(20),
+      schedule: scheduleSchema.default([]),
+      isActive: z.boolean().default(true)
+    });
+    updateDoctorSchema = insertDoctorSchema.omit({ userId: true }).partial();
     loginSchema = z.object({
       username: z.string().trim().min(1, "Loginni kiriting"),
       password: z.string().min(1, "Parolni kiriting")
@@ -808,6 +920,9 @@ function todayKey() {
 function resolveFlag(incoming, line, gender) {
   if (incoming.flag) return incoming.flag;
   return computeFlag(incoming.result, line.referenceRange, { gender });
+}
+function byActiveThenName(name) {
+  return (a, b) => Number(b.isActive) - Number(a.isActive) || name(a).localeCompare(name(b));
 }
 function sortRoles(list) {
   const rank = (r) => {
@@ -1217,7 +1332,7 @@ import { and, asc, desc, eq, gte, inArray, lte, or, sql as sql2 } from "drizzle-
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapPatient, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, PgStorage;
+var iso, mapUser, mapPatient, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapDepartment, doctorSelect, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -1265,6 +1380,29 @@ var init_storage_pg = __esm({
       createdAt: iso(row.createdAt) ?? row.createdAt,
       updatedAt: iso(row.updatedAt),
       permissions: (row.permissions ?? []).filter(isPermission)
+    });
+    mapDepartment = (row) => ({
+      ...row,
+      kind: row.kind,
+      createdAt: iso(row.createdAt) ?? row.createdAt,
+      updatedAt: iso(row.updatedAt)
+    });
+    doctorSelect = () => db.select({
+      doctor: doctors,
+      fullName: users.fullName,
+      username: users.username,
+      userActive: users.isActive,
+      departmentName: departments.name
+    }).from(doctors).leftJoin(users, eq(users.id, doctors.userId)).leftJoin(departments, eq(departments.id, doctors.departmentId));
+    mapDoctor = (row) => ({
+      ...row.doctor,
+      schedule: row.doctor.schedule ?? [],
+      createdAt: iso(row.doctor.createdAt) ?? row.doctor.createdAt,
+      updatedAt: iso(row.doctor.updatedAt),
+      fullName: row.fullName ?? "\u2014",
+      username: row.username ?? "",
+      userActive: row.userActive ?? false,
+      departmentName: row.departmentName ?? null
     });
     PgStorage = class {
       async seed() {
@@ -1361,6 +1499,93 @@ var init_storage_pg = __esm({
       }
       async deleteRole(key) {
         const rows = await db.delete(roles).where(and(eq(roles.key, key), eq(roles.isSystem, false))).returning({ key: roles.key });
+        return rows.length > 0;
+      }
+      // ---------------------------------------------------------- departments
+      async listDepartments() {
+        const rows = await db.select({
+          dept: departments,
+          doctorCount: sql2`(SELECT count(*)::int FROM ${doctors} WHERE ${doctors.departmentId} = ${departments.id})`
+        }).from(departments).orderBy(desc(departments.isActive), asc(departments.name));
+        return rows.map((r) => ({ ...mapDepartment(r.dept), doctorCount: r.doctorCount }));
+      }
+      async getDepartment(id) {
+        const [row] = await db.select().from(departments).where(eq(departments.id, id)).limit(1);
+        return row && mapDepartment(row);
+      }
+      async createDepartment(input, actor) {
+        const [row] = await db.insert(departments).values({
+          name: input.name,
+          kind: input.kind,
+          description: input.description ?? null,
+          isActive: input.isActive ?? true,
+          updatedBy: actor.id
+        }).returning();
+        return mapDepartment(row);
+      }
+      async updateDepartment(id, input, actor) {
+        const patch = {
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedBy: actor.id
+        };
+        if (input.name !== void 0) patch.name = input.name;
+        if (input.kind !== void 0) patch.kind = input.kind;
+        if (input.description !== void 0) patch.description = input.description ?? null;
+        if (input.isActive !== void 0) patch.isActive = input.isActive;
+        const [row] = await db.update(departments).set(patch).where(eq(departments.id, id)).returning();
+        return row && mapDepartment(row);
+      }
+      async deleteDepartment(id) {
+        const rows = await db.delete(departments).where(eq(departments.id, id)).returning({ id: departments.id });
+        return rows.length > 0;
+      }
+      // -------------------------------------------------------------- doctors
+      async listDoctors(opts = {}) {
+        const where = [];
+        if (opts.activeOnly) where.push(eq(doctors.isActive, true), eq(users.isActive, true));
+        if (opts.departmentId) where.push(eq(doctors.departmentId, opts.departmentId));
+        const rows = await doctorSelect().where(where.length ? and(...where) : void 0).orderBy(desc(doctors.isActive), asc(users.fullName));
+        return rows.map(mapDoctor);
+      }
+      async getDoctor(id) {
+        const [row] = await doctorSelect().where(eq(doctors.id, id)).limit(1);
+        return row && mapDoctor(row);
+      }
+      async getDoctorByUser(userId) {
+        const [row] = await doctorSelect().where(eq(doctors.userId, userId)).limit(1);
+        return row && mapDoctor(row);
+      }
+      async createDoctor(input, actor) {
+        const [row] = await db.insert(doctors).values({
+          userId: input.userId,
+          departmentId: input.departmentId ?? null,
+          specialty: input.specialty,
+          room: input.room ?? null,
+          consultationPrice: input.consultationPrice,
+          slotMinutes: input.slotMinutes,
+          schedule: input.schedule,
+          isActive: input.isActive ?? true,
+          updatedBy: actor.id
+        }).returning({ id: doctors.id });
+        return await this.getDoctor(row.id);
+      }
+      async updateDoctor(id, input, actor) {
+        const patch = {
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedBy: actor.id
+        };
+        if (input.departmentId !== void 0) patch.departmentId = input.departmentId ?? null;
+        if (input.specialty !== void 0) patch.specialty = input.specialty;
+        if (input.room !== void 0) patch.room = input.room ?? null;
+        if (input.consultationPrice !== void 0) patch.consultationPrice = input.consultationPrice;
+        if (input.slotMinutes !== void 0) patch.slotMinutes = input.slotMinutes;
+        if (input.schedule !== void 0) patch.schedule = input.schedule;
+        if (input.isActive !== void 0) patch.isActive = input.isActive;
+        const rows = await db.update(doctors).set(patch).where(eq(doctors.id, id)).returning({ id: doctors.id });
+        return rows.length ? this.getDoctor(id) : void 0;
+      }
+      async deleteDoctor(id) {
+        const rows = await db.delete(doctors).where(eq(doctors.id, id)).returning({ id: doctors.id });
         return rows.length > 0;
       }
       // ---------------------------------------------------------------- users
@@ -2126,6 +2351,8 @@ var init_db = __esm({
     emptyDb = () => ({
       users: [],
       roles: [],
+      departments: [],
+      doctors: [],
       patients: [],
       tests: [],
       orders: [],
@@ -2305,6 +2532,116 @@ var init_storage_file = __esm({
         const role = this.db.roles.find((r) => r.key === key);
         if (!role || role.isSystem) return false;
         this.db.roles = this.db.roles.filter((r) => r.key !== key);
+        await this.persist();
+        return true;
+      }
+      // ---------------------------------------------------------- departments
+      async listDepartments() {
+        return this.db.departments.map((d) => ({ ...d, doctorCount: this.db.doctors.filter((doc) => doc.departmentId === d.id).length })).sort(byActiveThenName((d) => d.name));
+      }
+      async getDepartment(id) {
+        const d = this.db.departments.find((x) => x.id === id);
+        return d && { ...d };
+      }
+      async createDepartment(input, actor) {
+        const dept = {
+          id: randomUUID(),
+          name: input.name,
+          kind: input.kind,
+          description: input.description ?? null,
+          isActive: input.isActive ?? true,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: null,
+          updatedBy: actor.id
+        };
+        this.db.departments.push(dept);
+        await this.persist();
+        return { ...dept };
+      }
+      async updateDepartment(id, input, actor) {
+        const d = this.db.departments.find((x) => x.id === id);
+        if (!d) return void 0;
+        if (input.name !== void 0) d.name = input.name;
+        if (input.kind !== void 0) d.kind = input.kind;
+        if (input.description !== void 0) d.description = input.description ?? null;
+        if (input.isActive !== void 0) d.isActive = input.isActive;
+        d.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        d.updatedBy = actor.id;
+        await this.persist();
+        return { ...d };
+      }
+      async deleteDepartment(id) {
+        const before = this.db.departments.length;
+        this.db.departments = this.db.departments.filter((d) => d.id !== id);
+        if (this.db.departments.length === before) return false;
+        await this.persist();
+        return true;
+      }
+      // -------------------------------------------------------------- doctors
+      doctorDetails(doc) {
+        const user = this.db.users.find((u) => u.id === doc.userId);
+        const dept = doc.departmentId ? this.db.departments.find((d) => d.id === doc.departmentId) : void 0;
+        return {
+          ...doc,
+          schedule: doc.schedule.map((s) => ({ ...s })),
+          fullName: user?.fullName ?? "\u2014",
+          username: user?.username ?? "",
+          userActive: user?.isActive ?? false,
+          departmentName: dept?.name ?? null
+        };
+      }
+      async listDoctors(opts = {}) {
+        return this.db.doctors.filter((d) => !opts.activeOnly || d.isActive).filter((d) => !opts.departmentId || d.departmentId === opts.departmentId).map((d) => this.doctorDetails(d)).filter((d) => !opts.activeOnly || d.userActive).sort(byActiveThenName((d) => d.fullName));
+      }
+      async getDoctor(id) {
+        const doc = this.db.doctors.find((d) => d.id === id);
+        return doc && this.doctorDetails(doc);
+      }
+      async getDoctorByUser(userId) {
+        const doc = this.db.doctors.find((d) => d.userId === userId);
+        return doc && this.doctorDetails(doc);
+      }
+      async createDoctor(input, actor) {
+        if (this.db.doctors.some((d) => d.userId === input.userId)) {
+          throw new Error("Bu xodimning shifokor profili allaqachon bor");
+        }
+        const doc = {
+          id: randomUUID(),
+          userId: input.userId,
+          departmentId: input.departmentId ?? null,
+          specialty: input.specialty,
+          room: input.room ?? null,
+          consultationPrice: input.consultationPrice,
+          slotMinutes: input.slotMinutes,
+          schedule: input.schedule.map((s) => ({ ...s })),
+          isActive: input.isActive ?? true,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: null,
+          updatedBy: actor.id
+        };
+        this.db.doctors.push(doc);
+        await this.persist();
+        return this.doctorDetails(doc);
+      }
+      async updateDoctor(id, input, actor) {
+        const doc = this.db.doctors.find((d) => d.id === id);
+        if (!doc) return void 0;
+        if (input.departmentId !== void 0) doc.departmentId = input.departmentId ?? null;
+        if (input.specialty !== void 0) doc.specialty = input.specialty;
+        if (input.room !== void 0) doc.room = input.room ?? null;
+        if (input.consultationPrice !== void 0) doc.consultationPrice = input.consultationPrice;
+        if (input.slotMinutes !== void 0) doc.slotMinutes = input.slotMinutes;
+        if (input.schedule !== void 0) doc.schedule = input.schedule.map((s) => ({ ...s }));
+        if (input.isActive !== void 0) doc.isActive = input.isActive;
+        doc.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        doc.updatedBy = actor.id;
+        await this.persist();
+        return this.doctorDetails(doc);
+      }
+      async deleteDoctor(id) {
+        const before = this.db.doctors.length;
+        this.db.doctors = this.db.doctors.filter((d) => d.id !== id);
+        if (this.db.doctors.length === before) return false;
         await this.persist();
         return true;
       }
@@ -4436,6 +4773,8 @@ async function registerRoutes(app) {
           });
         }
       }
+      const profile = await storage.getDoctorByUser(req.params.id).catch(() => void 0);
+      if (profile) await storage.deleteDoctor(profile.id);
       const ok = await storage.deleteUser(req.params.id);
       forgetSessionUser(req.params.id);
       if (!ok) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
@@ -4538,10 +4877,172 @@ async function registerRoutes(app) {
       res.sendStatus(204);
     })
   );
+  const emptyIfMissing = (err, empty) => {
+    if (err?.code === "42P01") return empty;
+    throw err;
+  };
+  app.get(
+    "/api/departments",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.json(await storage.listDepartments().catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  async function departmentNameTaken(name, exceptId) {
+    const key = name.trim().toLowerCase();
+    return (await storage.listDepartments()).some((d) => d.id !== exceptId && d.name.trim().toLowerCase() === key);
+  }
+  app.post(
+    "/api/departments",
+    requirePermission("departments.manage"),
+    handle(async (req, res) => {
+      const input = insertDepartmentSchema.parse(req.body);
+      if (await departmentNameTaken(input.name)) {
+        return res.status(409).json({ message: "Bunday nomli bo'lim allaqachon bor" });
+      }
+      const dept = await storage.createDepartment(input, actorOf(req));
+      await audit(req, "create", "department", dept.id, `"${dept.name}" bo'limi qo'shildi (${DEPARTMENT_KIND_LABELS[dept.kind]})`);
+      res.status(201).json({ ...dept, doctorCount: 0 });
+    })
+  );
+  app.patch(
+    "/api/departments/:id",
+    requirePermission("departments.manage"),
+    handle(async (req, res) => {
+      const input = updateDepartmentSchema.parse(req.body);
+      const before = await storage.getDepartment(req.params.id);
+      if (!before) return res.status(404).json({ message: "Bo'lim topilmadi" });
+      if (input.name && await departmentNameTaken(input.name, before.id)) {
+        return res.status(409).json({ message: "Bunday nomli bo'lim allaqachon bor" });
+      }
+      const dept = await storage.updateDepartment(req.params.id, input, actorOf(req));
+      if (!dept) return res.status(404).json({ message: "Bo'lim topilmadi" });
+      const changes = [];
+      if (input.name && input.name !== before.name) changes.push(`nomi: ${before.name} \u2192 ${dept.name}`);
+      if (input.kind && input.kind !== before.kind) changes.push(`turi: ${DEPARTMENT_KIND_LABELS[dept.kind]}`);
+      if (input.isActive !== void 0 && input.isActive !== before.isActive) {
+        changes.push(dept.isActive ? "qayta ochildi" : "yopildi");
+      }
+      await audit(req, "update", "department", dept.id, `"${dept.name}" bo'limi \u2014 ${changes.join(", ") || "tavsif yangilandi"}`);
+      const doctorCount = (await storage.listDoctors({ departmentId: dept.id })).length;
+      res.json({ ...dept, doctorCount });
+    })
+  );
+  app.delete(
+    "/api/departments/:id",
+    requirePermission("departments.manage"),
+    handle(async (req, res) => {
+      const dept = (await storage.listDepartments()).find((d) => d.id === req.params.id);
+      if (!dept) return res.status(404).json({ message: "Bo'lim topilmadi" });
+      if (dept.doctorCount > 0) {
+        return res.status(409).json({
+          message: `Bu bo'limda ${dept.doctorCount} ta shifokor bor. Ularni boshqa bo'limga o'tkazing yoki bo'limni yoping.`
+        });
+      }
+      await storage.deleteDepartment(dept.id);
+      await audit(req, "delete", "department", dept.id, `"${dept.name}" bo'limi o'chirildi`);
+      res.sendStatus(204);
+    })
+  );
+  app.get(
+    "/api/doctors",
+    requireAuth,
+    handle(async (req, res) => {
+      const list = await storage.listDoctors({
+        activeOnly: req.query.active === "1",
+        departmentId: stringParam(req.query.departmentId)
+      }).catch((e) => emptyIfMissing(e, []));
+      res.json(list);
+    })
+  );
+  app.get(
+    "/api/doctors/candidates",
+    requirePermission("doctors.manage"),
+    handle(async (_req, res) => {
+      const taken = new Set((await storage.listDoctors().catch((e) => emptyIfMissing(e, []))).map((d) => d.userId));
+      const users2 = (await storage.listUsers()).filter((u) => u.isActive && !taken.has(u.id)).sort((a, b) => Number(b.role === "shifokor") - Number(a.role === "shifokor") || a.fullName.localeCompare(b.fullName));
+      const named = await Promise.all(users2.map(async (u) => ({ id: u.id, fullName: u.fullName, role: u.role, roleName: (await toSessionUser(u)).roleName })));
+      res.json(named);
+    })
+  );
+  async function checkDepartment(res, id) {
+    if (!id) return true;
+    const dept = await storage.getDepartment(id);
+    if (!dept) {
+      res.status(400).json({ message: "Bo'lim topilmadi" });
+      return false;
+    }
+    if (!dept.isActive) {
+      res.status(400).json({ message: `"${dept.name}" bo'limi yopilgan` });
+      return false;
+    }
+    return true;
+  }
+  app.post(
+    "/api/doctors",
+    requirePermission("doctors.manage"),
+    handle(async (req, res) => {
+      const input = insertDoctorSchema.parse(req.body);
+      const user = await storage.getUser(input.userId);
+      if (!user) return res.status(400).json({ message: "Xodim topilmadi" });
+      if (await storage.getDoctorByUser(input.userId)) {
+        return res.status(409).json({ message: "Bu xodimning shifokor profili allaqachon bor" });
+      }
+      if (!await checkDepartment(res, input.departmentId)) return;
+      const doctor = await storage.createDoctor(input, actorOf(req));
+      await audit(req, "create", "doctor", doctor.id, `${doctor.fullName} \u2014 shifokor profili (${doctor.specialty})`);
+      res.status(201).json(doctor);
+    })
+  );
+  app.patch(
+    "/api/doctors/:id",
+    requirePermission("doctors.manage"),
+    handle(async (req, res) => {
+      const input = updateDoctorSchema.parse(req.body);
+      const before = await storage.getDoctor(req.params.id);
+      if (!before) return res.status(404).json({ message: "Shifokor topilmadi" });
+      if (input.departmentId && input.departmentId !== before.departmentId) {
+        if (!await checkDepartment(res, input.departmentId)) return;
+      }
+      const doctor = await storage.updateDoctor(req.params.id, input, actorOf(req));
+      if (!doctor) return res.status(404).json({ message: "Shifokor topilmadi" });
+      const changes = [];
+      if (input.specialty && input.specialty !== before.specialty) changes.push(`mutaxassislik: ${doctor.specialty}`);
+      if (input.departmentId !== void 0 && doctor.departmentId !== before.departmentId) {
+        changes.push(`bo'lim: ${before.departmentName ?? "\u2014"} \u2192 ${doctor.departmentName ?? "\u2014"}`);
+      }
+      if (input.room !== void 0 && (input.room ?? null) !== before.room) changes.push(`kabinet: ${doctor.room ?? "\u2014"}`);
+      if (input.consultationPrice !== void 0 && input.consultationPrice !== before.consultationPrice) {
+        changes.push(`narx: ${before.consultationPrice} \u2192 ${doctor.consultationPrice}`);
+      }
+      if (input.schedule !== void 0) changes.push("ish jadvali yangilandi");
+      if (input.isActive !== void 0 && input.isActive !== before.isActive) {
+        changes.push(doctor.isActive ? "qabul qayta ochildi" : "qabul to'xtatildi");
+      }
+      await audit(req, "update", "doctor", doctor.id, `${doctor.fullName} \u2014 ${changes.join(", ") || "profil yangilandi"}`);
+      res.json(doctor);
+    })
+  );
+  app.delete(
+    "/api/doctors/:id",
+    requirePermission("doctors.manage"),
+    handle(async (req, res) => {
+      const before = await storage.getDoctor(req.params.id);
+      if (!before) return res.status(404).json({ message: "Shifokor topilmadi" });
+      await storage.deleteDoctor(before.id);
+      await audit(req, "delete", "doctor", before.id, `${before.fullName} \u2014 shifokor profili o'chirildi`);
+      res.sendStatus(204);
+    })
+  );
   app.use("/api", (err, _req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof ZodError) {
       return res.status(400).json({ message: fromZodError(err).toString() });
+    }
+    if (err?.code === "42P01") {
+      return res.status(503).json({
+        message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyani ishga tushirishi kerak (npm run db:clinic)."
+      });
     }
     if (err instanceof Error) {
       return res.status(400).json({ message: err.message });

@@ -4,6 +4,12 @@ import { computeFlag } from "@shared/reference-range";
 import type {
   AuditEntry,
   CreatePaymentInput,
+  Department,
+  DepartmentWithUsage,
+  Doctor,
+  DoctorWithDetails,
+  InsertDepartment,
+  InsertDoctor,
   DashboardStatsData,
   Expense,
   InsertExpense,
@@ -25,6 +31,8 @@ import type {
   Sample,
   TelegramContact,
   Test,
+  UpdateDepartmentInput,
+  UpdateDoctorInput,
   UpdateOrderInput,
   UpdateRoleInput,
   UpdateSampleInput,
@@ -38,6 +46,7 @@ import { hashPassword } from "./password";
 import { LEGACY_ADMIN, SUPER_ADMIN, SYSTEM_ROLES } from "@shared/permissions";
 import {
   SEED_USERS,
+  byActiveThenName,
   sortRoles,
   type CreateRoleArgs,
   type SeedResult,
@@ -227,6 +236,137 @@ export class FileStorage implements IStorage {
     const role = this.db.roles.find((r) => r.key === key);
     if (!role || role.isSystem) return false;
     this.db.roles = this.db.roles.filter((r) => r.key !== key);
+    await this.persist();
+    return true;
+  }
+
+  // ---------------------------------------------------------- departments
+
+  async listDepartments(): Promise<DepartmentWithUsage[]> {
+    return this.db.departments
+      .map((d) => ({ ...d, doctorCount: this.db.doctors.filter((doc) => doc.departmentId === d.id).length }))
+      .sort(byActiveThenName((d) => d.name));
+  }
+
+  async getDepartment(id: string): Promise<Department | undefined> {
+    const d = this.db.departments.find((x) => x.id === id);
+    return d && { ...d };
+  }
+
+  async createDepartment(input: InsertDepartment, actor: Actor): Promise<Department> {
+    const dept: Department = {
+      id: randomUUID(),
+      name: input.name,
+      kind: input.kind,
+      description: input.description ?? null,
+      isActive: input.isActive ?? true,
+      createdAt: new Date().toISOString(),
+      updatedAt: null,
+      updatedBy: actor.id,
+    };
+    this.db.departments.push(dept);
+    await this.persist();
+    return { ...dept };
+  }
+
+  async updateDepartment(id: string, input: UpdateDepartmentInput, actor: Actor): Promise<Department | undefined> {
+    const d = this.db.departments.find((x) => x.id === id);
+    if (!d) return undefined;
+    if (input.name !== undefined) d.name = input.name;
+    if (input.kind !== undefined) d.kind = input.kind;
+    if (input.description !== undefined) d.description = input.description ?? null;
+    if (input.isActive !== undefined) d.isActive = input.isActive;
+    d.updatedAt = new Date().toISOString();
+    d.updatedBy = actor.id;
+    await this.persist();
+    return { ...d };
+  }
+
+  async deleteDepartment(id: string): Promise<boolean> {
+    const before = this.db.departments.length;
+    this.db.departments = this.db.departments.filter((d) => d.id !== id);
+    if (this.db.departments.length === before) return false;
+    await this.persist();
+    return true;
+  }
+
+  // -------------------------------------------------------------- doctors
+
+  private doctorDetails(doc: Doctor): DoctorWithDetails {
+    const user = this.db.users.find((u) => u.id === doc.userId);
+    const dept = doc.departmentId ? this.db.departments.find((d) => d.id === doc.departmentId) : undefined;
+    return {
+      ...doc,
+      schedule: doc.schedule.map((s) => ({ ...s })),
+      fullName: user?.fullName ?? "—",
+      username: user?.username ?? "",
+      userActive: user?.isActive ?? false,
+      departmentName: dept?.name ?? null,
+    };
+  }
+
+  async listDoctors(opts: { activeOnly?: boolean; departmentId?: string } = {}): Promise<DoctorWithDetails[]> {
+    return this.db.doctors
+      .filter((d) => !opts.activeOnly || d.isActive)
+      .filter((d) => !opts.departmentId || d.departmentId === opts.departmentId)
+      .map((d) => this.doctorDetails(d))
+      .filter((d) => !opts.activeOnly || d.userActive)
+      .sort(byActiveThenName((d) => d.fullName));
+  }
+
+  async getDoctor(id: string): Promise<DoctorWithDetails | undefined> {
+    const doc = this.db.doctors.find((d) => d.id === id);
+    return doc && this.doctorDetails(doc);
+  }
+
+  async getDoctorByUser(userId: string): Promise<DoctorWithDetails | undefined> {
+    const doc = this.db.doctors.find((d) => d.userId === userId);
+    return doc && this.doctorDetails(doc);
+  }
+
+  async createDoctor(input: InsertDoctor, actor: Actor): Promise<DoctorWithDetails> {
+    if (this.db.doctors.some((d) => d.userId === input.userId)) {
+      throw new Error("Bu xodimning shifokor profili allaqachon bor");
+    }
+    const doc: Doctor = {
+      id: randomUUID(),
+      userId: input.userId,
+      departmentId: input.departmentId ?? null,
+      specialty: input.specialty,
+      room: input.room ?? null,
+      consultationPrice: input.consultationPrice,
+      slotMinutes: input.slotMinutes,
+      schedule: input.schedule.map((s) => ({ ...s })),
+      isActive: input.isActive ?? true,
+      createdAt: new Date().toISOString(),
+      updatedAt: null,
+      updatedBy: actor.id,
+    };
+    this.db.doctors.push(doc);
+    await this.persist();
+    return this.doctorDetails(doc);
+  }
+
+  async updateDoctor(id: string, input: UpdateDoctorInput, actor: Actor): Promise<DoctorWithDetails | undefined> {
+    const doc = this.db.doctors.find((d) => d.id === id);
+    if (!doc) return undefined;
+    if (input.departmentId !== undefined) doc.departmentId = input.departmentId ?? null;
+    if (input.specialty !== undefined) doc.specialty = input.specialty;
+    if (input.room !== undefined) doc.room = input.room ?? null;
+    if (input.consultationPrice !== undefined) doc.consultationPrice = input.consultationPrice;
+    if (input.slotMinutes !== undefined) doc.slotMinutes = input.slotMinutes;
+    if (input.schedule !== undefined) doc.schedule = input.schedule.map((s) => ({ ...s }));
+    if (input.isActive !== undefined) doc.isActive = input.isActive;
+    doc.updatedAt = new Date().toISOString();
+    doc.updatedBy = actor.id;
+    await this.persist();
+    return this.doctorDetails(doc);
+  }
+
+  async deleteDoctor(id: string): Promise<boolean> {
+    const before = this.db.doctors.length;
+    this.db.doctors = this.db.doctors.filter((d) => d.id !== id);
+    if (this.db.doctors.length === before) return false;
     await this.persist();
     return true;
   }

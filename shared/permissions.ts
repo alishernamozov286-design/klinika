@@ -17,6 +17,7 @@ export const PERMISSION_GROUPS = [
   { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
   { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
   { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
+  { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar va shifokorlar" },
   { key: "system", label: "Tizim", description: "Sozlamalar, xodimlar, rollar va xavfsizlik" },
 ] as const;
 
@@ -153,6 +154,17 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
+  "departments.manage": {
+    group: "clinic",
+    label: "Bo'limlar",
+    description: "Klinika bo'limlarini qo'shish, tahrirlash va yopish",
+  },
+  "doctors.manage": {
+    group: "clinic",
+    label: "Shifokorlar",
+    description: "Shifokor profili: mutaxassislik, kabinet, qabul narxi va ish jadvali",
+  },
+
   "settings.manage": {
     group: "system",
     label: "Klinika sozlamalari",
@@ -236,6 +248,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     name: "Klinika rahbari",
     description: "Umumiy boshqaruv: barcha ma'lumotlarni ko'rish, hisobotlar, qaytarishlarni tasdiqlash",
     permissions: [
+      "departments.manage",
+      "doctors.manage",
       "patients.read",
       "orders.read",
       "orders.cancel",
