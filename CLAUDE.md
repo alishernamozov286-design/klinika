@@ -88,9 +88,9 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 05.11.2026 dagi kod tahlili asosida. Umumiy moslik: **≈20–25%**.
+> Holat 2026-11-05 kechqurun. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 19.5 → ≈26%** (ertalab ≈20%).
 
-### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) ≈75%
+### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 70%
 
 - [x] **B1.1** Ma'lumotlar bazasi: PostgreSQL + Drizzle, fayl ombori zaxira varianti.
 - [x] **B1.2** Login va parol: scrypt xesh, brute-force blokirovka (username+IP), eskalatsiyali bloklash.
@@ -110,7 +110,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - UI: Sozlamalar → Bo'limlar (kartalar, namuna to'plam), Shifokorlar (jadval, filtr, ish jadvali muharriri va tayyor shablonlar).
   - Migratsiya: `npm run db:clinic`. Jadvallar yo'q bo'lsa ro'yxatlar bo'sh qaytadi, yozish 503 va tushunarli xabar beradi.
   - **B2.7 uchun eslatma:** qabullar shifokorga bog'langach `DELETE /api/doctors/:id` ni bloklash kerak (routes.ts dagi TODO).
-- [~] **B1.6** Audit jurnali (`§12`): yozish amallari bor. **Qoldi:** tibbiy ma'lumotlarni *ko‘rish* jurnali (kim, qachon, qaysi bemor kartasini ochdi), auditor uchun filtrli ko‘rish sahifasi.
+- [~] **B1.6** Audit jurnali (`§12`): barcha yozish amallari "nima o'zgardi" tafsiloti bilan yoziladi (xodim, rol, bo'lim, shifokor, seans, siyosat, xarajat, to'lov). Auditor rolida jurnalni filtr bilan ko'rish bor. **Qoldi:** tibbiy ma'lumotni *ko'rish* jurnali (kim, qachon, qaysi bemor kartasini ochdi) — bemor kartasi (B2.4) bilan birga.
 - [x] **B1.7** Seans xavfsizligi (`§12`).
   - Server (`server/session-policy.ts`): har bir API so'rovida faolsizlik (standart 30 daq) va umumiy muddat (standart 12 soat) tekshiriladi; oshsa seans yopiladi va 401 `{code: SESSION_IDLE | SESSION_MAX}`. Eski seanslarga yangi soat beriladi (deploy paytida hech kim chiqarib yuborilmaydi).
   - Mijoz (`SessionGuard`): yopilishdan 1 daqiqa oldin teskari sanoqli ogohlantirish; faollik oynalar orasida `localStorage` orqali bo'lishiladi; faol ishlayotganda `/api/session/ping`. Har qanday 401 → tabdan chiqish va login sahifasida sabab.
@@ -121,7 +121,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [~] **B1.9** Bemor ID (`§4.2`): `patientNumber` bor. **Qoldi:** barcha yangi modullarda faqat shu ID orqali bog‘lanish (qabul mezoni 16.1).
 - [ ] **B1.10** Umumiy ustunlar (`§10`): mavjud jadvallarga `updatedAt` / `updatedBy` qo‘shish.
 
-### Bosqich 2: Registratura (`§4`, `§15.2`) ≈35%
+### Bosqich 2: Registratura (`§4`, `§15.2`) 23%
 
 - [~] **B2.1** Yangi bemor formasi (`§4.1.2`). Bor: F.I.Sh., jins, telefon, manzil. **Qoldi:** tug‘ilgan sana (yosh o‘rniga; yosh hisoblanadi), pasport/ID (ixtiyoriy), favqulodda aloqa (`patient_contacts` jadvali).
 - [ ] **B2.2** Takroriy bemorni aniqlash (`§4.2`): F.I.Sh. + tug‘ilgan sana / telefon / pasport bo‘yicha o‘xshashlarni ko‘rsatish, birlashtirish (merge) admin uchun.
@@ -147,7 +147,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B3.8** Ko‘rik xulosasi PDF (`§5.2`).
 - [ ] **B3.9** Natija shifokorga (`§11`, qabul mezoni 16.4): lab natijasi tasdiqlangach buyurtma bergan shifokorga bildirishnoma va kartaga biriktirish.
 
-### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) ≈55%
+### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 41%
 
 - [~] **B4.1** Lab bosh sahifasi (`§6.1.1`): statistikalar bor. **Qoldi:** "tasdiqlanishi kerak" va "bekor qilingan" kartalari, holatlarni TZ bo‘yicha aniq ajratish.
 - [~] **B4.2** Buyurtmalar ro‘yxati (`§6.1.2`). **Qoldi:** "yo‘llanma raqami" (B3.5 dan), tahlil turi ustuni.
@@ -181,31 +181,31 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B6.6** Integratsiya (`§8.2`): lab buyurtmasi kartadan, dori sarfi omborga, xizmatlar (yotoq-kun, muolajalar) kassa hisobiga.
 - [ ] **B6.7** Chiqarish va epikriz (`§8.1.5`): yakuniy tashxis, xulosa, epikriz (avto-to‘ldirish + tahrir), tavsiyalar, PDF.
 
-### Bosqich 7: Kassa va moliya (`§9`, `§15.7`) ≈40%
+### Bosqich 7: Kassa va moliya (`§9`, `§15.7`) 33%
 
 - [ ] **B7.1** Bemor hisobvarag‘i (`§9.1`, `invoices`): barcha modullardagi xizmatlar (ko‘rik, lab, UZI, muolaja, statsionar) bitta hisobvaraqqa tushadi (`§11`).
 - [~] **B7.2** To‘lov qabul qilish (`§9.2`): naqd, karta, o‘tkazma, qisman to‘lov, chegirma bor (faqat lab buyurtmasi uchun). **Qoldi:** bir nechta xizmat uchun umumiy to‘lov (hisobvaraq orqali), terminal va bank turlarini aniq ajratish.
 - [~] **B7.3** Qarzdorlik nazorati (`§9.1`): buyurtma bo‘yicha bor. **Qoldi:** bemor bo‘yicha jamlangan qarzdorlik sahifasi.
-- [~] **B7.4** To‘lovni qaytarish (`§9.2`): manfiy to‘lov bor. **Qoldi:** vakolatli shaxs tasdig‘i (so‘rov → tasdiq), "qaytarilgan to‘lovlar" ekrani.
+- [~] **B7.4** To'lovni qaytarish (`§9.2`): qaytarish endi alohida `payments.refund` ruxsati bilan (standart: rahbar va super admin) — registrator/kassir qaytara olmaydi. **Qoldi:** "so'rov → tasdiq" oqimi (kassir so'raydi, rahbar tasdiqlaydi) va "qaytarilgan to'lovlar" ekrani.
 - [ ] **B7.5** Kassa smenasi (`§9.2`): ochish, yopish, kassadagi summa, farq, smena hisoboti.
 - [ ] **B7.6** Chek (`§15.7`): to‘lov cheki chop etish.
 - [ ] **B7.7** Kassa bosh sahifasi, kunlik tushum, xizmatlar narxlari ekrani (`§9.1`).
 - [~] **B7.8** Moliyaviy hisobotlar (`§9.1`): tushum va xarajatlar bor. **Qoldi:** buxgalter uchun davr bo‘yicha to‘liq hisobot.
 - [x] **B7.9** Xarajatlar sahifasi (`§9`, `§10`, `§13`): to'lov usuli va oluvchi; o'chirish o'rniga sababli bekor qilish (yozuv saqlanadi, hisobotlarga kirmaydi); tahrirlash audit bilan; butun davr tahlili (`/api/expenses/summary`: kategoriya, to'lov usuli, kunlik dinamika, o'tgan davr bilan solishtirish); filtrlar (kategoriya, usul, matn, bekor qilinganlar); davr shablonlari; CSV. Migratsiya: `npm run db:expenses` (**yangi kod ishga tushishidan OLDIN** bajarilishi shart).
 
-### Hisobotlar va rahbariyat paneli (`§13`) ≈35%
+### Hisobotlar va rahbariyat paneli (`§13`) 32%
 
 - [~] **R.1** Rahbariyat boshqaruv paneli: hozirgi bosh sahifa statistikasi asos.
 - [~] **R.2** Kunlik bemorlar soni · [ ] shifokorlar faoliyati · [~] lab tahlillari soni · [ ] eng ko‘p buyuriladigan tahlillar · [ ] reagent sarfi · [ ] ombor qoldig‘i · [ ] statsionar bandligi · [x] kunlik/oylik tushum · [ ] xizmatlar daromadi · [~] qarzdorlik · [x] xarajatlar.
 - [~] **R.3** PDF va Excel eksport: bor. Har yangi hisobotga qo‘shiladi.
 
-### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) ≈10%
+### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 11%
 
 - [ ] **B8.1** Real vaqt xabarlari (`§2`, `§11`): WebSocket; navbat, yangi natija, yangi yo‘llanma darhol ko‘rinadi.
 - [ ] **B8.2** Fayl ombori (`§2`, D-3): UZI rasmlari, skanlar, PDF arxiv.
 - [~] **B8.3** Avtomatik zaxira (`§12`, `§14`): `/api/backup` va `db:restore` bor. **Qoldi:** jadval bo‘yicha avtomatik backup va **tiklash sinovi** (qabul mezoni 16.10).
 - [ ] **B8.4** Monitoring va xatolar jurnali (`§14`): server xatolari, modul bo‘yicha javob vaqti.
-- [~] **B8.5** Moslashuvchan interfeys (`§14`): planshet va mobil uchun tekshirish va tuzatish.
+- [~] **B8.5** Moslashuvchan interfeys (`§14`): yangi sahifalar (rollar, xarajatlar, sozlamalar) telefon o'lchamida tekshirildi. **Qoldi:** eski sahifalarni (bemorlar, buyurtmalar, natijalar) planshet/telefonda to'liq tekshirish.
 - [ ] **B8.6** Modullararo end-to-end test: TZ `§2` dagi ikkala sxema bo‘yicha to‘liq yo‘l.
 - [ ] **B8.7** Xavfsizlik sinovi (`/security-review` + qo‘lda): ruxsatlarni chetlab o‘tish, IDOR, sessiya.
 - [ ] **B8.8** Yuklama sinovi (`§14`): 150 ta parallel foydalanuvchi.
