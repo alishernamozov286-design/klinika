@@ -20,8 +20,19 @@ import {
   updateOrderSchema,
   updateSampleSchema,
   updateUserSchema,
+  insertRoleSchema,
+  updateRoleSchema,
   type PublicUser,
+  type SessionUser,
 } from "@shared/schema";
+import {
+  PERMISSIONS,
+  SUPER_ADMIN,
+  SYSTEM_ROLE_KEYS,
+  LEGACY_ADMIN,
+  PERMISSION_GROUP_LABEL,
+  type Permission,
+} from "@shared/permissions";
 import {
   ATTEMPTS_BEFORE_LOCK,
   attemptsLeftMessage,
@@ -37,10 +48,11 @@ import {
   loginRateLimit,
   recordFailedLogin,
   requireAuth,
-  requireRole,
   setupAuth,
+  forgetSessionUser,
 } from "./auth";
 import { csvHeaders, stamp, toCsv } from "./csv";
+import { hasPermission, invalidateRoles, isSuperAdmin, requirePermission, toSessionUser } from "./rbac";
 import { verifyPassword } from "./password";
 import { localDay, storage, usingPostgres } from "./storage";
 import type { Actor } from "./storage-types";
@@ -132,7 +144,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   /** "Has this number opened the bot?" — shown live in the registration form. */
   app.get(
     "/api/telegram/phone",
-    requireAuth,
+    requirePermission("patients.create", "patients.update"),
     handle(async (req, res) => {
       const phone = typeof req.query.phone === "string" ? req.query.phone : "";
       res.json(await telegramPhoneStatus(phone));
@@ -172,7 +184,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
       passport.authenticate(
         "local",
-        async (err: Error | null, user: PublicUser | false, info?: { message?: string }) => {
+        async (err: Error | null, user: SessionUser | false, info?: { message?: string }) => {
           if (err) return next(err);
 
           if (!user) {
@@ -279,7 +291,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/patients",
-    requireAuth,
+    requirePermission("patients.read"),
     handle(async (req, res) => {
       const result = await storage.listPatients({
         search: typeof req.query.search === "string" ? req.query.search : undefined,
@@ -292,7 +304,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/patients/:id",
-    requireAuth,
+    requirePermission("patients.read"),
     handle(async (req, res) => {
       const patient = await storage.getPatient(req.params.id);
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
@@ -303,7 +315,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   /** A patient's full visit history — the "was he here before?" question. */
   app.get(
     "/api/patients/:id/orders",
-    requireAuth,
+    requirePermission("orders.read"),
     handle(async (req, res) => {
       const result = await storage.listOrders({ patientId: req.params.id });
       res.json(result);
@@ -312,7 +324,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/patients",
-    requireRole("registrator"),
+    requirePermission("patients.create"),
     handle(async (req, res) => {
       const input = insertPatientSchema.parse(req.body);
       const patient = await storage.createPatient(input);
@@ -324,7 +336,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.patch(
     "/api/patients/:id",
-    requireRole("registrator"),
+    requirePermission("patients.update"),
     handle(async (req, res) => {
       const input = insertPatientSchema.partial().parse(req.body);
       const patient = await storage.updatePatient(req.params.id, input);
@@ -337,7 +349,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.delete(
     "/api/patients/:id",
-    requireRole("admin"),
+    requirePermission("patients.delete"),
     handle(async (req, res) => {
       const before = await storage.getPatient(req.params.id);
       const ok = await storage.deletePatient(req.params.id);
@@ -359,7 +371,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/tests",
-    requireRole("admin"),
+    requirePermission("tests.manage"),
     handle(async (req, res) => {
       const test = await storage.createTest(insertTestSchema.parse(req.body));
       await audit(req, "create", "test", test.id, `"${test.name}" qo'shildi — ${test.price} so'm`);
@@ -369,7 +381,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.patch(
     "/api/tests/:id",
-    requireRole("admin"),
+    requirePermission("tests.manage"),
     handle(async (req, res) => {
       const input = insertTestSchema.partial().parse(req.body);
       const before = await storage.getTest(req.params.id);
@@ -393,7 +405,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.delete(
     "/api/tests/:id",
-    requireRole("admin"),
+    requirePermission("tests.manage"),
     handle(async (req, res) => {
       const before = await storage.getTest(req.params.id);
       const ok = await storage.deleteTest(req.params.id);
@@ -407,7 +419,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/orders",
-    requireAuth,
+    requirePermission("orders.read"),
     handle(async (req, res) => {
       const statusParam = req.query.status;
       const status = ORDER_STATUSES.find((s) => s === statusParam);
@@ -429,7 +441,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/orders/:id",
-    requireAuth,
+    requirePermission("orders.read"),
     handle(async (req, res) => {
       const order = await storage.getOrder(req.params.id);
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
@@ -439,7 +451,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/orders",
-    requireRole("registrator"),
+    requirePermission("orders.create"),
     handle(async (req, res) => {
       const input = createOrderSchema.parse(req.body);
       const order = await storage.createOrder({ ...input, createdBy: req.user?.id ?? null });
@@ -456,11 +468,32 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.patch(
     "/api/orders/:id",
-    requireRole("registrator", "laborant"),
+    requirePermission("orders.update", "orders.cancel"),
     handle(async (req, res) => {
       const input = updateOrderSchema.parse(req.body);
       const before = await storage.getOrder(req.params.id);
       if (!before) return res.status(404).json({ message: "Buyurtma topilmadi" });
+
+      // Cancelling (and bringing a cancelled order back) is its own grant: it
+      // takes the order out of the cash and results flow, which an ordinary
+      // edit must not be able to do.
+      const touchesCancel =
+        input.status !== undefined &&
+        input.status !== before.status &&
+        (input.status === "cancelled" || before.status === "cancelled");
+      const editsOther =
+        (input.status !== undefined && !touchesCancel && input.status !== before.status) ||
+        input.testIds !== undefined ||
+        input.discount !== undefined ||
+        input.paidAmount !== undefined ||
+        input.notes !== undefined ||
+        input.referrer !== undefined;
+      if (touchesCancel && !hasPermission(req, "orders.cancel")) {
+        return res.status(403).json({ message: "Buyurtmani bekor qilish uchun ruxsatingiz yo'q" });
+      }
+      if (editsOther && !hasPermission(req, "orders.update")) {
+        return res.status(403).json({ message: "Buyurtmani tahrirlash uchun ruxsatingiz yo'q" });
+      }
 
       const order = await storage.updateOrder(req.params.id, input);
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
@@ -493,7 +526,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/orders/:id/results",
-    requireRole("laborant"),
+    requirePermission("results.enter"),
     handle(async (req, res) => {
       const { results } = saveResultsSchema.parse(req.body);
       const order = await storage.saveResults(req.params.id, results, actorOf(req));
@@ -517,7 +550,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   /** Manual (re)send from the order card — for a fixed result or a late link. */
   app.post(
     "/api/orders/:id/telegram",
-    requireRole("registrator", "laborant"),
+    requirePermission("results.send"),
     handle(async (req, res) => {
       const order = await storage.getOrder(req.params.id);
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
@@ -547,7 +580,7 @@ export async function registerRoutes(app: Express): Promise<void> {
    */
   app.patch(
     "/api/orders/:id/sample",
-    requireRole("registrator", "laborant"),
+    requirePermission("samples.manage"),
     handle(async (req, res) => {
       const input = updateSampleSchema.parse(req.body);
       const result = await storage.updateSampleStatus(req.params.id, input, actorOf(req));
@@ -574,7 +607,7 @@ export async function registerRoutes(app: Express): Promise<void> {
    */
   app.get(
     "/api/samples/scan",
-    requireRole("registrator", "laborant"),
+    requirePermission("samples.manage"),
     handle(async (req, res) => {
       const code = String(req.query.code ?? "");
       const order = await storage.getOrderByBarcode(code);
@@ -585,7 +618,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.delete(
     "/api/orders/:id",
-    requireRole("admin"),
+    requirePermission("orders.delete"),
     handle(async (req, res) => {
       // Read before deleting: afterwards there is no order number left to log.
       const before = await storage.getOrder(req.params.id);
@@ -606,9 +639,20 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/orders/:id/payments",
-    requireRole("registrator"),
+    requirePermission("payments.create", "payments.refund"),
     handle(async (req, res) => {
       const input = createPaymentSchema.parse(req.body);
+      // A refund hands cash back out of the till; TZ §9.2 reserves it for an
+      // authorised person, so it is checked apart from taking a payment.
+      const needed: Permission = input.amount < 0 ? "payments.refund" : "payments.create";
+      if (!hasPermission(req, needed)) {
+        return res.status(403).json({
+          message:
+            needed === "payments.refund"
+              ? "To'lovni qaytarish uchun ruxsatingiz yo'q"
+              : "To'lov qabul qilish uchun ruxsatingiz yo'q",
+        });
+      }
       const order = await storage.addPayment(req.params.id, input, actorOf(req));
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
       const latest = order.payments?.[0];
@@ -625,7 +669,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.delete(
     "/api/payments/:id",
-    requireRole("admin"),
+    requirePermission("payments.delete"),
     handle(async (req, res) => {
       const ok = await storage.deletePayment(req.params.id);
       if (!ok) return res.status(404).json({ message: "To'lov topilmadi" });
@@ -638,7 +682,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/expenses",
-    requireRole("admin"),
+    requirePermission("expenses.read"),
     handle(async (req, res) => {
       res.json(
         await storage.listExpenses({
@@ -653,7 +697,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/expenses",
-    requireRole("admin"),
+    requirePermission("expenses.manage"),
     handle(async (req, res) => {
       const input = insertExpenseSchema.parse(req.body);
       const row = await storage.createExpense(input, actorOf(req));
@@ -664,7 +708,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.delete(
     "/api/expenses/:id",
-    requireRole("admin"),
+    requirePermission("expenses.manage"),
     handle(async (req, res) => {
       const ok = await storage.deleteExpense(req.params.id);
       if (!ok) return res.status(404).json({ message: "Xarajat topilmadi" });
@@ -677,7 +721,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/audit",
-    requireRole("admin"),
+    requirePermission("audit.read"),
     handle(async (req, res) => {
       res.json(
         await storage.listAudit({
@@ -698,7 +742,7 @@ export async function registerRoutes(app: Express): Promise<void> {
    */
   app.get(
     "/api/export/patients.csv",
-    requireRole("admin"),
+    requirePermission("data.export"),
     handle(async (req, res) => {
       const { items } = await storage.listPatients({ search: stringParam(req.query.search) });
       csvHeaders(res, `bemorlar-${stamp()}.csv`);
@@ -722,7 +766,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/export/orders.csv",
-    requireRole("admin"),
+    requirePermission("data.export"),
     handle(async (req, res) => {
       const { items } = await storage.listOrders({
         from: stringParam(req.query.from),
@@ -769,7 +813,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/export/expenses.csv",
-    requireRole("admin"),
+    requirePermission("data.export"),
     handle(async (req, res) => {
       const { items } = await storage.listExpenses({
         from: stringParam(req.query.from),
@@ -793,7 +837,7 @@ export async function registerRoutes(app: Express): Promise<void> {
    */
   app.get(
     "/api/backup",
-    requireRole("admin"),
+    requirePermission("backup.download"),
     handle(async (req, res) => {
       const [patientsAll, ordersAll, testsAll, usersAll, expensesAll, settings] = await Promise.all([
         storage.listPatients(),
@@ -834,14 +878,19 @@ export async function registerRoutes(app: Express): Promise<void> {
   app.get(
     "/api/stats",
     requireAuth,
-    handle(async (_req, res) => {
-      res.json(await storage.getDashboardStats());
+    handle(async (req, res) => {
+      const stats = await storage.getDashboardStats();
+      // Counts are everyone's business; the till is not.
+      if (!hasPermission(req, "finance.view")) {
+        return res.json({ ...stats, todayRevenue: null, unpaidAmount: null });
+      }
+      res.json(stats);
     }),
   );
 
   app.get(
     "/api/reports/revenue",
-    requireRole("admin"),
+    requirePermission("reports.view"),
     handle(async (req, res) => {
       const today = localDay(new Date());
       const defaultFrom = new Date();
@@ -864,7 +913,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.put(
     "/api/settings",
-    requireRole("admin"),
+    requirePermission("settings.manage"),
     handle(async (req, res) => {
       const saved = await storage.updateSettings(labSettingsSchema.parse(req.body));
       await audit(req, "update", "settings", "default", "Laboratoriya ma'lumotlari yangilandi");
@@ -874,9 +923,54 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   // ----------------------------------------------------------------- users
 
+  /**
+   * Guards shared by every staff-management route.
+   *
+   * Holding users.manage must not be a back door to more power than one
+   * already has. So a manager can only hand out a role whose permissions they
+   * hold themselves, only a super administrator can create or touch another
+   * super administrator, and the system will not let the last active super
+   * administrator be demoted, disabled or deleted — that would leave nobody
+   * able to repair the setup.
+   */
+  const denied = (res: Response, message: string) => res.status(403).json({ message });
+
+  const isSuperRole = (role: string) => role === SUPER_ADMIN || role === LEGACY_ADMIN;
+
+  async function checkAssignableRole(req: Request, res: Response, requested: string): Promise<boolean> {
+    const roleKey = requested === LEGACY_ADMIN ? SUPER_ADMIN : requested;
+    const role = await storage.getRole(roleKey).catch(() => undefined);
+    if (!role && !SYSTEM_ROLE_KEYS.includes(roleKey)) {
+      res.status(400).json({ message: "Bunday rol mavjud emas" });
+      return false;
+    }
+    if (roleKey === SUPER_ADMIN) {
+      if (!isSuperAdmin(req)) {
+        denied(res, "Super administrator rolini faqat super administrator bera oladi");
+        return false;
+      }
+      return true;
+    }
+    const granted = (await toSessionUser({ ...(req.user as PublicUser), role: roleKey })).permissions;
+    const missing = granted.filter((p) => !hasPermission(req, p));
+    if (missing.length) {
+      denied(
+        res,
+        `Bu rolda sizda yo'q ruxsatlar bor (${missing.map((p) => PERMISSIONS[p].label).join(", ")}). ` +
+          "Uni faqat yuqoriroq vakolatli xodim bera oladi.",
+      );
+      return false;
+    }
+    return true;
+  }
+
+  async function activeSuperAdminCount(): Promise<number> {
+    return (await storage.listUsers()).filter((u) => u.isActive && isSuperRole(u.role)).length;
+  }
+
   app.get(
     "/api/users",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (_req, res) => {
       res.json(await storage.listUsers());
     }),
@@ -884,23 +978,52 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/users",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (req, res) => {
       const input = insertUserSchema.parse(req.body);
+      if (!(await checkAssignableRole(req, res, input.role))) return;
       if (await storage.getUserByUsername(input.username)) {
         return res.status(409).json({ message: "Bu login allaqachon band" });
       }
       const user = await storage.createUser(input);
-      await audit(req, "create", "user", user.id, `${user.fullName} (${user.role}) qo'shildi`);
+      const { roleName } = await toSessionUser(user);
+      await audit(req, "create", "user", user.id, `${user.fullName} (${roleName}) qo'shildi`);
       res.status(201).json(user);
     }),
   );
 
   app.patch(
     "/api/users/:id",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (req, res) => {
       const input = updateUserSchema.parse(req.body);
+      const target = await storage.getUser(req.params.id);
+      if (!target) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+
+      if (isSuperRole(target.role) && !isSuperAdmin(req)) {
+        return denied(res, "Super administrator hisobini faqat super administrator o'zgartira oladi");
+      }
+
+      const nextRole = input.role;
+      const roleChanges = nextRole !== undefined && nextRole !== target.role;
+      const deactivates = input.isActive === false && target.isActive;
+      const isSelf = target.id === req.user?.id;
+
+      if (isSelf && roleChanges) {
+        return res.status(400).json({ message: "O'z rolingizni o'zgartira olmaysiz" });
+      }
+      if (isSelf && deactivates) {
+        return res.status(400).json({ message: "O'z hisobingizni bloklay olmaysiz" });
+      }
+      if (roleChanges && !(await checkAssignableRole(req, res, nextRole))) return;
+
+      const losesSuper = deactivates || (roleChanges && !isSuperRole(nextRole));
+      if (isSuperRole(target.role) && target.isActive && losesSuper && (await activeSuperAdminCount()) <= 1) {
+        return res.status(400).json({
+          message: "Tizimda kamida bitta faol super administrator qolishi kerak",
+        });
+      }
+
       if (input.username) {
         const existing = await storage.getUserByUsername(input.username);
         if (existing && existing.id !== req.params.id) {
@@ -908,9 +1031,31 @@ export async function registerRoutes(app: Express): Promise<void> {
         }
       }
       const user = await storage.updateUser(req.params.id, input);
+      forgetSessionUser(req.params.id);
       if (!user) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
-      const what = input.password ? "paroli almashtirildi" : "ma'lumotlari yangilandi";
-      await audit(req, "update", "user", user.id, `${user.fullName} — ${what}`);
+
+      // Spelled out so the log answers "who gave this person that access".
+      const changes: string[] = [];
+      if (roleChanges) {
+        const [from, to] = await Promise.all([
+          toSessionUser({ ...user, role: target.role }),
+          toSessionUser(user),
+        ]);
+        changes.push(`rol: ${from.roleName} → ${to.roleName}`);
+      }
+      if (input.isActive !== undefined && input.isActive !== target.isActive) {
+        changes.push(input.isActive ? "faollashtirildi" : "bloklandi");
+      }
+      if (input.password) changes.push("paroli almashtirildi");
+      if (input.fullName && input.fullName !== target.fullName) changes.push("F.I.Sh o'zgardi");
+      if (input.username && input.username !== target.username) changes.push(`login: @${input.username}`);
+      await audit(
+        req,
+        "update",
+        "user",
+        user.id,
+        `${user.fullName} — ${changes.length ? changes.join(", ") : "ma'lumotlari yangilandi"}`,
+      );
       res.json(user);
     }),
   );
@@ -924,7 +1069,7 @@ export async function registerRoutes(app: Express): Promise<void> {
    */
   app.post(
     "/api/users/:id/unlock",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (req, res) => {
       const user = await storage.getUser(req.params.id);
       if (!user) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
@@ -939,15 +1084,152 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.delete(
     "/api/users/:id",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (req, res) => {
       if (req.params.id === req.user?.id) {
         return res.status(400).json({ message: "O'z hisobingizni o'chira olmaysiz" });
       }
       const before = await storage.getUser(req.params.id);
+      if (!before) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (isSuperRole(before.role)) {
+        if (!isSuperAdmin(req)) {
+          return denied(res, "Super administrator hisobini faqat super administrator o'chira oladi");
+        }
+        if (before.isActive && (await activeSuperAdminCount()) <= 1) {
+          return res.status(400).json({
+            message: "Tizimda kamida bitta faol super administrator qolishi kerak",
+          });
+        }
+      }
       const ok = await storage.deleteUser(req.params.id);
+      forgetSessionUser(req.params.id);
       if (!ok) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
-      await audit(req, "delete", "user", req.params.id, `${before?.fullName ?? "Xodim"} o'chirildi`);
+      await audit(req, "delete", "user", req.params.id, `${before.fullName} o'chirildi`);
+      res.sendStatus(204);
+    }),
+  );
+
+  // ----------------------------------------------------------------- roles
+
+  /**
+   * A readable, stable key for a new role: "UZI shifokori" → "uzi_shifokori".
+   * Never one of the system keys or the legacy "admin", and never reused.
+   */
+  async function newRoleKey(name: string): Promise<string> {
+    const base =
+      name
+        .toLowerCase()
+        .replace(/[‘’ʻʼ']/g, "")
+        .normalize("NFKD")
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 40) || "rol";
+    const taken = new Set([
+      ...(await storage.listRoles()).map((r) => r.key),
+      ...SYSTEM_ROLE_KEYS,
+      LEGACY_ADMIN,
+    ]);
+    let key = base;
+    for (let i = 2; taken.has(key); i++) key = `${base}_${i}`;
+    return key;
+  }
+
+  /**
+   * Permissions the editor would be granting without holding them. Only newly
+   * added ones count: a role editor may still trim a role that already holds
+   * something they lack.
+   */
+  const beyondOwn = (req: Request, next: readonly Permission[], prev: readonly Permission[] = []) =>
+    isSuperAdmin(req) ? [] : next.filter((p) => !prev.includes(p) && !hasPermission(req, p));
+
+  const labelList = (list: readonly Permission[]) =>
+    list.map((p) => `${PERMISSION_GROUP_LABEL[PERMISSIONS[p].group]}: ${PERMISSIONS[p].label}`).join(", ");
+
+  app.get(
+    "/api/roles",
+    requirePermission("users.manage", "roles.manage"),
+    handle(async (_req, res) => {
+      res.json(await storage.listRoles());
+    }),
+  );
+
+  app.post(
+    "/api/roles",
+    requirePermission("roles.manage"),
+    handle(async (req, res) => {
+      const input = insertRoleSchema.parse(req.body);
+      const over = beyondOwn(req, input.permissions);
+      if (over.length) {
+        return denied(res, `O'zingizda yo'q ruxsatlarni bera olmaysiz: ${labelList(over)}`);
+      }
+      const role = await storage.createRole({ ...input, key: await newRoleKey(input.name) }, actorOf(req));
+      invalidateRoles();
+      await audit(
+        req,
+        "create",
+        "role",
+        role.key,
+        `"${role.name}" roli yaratildi (${role.permissions.length} ta ruxsat)`,
+      );
+      res.status(201).json({ ...role, userCount: 0 });
+    }),
+  );
+
+  app.patch(
+    "/api/roles/:key",
+    requirePermission("roles.manage"),
+    handle(async (req, res) => {
+      if (req.params.key === SUPER_ADMIN) {
+        return res.status(400).json({ message: "Super administrator rolini o'zgartirib bo'lmaydi" });
+      }
+      const input = updateRoleSchema.parse(req.body);
+      const before = await storage.getRole(req.params.key);
+      if (!before) return res.status(404).json({ message: "Rol topilmadi" });
+
+      if (input.permissions) {
+        const over = beyondOwn(req, input.permissions, before.permissions);
+        if (over.length) {
+          return denied(res, `O'zingizda yo'q ruxsatlarni bera olmaysiz: ${labelList(over)}`);
+        }
+      }
+
+      const role = await storage.updateRole(req.params.key, input, actorOf(req));
+      if (!role) return res.status(404).json({ message: "Rol topilmadi" });
+      invalidateRoles();
+
+      const changes: string[] = [];
+      if (input.name !== undefined && input.name !== before.name) changes.push(`nomi "${input.name}"`);
+      if (input.permissions) {
+        const added = role.permissions.filter((p) => !before.permissions.includes(p));
+        const removed = before.permissions.filter((p) => !role.permissions.includes(p));
+        if (added.length) changes.push(`qo'shildi: ${labelList(added)}`);
+        if (removed.length) changes.push(`olib tashlandi: ${labelList(removed)}`);
+      }
+      if (changes.length) {
+        await audit(req, "update", "role", role.key, `"${role.name}" roli — ${changes.join("; ")}`);
+      }
+      const userCount = (await storage.listRoles()).find((r) => r.key === role.key)?.userCount ?? 0;
+      res.json({ ...role, userCount });
+    }),
+  );
+
+  app.delete(
+    "/api/roles/:key",
+    requirePermission("roles.manage"),
+    handle(async (req, res) => {
+      const role = (await storage.listRoles()).find((r) => r.key === req.params.key);
+      if (!role) return res.status(404).json({ message: "Rol topilmadi" });
+      if (role.isSystem) {
+        return res.status(400).json({ message: "TZ'dagi tizim rollarini o'chirib bo'lmaydi" });
+      }
+      if (role.userCount > 0) {
+        return res.status(409).json({
+          message: `Bu rolda ${role.userCount} ta xodim bor. Avval ularga boshqa rol bering.`,
+        });
+      }
+      await storage.deleteRole(role.key);
+      invalidateRoles();
+      await audit(req, "delete", "role", role.key, `"${role.name}" roli o'chirildi`);
       res.sendStatus(204);
     }),
   );

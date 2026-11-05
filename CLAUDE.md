@@ -1,0 +1,226 @@
+# NEOGEN CLINIC — loyiha qo‘llanmasi va ish rejasi
+
+Bu repo hozircha **MedLab** (laboratoriya + kassa tizimi). Maqsad uni **NEOGEN CLINIC** yagona klinika axborot tizimiga aylantirish.
+Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i (o‘zgartirilmagan matn). **TZ — yagona haqiqat manbai.** Har bir vazifa TZ bo‘limiga havola qiladi (masalan `§6.1.5`).
+
+---
+
+## 0. Ish tartibi (har sessiyada)
+
+1. **Keyingi vazifani** shu fayldagi "Ish rejasi" bo‘limidan ol: ro‘yxatdagi birinchi `[ ]` yoki `[~]`. Bosqichlarni tartib bilan bajar, chunki keyingilari oldingilariga tayanadi.
+2. Vazifani boshlashdan oldin unga havola qilingan TZ bo‘limini [docs/TZ.md](docs/TZ.md) dan o‘qi. TZ'da yo‘q narsani o‘ylab topma; noaniq joyni foydalanuvchidan so‘ra.
+3. **Bitta vazifa = bitta tugallangan qism**: sxema → storage (ikkala implementatsiya) → API → UI → test → audit.
+4. Tugatgach:
+   - `npm run check` (tsc) va `npm test` (vitest) o‘tsin.
+   - Ilovani ishga tushirib, o‘zgarishni brauzerda tekshir.
+   - Shu fayldagi belgini `[x]` ga o‘zgartir. Qisman bajarilgan bo‘lsa `[~]` qo‘y va nima qolganini yoz.
+   - "O‘zgarishlar jurnali"ga bitta qator qo‘sh.
+5. Commit faqat foydalanuvchi so‘raganda. Commit xabari: `feat(<modul>): <vazifa ID> <qisqa tavsif>`.
+
+**Belgilar:** `[x]` bajarilgan · `[~]` qisman / boshlangan · `[ ]` boshlanmagan · `[-]` buyurtmachi bilan kelishib bekor qilingan / kechiktirilgan.
+
+---
+
+## 1. Texnik asos (hozirgi holat)
+
+| Qism | Texnologiya |
+|---|---|
+| Frontend | React 18 + Vite, TypeScript, Tailwind, shadcn/ui (Radix), wouter, TanStack Query |
+| Backend | Node.js + Express (TypeScript, `tsx`), Passport (local) + express-session |
+| Baza | PostgreSQL (Neon, `@neondatabase/serverless`) + Drizzle ORM. `DATABASE_URL` bo‘lmasa `.data/db.json` fayl ombori |
+| Hisobot | jspdf + jspdf-autotable (PDF), xlsx (Excel), CSV eksport |
+| Boshqa | QR-kod, Telegram bot (natija yuborish), Vercel serverless (`api/index.js`) |
+
+### Buyruqlar
+- `npm run dev`: dev server, http://localhost:5000 (API + Vite bitta portda)
+- `npm run check`: TypeScript tekshiruvi
+- `npm test`: vitest
+- `npm run db:push`: Drizzle sxemasini bazaga yozish (diqqat: real Neon bazasi)
+- `npm run build` / `npm run vercel-build`
+
+### Papkalar
+- `shared/schema.ts`: **barcha** jadvallar, enumlar, Zod sxemalari, yorliqlar (`*_LABELS`). Yangi jadval shu yerga qo‘shiladi.
+- `server/storage-types.ts`: `IStorage` interfeysi.
+- `server/storage-pg.ts`, `server/storage-file.ts`: **ikkala** implementatsiya. Yangi metod ikkalasiga ham yoziladi, aks holda tsc xato beradi. `storage-file.test.ts` fayl omborini testlaydi.
+- `server/routes.ts`: barcha API. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali.
+- `server/auth.ts`: sessiya, Passport, login blokirovkasi, `forgetSessionUser`.
+- `shared/permissions.ts`: **ruxsatlar katalogi** (`PERMISSIONS`) va TZ §3 dagi 11 ta rolning boshlang‘ich ruxsatlari (`SYSTEM_ROLES`).
+- `server/rbac.ts`: `requirePermission`, `hasPermission`, `toSessionUser`, rollar keshi (60 s, `invalidateRoles()`).
+- `client/src/lib/access.ts`: qaysi sahifa qaysi ruxsat bilan ochiladi (router, sidebar, command palette uchun yagona jadval).
+- `client/src/pages/*`: sahifalar. `client/src/App.tsx`: routing (og‘ir sahifalar `lazy`). `client/src/components/app-sidebar.tsx`: menyu.
+- `client/src/components/ui-kit.tsx`: `PageHeader`, `SectionCard`, `StatCard`, badge'lar, `EmptyState`, `TableSkeleton`, `Pagination`… **Yangi UI shulardan quriladi.**
+- `client/src/lib/format.ts`: pul, telefon, sana formatlari.
+- `scripts/*.mjs`: bir martalik migratsiyalar.
+
+### Kod qoidalari
+- **Interfeys tili: o‘zbek (lotin).** Barcha yorliqlar, xabarlar, xatolar o‘zbekcha. Kod va identifikatorlar inglizcha.
+- Format: telefon `+998 XX XXX XX XX`, pul `1 000 000 so'm`, faqat `format.ts` orqali.
+- Dizayn: oddiy shadcn defaultlari yetarli emas. `ui-kit.tsx` va `index.css` dizayn tizimidan foydalan (premium ko‘rinish).
+- Tibbiy hujjatlar, natijalar va moliyaviy yozuvlar **o‘chirilmaydi**: bekor qilinadi (`cancelled*`) yoki versiyalanadi (`§10`).
+- Har bir muhim jadvalda `id`, `createdAt`, `updatedAt`, `createdBy` / `updatedBy` bo‘ladi (`§10`).
+- Har bir yozish amali `audit()` ga tushadi. Tibbiy ma'lumotni o‘qish ham alohida jurnalga yoziladi (B1.6 dan keyin).
+- Ruxsat **serverda** tekshiriladi. UI'da yashirish faqat qulaylik uchun.
+- **Yangi modul qo‘shilganda ruxsatlar:**
+  1. `shared/permissions.ts` → `PERMISSIONS` ga `modul.amal` kalitlarini qo‘sh (guruh, o‘zbekcha label, tavsif, xavfli bo‘lsa `sensitive: true`). Kerak bo‘lsa `PERMISSION_GROUPS` ga yangi guruh qo‘sh.
+  2. `SYSTEM_ROLES` dagi tegishli rollarga standart sifatida qo‘sh. Diqqat: bu faqat **yangi** bazaga ta'sir qiladi. Mavjud bazada rol qatorlari o‘zgarmaydi, ularni admin "Rollar" ekranidan yoqadi (yoki migratsiya skripti).
+  3. Har bir route'ga `requirePermission(...)`, handler ichidagi nozik holatlarga `hasPermission(req, ...)`.
+  4. Sahifa bo‘lsa `client/src/lib/access.ts` ga qo‘sh, UI'da `can("...")`.
+  5. `super_admin` hamma ruxsatni avtomatik oladi, unga qo‘shish shart emas.
+- Rol kalitlari: `super_admin`, `rahbar`, `registrator`, `shifokor`, `laborant`, `lab_mudiri`, `omborchi`, `hamshira`, `kassir`, `buxgalter`, `auditor`. Eski `admin` = `super_admin` (`canonicalRoleKey`).
+- Baza masofaviy (Neon, so‘rov 0.3–1.8 s): bitta sahifa uchun bir nechta ketma-ket so‘rov qilma, JOIN yoki bitta CTE bilan ol.
+- Migratsiya: sxema o‘zgarsa mavjud ma'lumotni buzmasin (yangi ustunlar nullable yoki default bilan). Real bazaga `db:push` qilishdan oldin foydalanuvchidan so‘ra.
+
+---
+
+## 2. Ochiq qarorlar (buyurtmachi bilan hal qilinadi)
+
+| ID | Masala | Holat |
+|---|---|---|
+| D-1 | **Backend stack.** TZ: Python/Django + DRF (`§2`). Loyiha: Node/Express/TS. Qolgan hamma narsa (React, PostgreSQL, PDF/Excel, modular monolith) mos. | ✅ **Hal qilindi (2026-11-05):** Django kerak emas. Node.js + Express + TypeScript + Drizzle'da davom etiladi. Django'ga o‘tishni qayta taklif qilma. |
+| D-2 | **Hosting va ma'lumot joylashuvi.** TZ O‘zbekiston qonunchiligiga muvofiqlikni talab qiladi (`§12`). Hozir Neon (xorij) + Vercel. | ❓ |
+| D-3 | **Fayl ombori** (UZI rasmlari, PDF arxiv): S3-compatible (`§2`). Provayder tanlanmagan. | ❓ |
+| D-4 | **Analizatorlar protokoli** (`§6.4`): har bir qurilma uchun RS-232 / TCP/IP / HL7 hujjatlari kerak. Brauzer COM-portga ulana olmaydi, shuning uchun klinikada lokal "ko‘prik" xizmati kerak bo‘ladi. | ❓ Qurilma hujjatlari kutilmoqda |
+| D-5 | **MKB-10 katalogi** manbai va tili (o‘zbek/rus). | ❓ |
+
+---
+
+## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
+
+> Holat 05.11.2026 dagi kod tahlili asosida. Umumiy moslik: **≈20–25%**.
+
+### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) ≈60%
+
+- [x] **B1.1** Ma'lumotlar bazasi: PostgreSQL + Drizzle, fayl ombori zaxira varianti.
+- [x] **B1.2** Login va parol: scrypt xesh, brute-force blokirovka (username+IP), eskalatsiyali bloklash.
+- [x] **B1.3** Foydalanuvchilar: CRUD, faollashtirish/bloklash, parol almashtirish.
+- [x] **B1.4** Rollar va ruxsatlar (`§3`, `§10`). 11 ta tizim roli + klinikaning o‘z rollari; 26 ta ruxsat 6 guruhda.
+  - `roles` jadvali (ruxsatlar `text[]` ustunida; katalog kodda, chunki ularni kod tekshiradi). Migratsiya: `npm run db:roles`. Jadval yo‘q bo‘lsa ilova standart rollarda ishlayveradi.
+  - Barcha API `requirePermission` bilan; o‘qish ham yopiq ("faqat o‘z bo‘limini ko‘radi"). Bekor qilish (`orders.cancel`) va pul qaytarish (`payments.refund`, TZ §9.2) alohida ruxsat. Moliyaviy raqamlar `finance.view` siz qaytmaydi.
+  - Huquqni oshirishdan himoya: o‘zida yo‘q ruxsatli rolni berib bo‘lmaydi; super adminni faqat super admin boshqaradi; oxirgi faol super admin o‘chirilmaydi/bloklanmaydi; o‘z rolini va o‘zini bloklab bo‘lmaydi; `super_admin` roli tahrirlanmaydi; tizim rollari va xodimi bor rol o‘chirilmaydi.
+  - UI: Sozlamalar → Rollar (rol kartalari, ruxsatlar matritsasi, tahrirlovchi), Xodimlar (rol tanlash, filtr, qidiruv), ruxsatsiz sahifa uchun "Ruxsat yo‘q" ekrani, sidebar/command palette ruxsat bo‘yicha, Sozlamalar tablari ruxsat bo‘yicha (parol tabi hammaga).
+  - Testlar: `shared/permissions.test.ts`, `server/storage-file.test.ts` (roles), 60 ta API e2e tekshiruv (vaqtinchalik skript bilan).
+  - Neon'da `npm run db:roles` bajarildi (2026-11-05): `roles` jadvali, 11 tizim roli, admin → `super_admin`.
+  - **Qoldi:** `api/index.js` (Vercel) ni `npm run build:api` bilan qayta yig‘ish, deploydan oldin.
+- [ ] **B1.5** `departments` (bo‘limlar) va `doctors` (shifokor profili: user + mutaxassislik + bo‘lim + kabinet). Navbat va statsionar shunga tayanadi.
+- [~] **B1.6** Audit jurnali (`§12`): yozish amallari bor. **Qoldi:** tibbiy ma'lumotlarni *ko‘rish* jurnali (kim, qachon, qaysi bemor kartasini ochdi), auditor uchun filtrli ko‘rish sahifasi.
+- [ ] **B1.7** Sessiya xavfsizligi (`§12`): faol bo‘lmagan seansni yopish (sozlanadigan, masalan 30 daqiqa; hozir 1 yillik `rolling` cookie). Xodim uchun aktiv seanslar ro‘yxati.
+- [ ] **B1.8** Ikki bosqichli autentifikatsiya (`§12`): TOTP (Google Authenticator), ixtiyoriy, rol bo‘yicha majburiy qilish imkoni bilan.
+- [~] **B1.9** Bemor ID (`§4.2`): `patientNumber` bor. **Qoldi:** barcha yangi modullarda faqat shu ID orqali bog‘lanish (qabul mezoni 16.1).
+- [ ] **B1.10** Umumiy ustunlar (`§10`): mavjud jadvallarga `updatedAt` / `updatedBy` qo‘shish.
+
+### Bosqich 2: Registratura (`§4`, `§15.2`) ≈35%
+
+- [~] **B2.1** Yangi bemor formasi (`§4.1.2`). Bor: F.I.Sh., jins, telefon, manzil. **Qoldi:** tug‘ilgan sana (yosh o‘rniga; yosh hisoblanadi), pasport/ID (ixtiyoriy), favqulodda aloqa (`patient_contacts` jadvali).
+- [ ] **B2.2** Takroriy bemorni aniqlash (`§4.2`): F.I.Sh. + tug‘ilgan sana / telefon / pasport bo‘yicha o‘xshashlarni ko‘rsatish, birlashtirish (merge) admin uchun.
+- [~] **B2.3** Bemorlar ro‘yxati (`§4.1.3`): ID, F.I.Sh., telefon bor. **Qoldi:** "oxirgi tashrif" ustuni.
+- [ ] **B2.4** Bemor shaxsiy kartasi (`§4.1.3`, `§4.2`): bitta sahifada barcha tashriflar, qabullar, tahlillar, to‘lovlar, statsionar tarixi.
+- [ ] **B2.5** `visits` (tashriflar, `§10`): har bir kelish bitta tashrif; buyurtma, qabul va to‘lovlar tashrifga bog‘lanadi.
+- [ ] **B2.6** Xizmatlar katalogi (`§4.1.5`): `services` (turi: shifokor ko‘rigi / laboratoriya / UZI / muolaja / boshqa, narx, bo‘lim). Lab `tests` katalogi shu tizimga ulanadi.
+- [ ] **B2.7** Navbat va qabul (`§4.1.4`): `appointments`: shifokor tanlash, qabul vaqti (shifokor jadvali bo‘yicha bo‘sh slotlar), navbat raqami (kunlik, shifokor bo‘yicha), holat (yozildi → keldi → qabulda → yakunlandi / kelmadi / bekor).
+- [ ] **B2.8** Shifokorga elektron yo‘llanma (`§4.2`): qabul yaratilganda shifokor kabinetida paydo bo‘ladi.
+- [x] **B2.9** Laboratoriyaga buyurtma yuborish (`§4.2`).
+- [~] **B2.10** To‘lovni rasmiylashtirish (`§4.2`): lab buyurtmalari uchun bor. Bosqich 7 da umumiy hisobvaraqqa o‘tadi.
+- [ ] **B2.11** Registratura bosh sahifasi (`§4.1.1`): bugungi bemorlar, navbatdagilar, qabulga kelganlar, yangi ro‘yxatdan o‘tganlar, to‘lov holati.
+
+### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 0%
+
+- [ ] **B3.1** Shifokor kabineti (`§5.1.1`): bugungi qabul, kutayotganlar, qabul qilinganlar, tugallanmagan kartalar. Navbatdan bemorni "chaqirish".
+- [ ] **B3.2** Elektron tibbiy karta (`§5.1.2`, `medical_records`): bemor ma'lumotlari, allergiyalar, avvalgi tashxislar, lab natijalari, UZI/tekshiruvlar, davolash tarixi. Bitta umumlashgan ko‘rinish.
+- [ ] **B3.3** Ko‘rik oynasi (`§5.1.3`): shikoyat, anamnez, ko‘rik natijasi, dastlabki tashxis, yakuniy tashxis, tavsiyalar.
+- [ ] **B3.4** Tashxislar va MKB-10 (`§5.1.3`, `diagnoses`): MKB-10 katalogi + qidiruv (D-5), tashxislar tarixi.
+- [ ] **B3.5** Yo‘llanma (`§5.1.4`): lab tahlillari (lab buyurtmasini yaratadi, `§11` Shifokor→Lab), UZI, boshqa tekshiruvlar, mutaxassis konsultatsiyasi (boshqa shifokorga qabul).
+- [ ] **B3.6** Davolash va retsept (`§5.1.5`, `prescriptions`): dori nomi (ombor katalogidan, B5 dan keyin), doza, tartib, davomiylik, muolajalar.
+- [ ] **B3.7** Hujjatni tasdiqlash, imzolash, tuzatish (`§5.2`): imzolangan ko‘rik qulflanadi; tuzatish yangi versiya yaratadi, eskisi saqlanadi (`medical_record_versions`).
+- [ ] **B3.8** Ko‘rik xulosasi PDF (`§5.2`).
+- [ ] **B3.9** Natija shifokorga (`§11`, qabul mezoni 16.4): lab natijasi tasdiqlangach buyurtma bergan shifokorga bildirishnoma va kartaga biriktirish.
+
+### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) ≈55%
+
+- [~] **B4.1** Lab bosh sahifasi (`§6.1.1`): statistikalar bor. **Qoldi:** "tasdiqlanishi kerak" va "bekor qilingan" kartalari, holatlarni TZ bo‘yicha aniq ajratish.
+- [~] **B4.2** Buyurtmalar ro‘yxati (`§6.1.2`). **Qoldi:** "yo‘llanma raqami" (B3.5 dan), tahlil turi ustuni.
+- [~] **B4.3** Namuna qabul qilish (`§6.1.3`): shtrix-kod/QR, holatlar, rad sababi bor. **Qoldi:** namuna turi (qon, siydik, zardob…), probirka turi/rangi, namuna sifati maydoni, **Code 128** shtrix-kod (`§2`).
+- [x] **B4.4** Tahlil kiritish (`§6.1.4`): natija, birlik, referens, me'yor belgisi, izoh.
+- [ ] **B4.5** Natijalarni tasdiqlash (`§6.1.5`): laborant kiritadi → **lab mudiri** tekshiradi va tasdiqlaydi (yoki qaytaradi). Faqat tasdiqlangan natija blankaga va shifokorga chiqadi. Tasdiqlangandan keyin tuzatish versiya bilan.
+- [~] **B4.6** Tahlillar katalogi (`§6.2`): katalog bor. **Qoldi:** TZ'dagi 8 guruh bo‘yicha qayta tasniflash, namuna turi, sarf normasi (B5.6 uchun).
+- [~] **B4.7** Natija blankasi (`§6.3`): bor. **Qoldi:** klinika logotipi (yuklash), tug‘ilgan sana, namuna raqami, tasdiqlovchi mutaxassis, elektron tasdiqlash belgisi (QR orqali tekshirish).
+- [ ] **B4.8** Sifat nazorati (`§6.5`): nazorat materiallari, QC natijalari kiritish, Levey–Jennings grafigi, Westgard qoidalari (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x) bilan avtomatik ogohlantirish, kalibratsiya tarixi, analizator xizmat jurnali, laboratoriyalararo QC natijalari.
+- [ ] **B4.9** Analizatorlar ro‘yxati (`§6.4`, `lab_devices`): qurilmalar, xatolar jurnali.
+- [ ] **B4.10** Analizator integratsiyasi (`§6.4`): import API + lokal ko‘prik (D-4), namuna ID bo‘yicha moslashtirish, avtotekshiruv, takroriy natija nazorati, operator tasdig‘i. Protokol bo‘lmasa qo‘lda kiritish qoladi.
+- [x] **B4.11** Natijani bemorga elektron yetkazish (`§1`): Telegram bot.
+
+### Bosqich 5: Ombor (`§7`, `§15.5`) 0%
+
+- [ ] **B5.1** Mahsulotlar katalogi (`§7.2`, `inventory_items`): 8 tur, o‘lchov birligi, minimal qoldiq.
+- [ ] **B5.2** Kirim hujjati (`§7.3`): yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (`inventory_batches`, `stock_movements`).
+- [ ] **B5.3** Chiqim va bo‘limlarga berish (`§7.1`): qaysi bo‘limga, kim oldi. FEFO (muddati yaqinini birinchi).
+- [ ] **B5.4** Qoldiq va yaroqlilik muddati (`§7.1`, `§7.3`): partiyalar bo‘yicha qoldiq, muddati yaqinlashganlar haqida ogohlantirish.
+- [ ] **B5.5** Inventarizatsiya (`§7.1`): hisoblangan va haqiqiy qoldiq farqi, tuzatish harakati.
+- [ ] **B5.6** Reagent sarfini avtomatik hisoblash (`§7.3`, `§11` Lab→Ombor): tahlil uchun tasdiqlangan sarf normasi bo‘yicha, real sarfni tuzatish imkoni bilan.
+- [ ] **B5.7** Ombor bosh sahifasi va hisobotlari (`§7.1`).
+
+### Bosqich 6: Statsionar (`§8`, `§15.6`) 0%
+
+- [ ] **B6.1** Palata va yotoqlar (`beds`): bo‘lim → palata → yotoq, holati.
+- [ ] **B6.2** Bemorni yotqizish (`§8.1.2`, `admissions`): bemor ID, bo‘lim, palata, yotoq, sana, qabul qiluvchi shifokor.
+- [ ] **B6.3** Statsionar bosh sahifasi (`§8.1.1`): jami, bo‘sh/band o‘rinlar, yangi yotqizilgan, chiqarilayotganlar. Yotoqlar xaritasi.
+- [ ] **B6.4** Kasallik tarixi (`§8.1.3`): shikoyat, anamnez, tashxis, kundalik kuzatuv, lab natijalari, tekshiruvlar, davolash rejasi.
+- [ ] **B6.5** Muolajalar (`§8.1.4`, `procedures`): tayinlov → jadval → hamshira bajaradi (kim, qachon) → holat.
+- [ ] **B6.6** Integratsiya (`§8.2`): lab buyurtmasi kartadan, dori sarfi omborga, xizmatlar (yotoq-kun, muolajalar) kassa hisobiga.
+- [ ] **B6.7** Chiqarish va epikriz (`§8.1.5`): yakuniy tashxis, xulosa, epikriz (avto-to‘ldirish + tahrir), tavsiyalar, PDF.
+
+### Bosqich 7: Kassa va moliya (`§9`, `§15.7`) ≈40%
+
+- [ ] **B7.1** Bemor hisobvarag‘i (`§9.1`, `invoices`): barcha modullardagi xizmatlar (ko‘rik, lab, UZI, muolaja, statsionar) bitta hisobvaraqqa tushadi (`§11`).
+- [~] **B7.2** To‘lov qabul qilish (`§9.2`): naqd, karta, o‘tkazma, qisman to‘lov, chegirma bor (faqat lab buyurtmasi uchun). **Qoldi:** bir nechta xizmat uchun umumiy to‘lov (hisobvaraq orqali), terminal va bank turlarini aniq ajratish.
+- [~] **B7.3** Qarzdorlik nazorati (`§9.1`): buyurtma bo‘yicha bor. **Qoldi:** bemor bo‘yicha jamlangan qarzdorlik sahifasi.
+- [~] **B7.4** To‘lovni qaytarish (`§9.2`): manfiy to‘lov bor. **Qoldi:** vakolatli shaxs tasdig‘i (so‘rov → tasdiq), "qaytarilgan to‘lovlar" ekrani.
+- [ ] **B7.5** Kassa smenasi (`§9.2`): ochish, yopish, kassadagi summa, farq, smena hisoboti.
+- [ ] **B7.6** Chek (`§15.7`): to‘lov cheki chop etish.
+- [ ] **B7.7** Kassa bosh sahifasi, kunlik tushum, xizmatlar narxlari ekrani (`§9.1`).
+- [~] **B7.8** Moliyaviy hisobotlar (`§9.1`): tushum va xarajatlar bor. **Qoldi:** buxgalter uchun davr bo‘yicha to‘liq hisobot.
+
+### Hisobotlar va rahbariyat paneli (`§13`) ≈35%
+
+- [~] **R.1** Rahbariyat boshqaruv paneli: hozirgi bosh sahifa statistikasi asos.
+- [~] **R.2** Kunlik bemorlar soni · [ ] shifokorlar faoliyati · [~] lab tahlillari soni · [ ] eng ko‘p buyuriladigan tahlillar · [ ] reagent sarfi · [ ] ombor qoldig‘i · [ ] statsionar bandligi · [x] kunlik/oylik tushum · [ ] xizmatlar daromadi · [~] qarzdorlik · [x] xarajatlar.
+- [~] **R.3** PDF va Excel eksport: bor. Har yangi hisobotga qo‘shiladi.
+
+### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) ≈10%
+
+- [ ] **B8.1** Real vaqt xabarlari (`§2`, `§11`): WebSocket; navbat, yangi natija, yangi yo‘llanma darhol ko‘rinadi.
+- [ ] **B8.2** Fayl ombori (`§2`, D-3): UZI rasmlari, skanlar, PDF arxiv.
+- [~] **B8.3** Avtomatik zaxira (`§12`, `§14`): `/api/backup` va `db:restore` bor. **Qoldi:** jadval bo‘yicha avtomatik backup va **tiklash sinovi** (qabul mezoni 16.10).
+- [ ] **B8.4** Monitoring va xatolar jurnali (`§14`): server xatolari, modul bo‘yicha javob vaqti.
+- [~] **B8.5** Moslashuvchan interfeys (`§14`): planshet va mobil uchun tekshirish va tuzatish.
+- [ ] **B8.6** Modullararo end-to-end test: TZ `§2` dagi ikkala sxema bo‘yicha to‘liq yo‘l.
+- [ ] **B8.7** Xavfsizlik sinovi (`/security-review` + qo‘lda): ruxsatlarni chetlab o‘tish, IDOR, sessiya.
+- [ ] **B8.8** Yuklama sinovi (`§14`): 150 ta parallel foydalanuvchi.
+- [ ] **B8.9** Xodimlar uchun qo‘llanma (rol bo‘yicha) va ishga tushirish.
+
+---
+
+## 4. Qabul mezonlari (`§16`), yakuniy tekshiruv
+
+| # | Mezon | Bog‘liq vazifalar | Holat |
+|---|---|---|---|
+| 16.1 | Bitta bemor barcha modullarda yagona ID bilan | B1.9, B2.5 | 🟡 |
+| 16.2 | Registraturadan shifokorga buyurtma | B2.7, B2.8, B3.1 | ❌ |
+| 16.3 | Shifokordan laboratoriyaga yo‘llanma | B3.5 | ❌ |
+| 16.4 | Tasdiqlangan natija shifokorga yetadi | B4.5, B3.9 | ❌ |
+| 16.5 | Ombor kirim/chiqim to‘g‘ri hisoblanadi | B5.2–B5.6 | ❌ |
+| 16.6 | Statsionar bemorining elektron tarixi | B6.* | ❌ |
+| 16.7 | Barcha xizmatlar kassa bilan bog‘langan | B2.6, B7.1 | 🟡 |
+| 16.8 | Xodimlar vakolatlari to‘g‘ri ishlaydi | B1.4, B8.7 | 🟡 |
+| 16.9 | Audit barcha muhim o‘zgarishlarni qayd etadi | B1.6 | 🟡 |
+| 16.10 | Zaxiradan tiklash sinovdan o‘tgan | B8.3 | 🟡 |
+
+---
+
+## 5. O‘zgarishlar jurnali
+
+Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilindi`.
+
+- 2026-11-05 · — · Refresh tezligi: foydalanuvchi `localStorage` dan darhol chiziladi, `deserializeUser` 30 s keshlanadi.
+- 2026-11-05 · — · TZ ([docs/TZ.md](docs/TZ.md)) va shu ish rejasi yaratildi.
+- 2026-11-05 · D-1 · Stack qarori: Django o‘rniga joriy Node/Express/TS stack qoladi.
+- 2026-11-05 · B1.4 · RBAC: 11 rol, 26 ruxsat, rollar ekrani, server himoyasi. Yo‘l-yo‘lakay: bazasiz (JSON) rejimni buzayotgan `db-pg` importi tuzatildi; registrator API orqali buyurtmani bekor qila olishi va pul qaytara olishi yopildi.

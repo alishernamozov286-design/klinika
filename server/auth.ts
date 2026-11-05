@@ -4,15 +4,18 @@ import connectPgSimple from "connect-pg-simple";
 import createMemoryStore from "memorystore";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
-import type { PublicUser, Role } from "@shared/schema";
+import type { PublicUser, SessionUser } from "@shared/schema";
 import { verifyPassword } from "./password";
 import { storage } from "./storage";
-import { pool } from "./db-pg";
+// Loaded only when there is a database: db-pg throws without DATABASE_URL,
+// which used to take the no-database (JSON) mode down at import time.
+const pool = process.env.DATABASE_URL ? (await import("./db-pg")).pool : null;
+import { toSessionUser } from "./rbac";
 
 declare global {
   namespace Express {
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
-    interface User extends PublicUser {}
+    interface User extends SessionUser {}
   }
 }
 
@@ -27,7 +30,7 @@ const PgSession = connectPgSimple(session);
  * memory store is only the local, no-database fallback.
  */
 function createSessionStore() {
-  if (!process.env.DATABASE_URL) {
+  if (!pool) {
     return new MemoryStore({ checkPeriod: 24 * 60 * 60 * 1000 });
   }
   return new PgSession({
@@ -36,6 +39,20 @@ function createSessionStore() {
     createTableIfMissing: true,
     pruneSessionInterval: 60 * 60, // seconds
   });
+}
+
+/**
+ * deserializeUser runs on every authenticated request, and with a remote
+ * database each lookup costs 0.3–1.8 s. A page refresh fires several API calls
+ * at once, so the user row was being re-read for each. Kept briefly in memory;
+ * routes that change or remove a user call forgetSessionUser() so edits apply
+ * immediately on this instance.
+ */
+const SESSION_USER_TTL_MS = 30_000;
+const sessionUsers = new Map<string, { user: PublicUser; expires: number }>();
+
+export function forgetSessionUser(id: string) {
+  sessionUsers.delete(id);
 }
 
 export function setupAuth(app: Express) {
@@ -70,7 +87,7 @@ export function setupAuth(app: Express) {
           return done(null, false, { message: "Hisob bloklangan. Administratorga murojaat qiling" });
         }
         const { password: _password, ...pub } = user;
-        return done(null, pub);
+        return done(null, await toSessionUser(pub));
       } catch (err) {
         return done(err as Error);
       }
@@ -81,10 +98,16 @@ export function setupAuth(app: Express) {
 
   passport.deserializeUser(async (id: string, done) => {
     try {
+      const hit = sessionUsers.get(id);
+      if (hit && hit.expires > Date.now()) return done(null, await toSessionUser(hit.user));
       const user = await storage.getUser(id);
-      if (!user || !user.isActive) return done(null, false);
+      if (!user || !user.isActive) {
+        sessionUsers.delete(id);
+        return done(null, false);
+      }
       const { password: _password, ...pub } = user;
-      done(null, pub);
+      sessionUsers.set(id, { user: pub, expires: Date.now() + SESSION_USER_TTL_MS });
+      done(null, await toSessionUser(pub));
     } catch (err) {
       done(err as Error);
     }
@@ -173,18 +196,4 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Avval tizimga kiring" });
   }
   next();
-}
-
-/** Admin passes every gate; other roles must be listed explicitly. */
-export function requireRole(...roles: Role[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.isAuthenticated?.()) {
-      return res.status(401).json({ message: "Avval tizimga kiring" });
-    }
-    const role = req.user?.role as Role | undefined;
-    if (role !== "admin" && (!role || !roles.includes(role))) {
-      return res.status(403).json({ message: "Bu amal uchun ruxsatingiz yo'q" });
-    }
-    next();
-  };
 }

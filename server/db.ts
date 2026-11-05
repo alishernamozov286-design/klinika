@@ -9,6 +9,7 @@ import type {
   OrderTest,
   Patient,
   Payment,
+  RoleRecord,
   Sample,
   TelegramContact,
   Test,
@@ -17,6 +18,7 @@ import type {
 
 export type DbShape = {
   users: User[];
+  roles: RoleRecord[];
   patients: Patient[];
   tests: Test[];
   orders: Order[];
@@ -44,6 +46,7 @@ const TMP_FILE = path.join(DATA_DIR, "db.tmp.json");
 
 export const emptyDb = (): DbShape => ({
   users: [],
+  roles: [],
   patients: [],
   tests: [],
   orders: [],

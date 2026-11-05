@@ -85,11 +85,11 @@ export function OrderDetailDialog({
   if (!order) return null;
 
   const debt = Math.max(0, order.totalAmount - order.paidAmount);
-  const canEditPayment = can("registrator");
+  const canEditPayment = can("payments.create");
   const linked = Boolean(order.patient?.telegramChatId);
   // Same rule as the results queue: every line item filled in.
   const ready = order.items.length > 0 && order.items.every((i) => Boolean(i.result));
-  const canSendTelegram = ready && order.status !== "cancelled" && can("registrator", "laborant");
+  const canSendTelegram = ready && order.status !== "cancelled" && can("results.send");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -239,7 +239,7 @@ export function OrderDetailDialog({
         </ScrollArea>
 
         <DialogFooter className="p-4 border-t flex-wrap gap-2">
-          {can("admin") && order.status !== "cancelled" && (
+          {can("orders.cancel") && order.status !== "cancelled" && (
             <Button
               variant="outline"
               onClick={() => mutation.mutate({ status: "cancelled" })}
@@ -255,7 +255,7 @@ export function OrderDetailDialog({
               Bekor qilish
             </Button>
           )}
-          {can("laborant") && order.status !== "cancelled" && onEnterResults && (
+          {can("results.enter") && order.status !== "cancelled" && onEnterResults && (
             <Button variant="outline" onClick={() => onEnterResults(order)} data-testid="button-goto-results">
               <ClipboardCheck className="h-4 w-4 mr-2" />
               Natija kiritish
@@ -357,7 +357,7 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
                   {p.note ? ` · ${p.note}` : ""}
                 </p>
               </div>
-              {can("admin") && (
+              {can("payments.delete") && (
                 <button
                   type="button"
                   onClick={() => remove.mutate(p.id)}
@@ -408,7 +408,7 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
             </Button>
           </div>
 
-          {can("admin") && order.paidAmount > 0 && (
+          {can("payments.refund") && order.paidAmount > 0 && (
             <button
               type="button"
               onClick={() => add.mutate({ amount: -amount, method, note: "Qaytarildi" })}

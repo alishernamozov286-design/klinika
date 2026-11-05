@@ -8,6 +8,7 @@ import {
   orders,
   patients,
   payments,
+  roles,
   samples,
   telegramContacts,
   tests,
@@ -32,11 +33,14 @@ import {
   type PublicUser,
   type RevenueReportData,
   type ResultFlag,
+  type RoleRecord,
+  type RoleWithUsage,
   type Sample,
   type SampleStatus,
   type TelegramContact,
   type Test,
   type UpdateOrderInput,
+  type UpdateRoleInput,
   type UpdateSampleInput,
   type UpdateUserInput,
   type User,
@@ -45,9 +49,13 @@ import {
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { db } from "./db-pg";
 import { hashPassword } from "./password";
+import { LEGACY_ADMIN, SUPER_ADMIN, SYSTEM_ROLES, isPermission, type Permission } from "@shared/permissions";
 import {
   DEFAULT_SETTINGS,
   SEED_USERS,
+  sortRoles,
+  type CreateRoleArgs,
+  type SeedResult,
   todayKey,
   type Actor,
   type AuditInput,
@@ -114,8 +122,20 @@ const strip = (user: typeof users.$inferSelect): PublicUser => {
  */
 const dayExpr = sql`(${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date`;
 
+const mapRole = (row: typeof roles.$inferSelect): RoleRecord => ({
+  ...row,
+  createdAt: iso(row.createdAt) ?? row.createdAt,
+  updatedAt: iso(row.updatedAt),
+  permissions: (row.permissions ?? []).filter(isPermission) as Permission[],
+});
+
+/** Postgres "undefined_table": the roles migration has not been run yet. */
+export function isMissingTable(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === "42P01";
+}
+
 export class PgStorage implements IStorage {
-  async seed(): Promise<{ createdTests: number; createdUsers: number }> {
+  async seed(): Promise<SeedResult> {
     let createdTests = 0;
     const [{ count: testCount }] = await db
       .select({ count: sql<number>`count(*)::int` })
@@ -162,7 +182,90 @@ export class PgStorage implements IStorage {
       await db.insert(labSettings).values(DEFAULT_SETTINGS);
     }
 
-    return { createdTests, createdUsers };
+    const migrated = await db
+      .update(users)
+      .set({ role: SUPER_ADMIN })
+      .where(eq(users.role, LEGACY_ADMIN))
+      .returning({ id: users.id });
+
+    // One statement for all eleven: on Neon every round trip is a full
+    // network hop, and ON CONFLICT keeps the clinic's edits to existing rows.
+    let createdRoles = 0;
+    try {
+      const inserted = await db
+        .insert(roles)
+        .values(
+          SYSTEM_ROLES.map((r) => ({
+            key: r.key,
+            name: r.name,
+            description: r.description,
+            permissions: [...r.permissions],
+            isSystem: true,
+          })),
+        )
+        .onConflictDoNothing({ target: roles.key })
+        .returning({ key: roles.key });
+      createdRoles = inserted.length;
+    } catch (err) {
+      if (!isMissingTable(err)) throw err;
+      console.warn(
+        "[rbac] 'roles' jadvali topilmadi — standart rollar ishlatiladi. Jadvalni yaratish uchun: npm run db:roles",
+      );
+    }
+
+    return { createdTests, createdUsers, createdRoles, migratedAdmins: migrated.length };
+  }
+
+  // ---------------------------------------------------------------- roles
+
+  async listRoles(): Promise<RoleWithUsage[]> {
+    const rows = await db
+      .select({
+        role: roles,
+        userCount: sql<number>`(SELECT count(*)::int FROM ${users} WHERE ${users.role} = ${roles.key})`,
+      })
+      .from(roles);
+    return sortRoles(rows.map((r) => ({ ...mapRole(r.role), userCount: r.userCount })));
+  }
+
+  async getRole(key: string): Promise<RoleRecord | undefined> {
+    const [row] = await db.select().from(roles).where(eq(roles.key, key)).limit(1);
+    return row && mapRole(row);
+  }
+
+  async createRole(input: CreateRoleArgs, actor: Actor): Promise<RoleRecord> {
+    const [row] = await db
+      .insert(roles)
+      .values({
+        key: input.key,
+        name: input.name,
+        description: input.description ?? null,
+        permissions: [...input.permissions],
+        isSystem: input.isSystem ?? false,
+        updatedBy: actor.id,
+      })
+      .returning();
+    return mapRole(row);
+  }
+
+  async updateRole(key: string, input: UpdateRoleInput, actor: Actor): Promise<RoleRecord | undefined> {
+    const patch: Partial<typeof roles.$inferInsert> = {
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor.id,
+    };
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.description !== undefined) patch.description = input.description ?? null;
+    if (input.permissions !== undefined) patch.permissions = [...input.permissions];
+    const [row] = await db.update(roles).set(patch).where(eq(roles.key, key)).returning();
+    return row && mapRole(row);
+  }
+
+  async deleteRole(key: string): Promise<boolean> {
+    const rows = await db
+      .delete(roles)
+      .where(and(eq(roles.key, key), eq(roles.isSystem, false)))
+      .returning({ key: roles.key });
+    return rows.length > 0;
   }
 
   // ---------------------------------------------------------------- users

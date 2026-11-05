@@ -27,13 +27,16 @@ import { OrderDetailDialog } from "@/components/order-detail-dialog";
 import { useHotkeys, type Hotkey } from "@/hooks/use-hotkeys";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { formatWeekdayDate } from "@/lib/format";
-import type { OrderWithDetails, Patient, Role } from "@shared/schema";
+import type { OrderWithDetails, Patient } from "@shared/schema";
+import type { Permission } from "@shared/permissions";
+import { ROUTE_ACCESS } from "@/lib/access";
 import Login from "@/pages/login";
 import Home from "@/pages/home";
 import Patients from "@/pages/patients";
 import Orders from "@/pages/orders";
 import Results from "@/pages/results";
 import NotFound from "@/pages/not-found";
+import NoAccess from "@/pages/no-access";
 
 /**
  * Split out of the first download. Everything above is on the path a
@@ -48,6 +51,26 @@ const Reports = lazy(() => import("@/pages/reports"));
 const Expenses = lazy(() => import("@/pages/expenses"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 
+/**
+ * Wraps a page in its ROUTE_ACCESS rule. Typing the URL of a screen the role
+ * cannot use shows an explanation instead of a page full of 403 errors; the
+ * server refuses the data either way.
+ */
+function guarded(path: string, Page: React.ComponentType) {
+  const rule: Permission[] = ROUTE_ACCESS[path] ?? [];
+  return function GuardedPage() {
+    const { can } = useAuth();
+    return rule.length === 0 || can(...rule) ? <Page /> : <NoAccess />;
+  };
+}
+
+const HomePage = Home;
+const PatientsPage = guarded("/patients", Patients);
+const OrdersPage = guarded("/orders", Orders);
+const ResultsPage = guarded("/results", Results);
+const ReportsPage = guarded("/reports", Reports);
+const ExpensesPage = guarded("/expenses", Expenses);
+
 function Router() {
   return (
     <Suspense fallback={null}>
@@ -57,12 +80,12 @@ function Router() {
         <Route path="/">
           <Redirect to="/home" replace />
         </Route>
-        <Route path="/home" component={Home} />
-        <Route path="/patients" component={Patients} />
-        <Route path="/orders" component={Orders} />
-        <Route path="/results" component={Results} />
-        <Route path="/reports" component={Reports} />
-        <Route path="/expenses" component={Expenses} />
+        <Route path="/home" component={HomePage} />
+        <Route path="/patients" component={PatientsPage} />
+        <Route path="/orders" component={OrdersPage} />
+        <Route path="/results" component={ResultsPage} />
+        <Route path="/reports" component={ReportsPage} />
+        <Route path="/expenses" component={ExpensesPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route component={NotFound} />
       </Switch>
@@ -81,7 +104,7 @@ const PAGE_TITLES: Record<string, string> = {
 };
 
 function Shell() {
-  const { user, isLoading, logout } = useAuth();
+  const { user, isLoading, logout, can } = useAuth();
   const [location] = useLocation();
 
   // Real-time soat — har daqiqada yangilanadi
@@ -103,7 +126,8 @@ function Shell() {
   const [presetPatient, setPresetPatient] = useState<Patient | null>(null);
   const [detailOrder, setDetailOrder] = useState<OrderWithDetails | null>(null);
 
-  const canRegister = user?.role === "admin" || user?.role === "registrator";
+  const canAddPatient = can("patients.create");
+  const canAddOrder = can("orders.create");
 
   const hotkeys = useMemo<Hotkey[]>(
     () => [
@@ -111,9 +135,9 @@ function Shell() {
       // The palette is also reachable with "/", the convention everywhere from
       // Gmail to GitHub, for people who never learn the Ctrl combination.
       { key: "/", handler: () => setPaletteOpen(true) },
-      ...(canRegister
+      ...(canAddPatient ? [{ key: "n", ctrl: true, shift: true, handler: () => setQuickPatient(true) }] : []),
+      ...(canAddOrder
         ? [
-            { key: "n", ctrl: true, shift: true, handler: () => setQuickPatient(true) },
             {
               key: "n",
               ctrl: true,
@@ -125,22 +149,14 @@ function Shell() {
           ]
         : []),
     ],
-    [canRegister],
+    [canAddPatient, canAddOrder],
   );
 
   useHotkeys(hotkeys, Boolean(user));
 
-  // Show interface immediately with cached data - no blocking
-  if (isLoading) {
-    // First ever load - try to show UI optimistically
-    const cachedUser = queryClient.getQueryData<PublicUser | null>(["/api/user"]);
-    if (cachedUser) {
-      // We have cached user, render immediately
-      return null;
-    }
-    // True first load with no cache - show minimal loading
-    return null;
-  }
+  // With a stored user the app renders at once (see use-auth); this is only
+  // reached on a true first visit, where there is nothing to show yet.
+  if (isLoading) return null;
 
   // Everything except /login sits behind the session, so an anonymous visitor
   // is always bounced to the login screen — no protected route can render.
@@ -219,7 +235,7 @@ function Shell() {
                   </div>
                 </DropdownMenuLabel>
                 <div className="px-2 pb-2">
-                  <RoleBadge role={user.role as Role} className="text-[11px]" />
+                  <RoleBadge role={user.role} name={user.roleName} className="text-[11px]" />
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem

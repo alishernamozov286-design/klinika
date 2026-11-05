@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 // Wallet — Xarajatlar menyusi qaytarilganda kerak bo'ladi (pastdagi izohga qarang).
 import { BarChart3, FileText, FlaskConical, Home, Settings, ShieldCheck, Users } from "lucide-react";
 import { Link, useLocation } from "wouter";
-import type { LabSettings, Role } from "@shared/schema";
+import type { LabSettings } from "@shared/schema";
 import {
   Sidebar,
   SidebarContent,
@@ -18,9 +18,10 @@ import {
 import { Avatar, RoleBadge } from "@/components/ui-kit";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+import { ROUTE_ACCESS } from "@/lib/access";
 
-/** `roles` lists who sees the link; admin sees everything (see useAuth().can). */
-type NavItem = { title: string; url: string; icon: typeof Home; roles?: Role[] };
+/** Visibility comes from ROUTE_ACCESS, the same table the router guard uses. */
+type NavItem = { title: string; url: string; icon: typeof Home };
 
 const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
   {
@@ -35,12 +36,12 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
   {
     label: "Boshqaruv",
     items: [
-      { title: "Hisobotlar", url: "/reports", icon: BarChart3, roles: [] },
+      { title: "Hisobotlar", url: "/reports", icon: BarChart3 },
       // Xarajatlar sahifasi hozircha yashirilgan — /expenses yo'li va uning
       // API'si ishlaydi, faqat menyuga chiqarilmaydi. Tayyor bo'lganda shu
       // qatorni qayta ochish kifoya:
-      // { title: "Xarajatlar", url: "/expenses", icon: Wallet, roles: [] },
-      { title: "Sozlamalar", url: "/settings", icon: Settings, roles: [] },
+      // { title: "Xarajatlar", url: "/expenses", icon: Wallet },
+      { title: "Sozlamalar", url: "/settings", icon: Settings },
     ],
   },
 ];
@@ -52,7 +53,10 @@ export function AppSidebar() {
 
   const sections = NAV_SECTIONS.map((section) => ({
     ...section,
-    items: section.items.filter((item) => !item.roles || can(...item.roles)),
+    items: section.items.filter((item) => {
+      const rule = ROUTE_ACCESS[item.url];
+      return !rule || can(...rule);
+    }),
   })).filter((section) => section.items.length > 0);
 
   return (
@@ -124,7 +128,7 @@ export function AppSidebar() {
             <Avatar name={user.fullName} size="sm" />
             <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
               <p className="truncate text-sm font-medium leading-tight">{user.fullName}</p>
-              <RoleBadge role={user.role as Role} className="mt-1 h-5 px-1.5 text-[10px]" />
+              <RoleBadge role={user.role} name={user.roleName} className="mt-1 h-5 px-1.5 text-[10px]" />
             </div>
           </div>
           <p className="mt-2 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground group-data-[collapsible=icon]:hidden">

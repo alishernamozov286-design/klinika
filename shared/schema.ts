@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, integer, timestamp, boolean, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { isPermission, type Permission } from "./permissions";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -15,14 +16,12 @@ import { z } from "zod";
 const money = (name: string) => integer(name);
 const isoTimestamp = (name: string) => timestamp(name, { mode: "string", withTimezone: true });
 
-export const ROLES = ["admin", "registrator", "laborant"] as const;
-export type Role = (typeof ROLES)[number];
-
-export const ROLE_LABELS: Record<Role, string> = {
-  admin: "Administrator",
-  registrator: "Registrator",
-  laborant: "Laborant",
-};
+/**
+ * A role key, e.g. "registrator". Roles live in the `roles` table and may be
+ * created by the clinic, so this is a string rather than a closed union; the
+ * built-in ones are listed in shared/permissions.ts (SYSTEM_ROLES).
+ */
+export type Role = string;
 
 export const ORDER_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -111,6 +110,25 @@ export const users = pgTable("users", {
   /** How many locks this account has served — drives the escalation. */
   lockLevel: integer("lock_level").notNull().default(0),
   lastFailedAt: isoTimestamp("last_failed_at"),
+});
+
+/**
+ * Staff roles (TZ §3, §10). `users.role` holds the key.
+ *
+ * Permissions are stored on the row as an array of permission keys rather than
+ * in a join table: a role has a few dozen at most, they are always read and
+ * written as a whole set, and the matrix editor saves the set in one go.
+ */
+export const roles = pgTable("roles", {
+  key: varchar("key").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  permissions: text("permissions").array().notNull().default(sql`'{}'::text[]`),
+  /** One of the TZ §3 roles. These cannot be deleted; their key is fixed. */
+  isSystem: boolean("is_system").notNull().default(false),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
 });
 
 export const patients = pgTable("patients", {
@@ -328,6 +346,21 @@ export const labSettings = pgTable("lab_settings", {
 
 export type User = typeof users.$inferSelect;
 export type PublicUser = Omit<User, "password">;
+
+export type RoleRecord = Omit<typeof roles.$inferSelect, "permissions"> & { permissions: Permission[] };
+
+/** A role as the admin screens list it: with how many staff currently hold it. */
+export type RoleWithUsage = RoleRecord & { userCount: number };
+
+/**
+ * The signed-in user as the server attaches it to the request and as
+ * /api/user returns it: the account plus everything resolved from its role,
+ * so neither the routes nor the client have to look the role up again.
+ */
+export type SessionUser = PublicUser & {
+  roleName: string;
+  permissions: Permission[];
+};
 
 export type Patient = typeof patients.$inferSelect;
 
@@ -586,13 +619,35 @@ export const insertUserSchema = createInsertSchema(users)
       .regex(/^[a-z0-9_.-]+$/i, "Faqat lotin harflari, raqam va _ . - belgilari"),
     password: z.string().min(5, "Parol kamida 5 ta belgidan iborat bo'lishi kerak"),
     fullName: z.string().trim().min(3, "F.I.Sh kiriting"),
-    role: z.enum(ROLES),
+    role: z.string().trim().min(1, "Rolni tanlang"),
     isActive: z.boolean().default(true),
   });
 
 export const updateUserSchema = insertUserSchema.partial().extend({
   password: z.string().min(5, "Parol kamida 5 ta belgidan iborat bo'lishi kerak").optional().or(z.literal("")),
 });
+
+const permissionList = z
+  .array(z.string())
+  .transform((list, ctx) => {
+    const unknown = list.filter((p) => !isPermission(p));
+    if (unknown.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Noma'lum ruxsat: ${unknown.join(", ")}` });
+      return z.NEVER;
+    }
+    return Array.from(new Set(list)) as Permission[];
+  });
+
+export const insertRoleSchema = z.object({
+  name: z.string().trim().min(2, "Rol nomini kiriting").max(60, "Nom juda uzun"),
+  description: z.string().trim().max(240, "Tavsif juda uzun").nullish(),
+  permissions: permissionList.default([]),
+});
+
+export const updateRoleSchema = insertRoleSchema.partial();
+
+export type InsertRole = z.infer<typeof insertRoleSchema>;
+export type UpdateRoleInput = z.infer<typeof updateRoleSchema>;
 
 export const loginSchema = z.object({
   username: z.string().trim().min(1, "Loginni kiriting"),
@@ -631,9 +686,11 @@ export type DashboardStatsData = {
   todayPatients: number;
   pendingTests: number;
   readyTests: number;
-  todayRevenue: number;
+  /** Null for users without finance.view — the server withholds it. */
+  todayRevenue: number | null;
   totalPatients: number;
-  unpaidAmount: number;
+  /** Null for users without finance.view — the server withholds it. */
+  unpaidAmount: number | null;
 };
 
 export type RevenuePoint = {

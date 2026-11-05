@@ -415,3 +415,71 @@ describe("samples", () => {
     expect(await storage.getOrderByBarcode(`LAB-${order.orderNumber}`)).toBeUndefined();
   });
 });
+
+describe("roles", () => {
+  it("seeds the eleven TZ roles and migrates the legacy admin", async () => {
+    const roles = await storage.listRoles();
+    expect(roles.map((r) => r.key)).toEqual([
+      "super_admin",
+      "rahbar",
+      "registrator",
+      "shifokor",
+      "laborant",
+      "lab_mudiri",
+      "omborchi",
+      "hamshira",
+      "kassir",
+      "buxgalter",
+      "auditor",
+    ]);
+    expect(roles.every((r) => r.isSystem)).toBe(true);
+    // The seeded administrator is created straight into the new role.
+    expect(roles.find((r) => r.key === "super_admin")?.userCount).toBe(1);
+  });
+
+  it("never overwrites a role the clinic has edited", async () => {
+    await storage.updateRole("kassir", { permissions: ["patients.read"] }, ACTOR);
+    await storage.seed();
+    expect((await storage.getRole("kassir"))?.permissions).toEqual(["patients.read"]);
+  });
+
+  it("hands out copies, so a role read before an update still shows the old value", async () => {
+    const before = await storage.getRole("shifokor");
+    await storage.updateRole("shifokor", { permissions: ["patients.read"] }, ACTOR);
+    expect(before?.permissions).toEqual(["patients.read", "orders.read"]);
+  });
+
+  it("stamps who edited a role and when", async () => {
+    const role = await storage.updateRole("auditor", { name: "Ichki auditor" }, ACTOR);
+    expect(role?.name).toBe("Ichki auditor");
+    expect(role?.updatedBy).toBe(ACTOR.id);
+    expect(role?.updatedAt).toBeTruthy();
+  });
+
+  it("creates and deletes a custom role, but never a system one", async () => {
+    const custom = await storage.createRole(
+      { key: "uzi_shifokori", name: "UZI shifokori", description: null, permissions: ["patients.read"] },
+      ACTOR,
+    );
+    expect(custom.isSystem).toBe(false);
+    await expect(
+      storage.createRole({ key: "uzi_shifokori", name: "Dublikat", permissions: [] }, ACTOR),
+    ).rejects.toThrow();
+
+    expect(await storage.deleteRole("registrator")).toBe(false);
+    expect(await storage.deleteRole("uzi_shifokori")).toBe(true);
+    expect(await storage.getRole("uzi_shifokori")).toBeUndefined();
+  });
+
+  it("counts holders per role", async () => {
+    await storage.createUser({
+      username: "kassa1",
+      password: "parol123",
+      fullName: "Karimova Dilnoza",
+      role: "kassir",
+      isActive: true,
+    });
+    const kassir = (await storage.listRoles()).find((r) => r.key === "kassir");
+    expect(kassir?.userCount).toBe(1);
+  });
+});

@@ -71,6 +71,7 @@ type ExpenseResponse = { items: Expense[]; total: number; total_amount: number }
 export default function Expenses() {
   const { toast } = useToast();
   const { can } = useAuth();
+  const canManage = can("expenses.manage");
 
   const [range, setRange] = useState(monthToDate);
   const [page, setPage] = useState(0);
@@ -107,7 +108,7 @@ export default function Expenses() {
     },
   });
 
-  if (!can("admin")) {
+  if (!can("expenses.read")) {
     return (
       <div className="space-y-6">
         <PageHeader title="Xarajatlar" description="Laboratoriya xarajatlari" />
@@ -150,23 +151,27 @@ export default function Expenses() {
             />
             {/* Server-side, so the file covers the whole date range rather
                 than the 25 rows on screen. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="icon" asChild aria-label="Butun davrni CSV yuklab olish">
-                  <a
-                    href={`/api/export/expenses.csv?from=${range.from}&to=${range.to}`}
-                    data-testid="link-export-expenses"
-                  >
-                    <Database className="h-4 w-4" />
-                  </a>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Butun davr (CSV)</TooltipContent>
-            </Tooltip>
-            <Button onClick={() => setAddOpen(true)} className="shadow-brand" data-testid="button-add-expense">
-              <Plus className="mr-2 h-4 w-4" />
-              Xarajat qo'shish
-            </Button>
+            {can("data.export") && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="icon" asChild aria-label="Butun davrni CSV yuklab olish">
+                    <a
+                      href={`/api/export/expenses.csv?from=${range.from}&to=${range.to}`}
+                      data-testid="link-export-expenses"
+                    >
+                      <Database className="h-4 w-4" />
+                    </a>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Butun davr (CSV)</TooltipContent>
+              </Tooltip>
+            )}
+            {canManage && (
+              <Button onClick={() => setAddOpen(true)} className="shadow-brand" data-testid="button-add-expense">
+                <Plus className="mr-2 h-4 w-4" />
+                Xarajat qo'shish
+              </Button>
+            )}
           </div>
         }
       />
@@ -238,10 +243,12 @@ export default function Expenses() {
             title="Bu davrda xarajat yo'q"
             description="Xarajat qo'shsangiz, hisobotdagi sof foyda shunga qarab hisoblanadi."
             action={
-              <Button onClick={() => setAddOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Xarajat qo'shish
-              </Button>
+              canManage ? (
+                <Button onClick={() => setAddOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Xarajat qo'shish
+                </Button>
+              ) : undefined
             }
           />
         ) : (
@@ -276,14 +283,16 @@ export default function Expenses() {
                       <Money value={e.amount} className="font-semibold" />
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setDeleting(e)}
-                        data-testid={`button-delete-expense-${e.id}`}
-                      >
-                        <Trash2 className="h-4 w-4 text-muted-foreground" />
-                      </Button>
+                      {canManage && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleting(e)}
+                          data-testid={`button-delete-expense-${e.id}`}
+                        >
+                          <Trash2 className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

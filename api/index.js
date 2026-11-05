@@ -8,31 +8,332 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// shared/permissions.ts
+function isPermission(value) {
+  return Object.prototype.hasOwnProperty.call(PERMISSIONS, value);
+}
+function canonicalRoleKey(key) {
+  if (!key) return "";
+  return key === LEGACY_ADMIN ? SUPER_ADMIN : key;
+}
+function resolvePermissions(roleKey, stored) {
+  if (canonicalRoleKey(roleKey) === SUPER_ADMIN) return [...ALL_PERMISSIONS];
+  return Array.from(new Set((stored ?? []).filter(isPermission)));
+}
+var PERMISSION_GROUPS, PERMISSION_GROUP_LABEL, PERMISSIONS, ALL_PERMISSIONS, SUPER_ADMIN, LEGACY_ADMIN, SYSTEM_ROLES, SYSTEM_ROLE_KEYS;
+var init_permissions = __esm({
+  "shared/permissions.ts"() {
+    "use strict";
+    PERMISSION_GROUPS = [
+      { key: "patients", label: "Bemorlar", description: "Bemorlar bazasi va shaxsiy kartalar" },
+      { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
+      { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
+      { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
+      { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
+      { key: "system", label: "Tizim", description: "Sozlamalar, xodimlar, rollar va xavfsizlik" }
+    ];
+    PERMISSION_GROUP_LABEL = Object.fromEntries(
+      PERMISSION_GROUPS.map((g) => [g.key, g.label])
+    );
+    PERMISSIONS = {
+      "patients.read": {
+        group: "patients",
+        label: "Ko'rish",
+        description: "Bemorlar ro'yxati va ma'lumotlarini ko'rish"
+      },
+      "patients.create": {
+        group: "patients",
+        label: "Ro'yxatga olish",
+        description: "Yangi bemor qo'shish"
+      },
+      "patients.update": {
+        group: "patients",
+        label: "Tahrirlash",
+        description: "Bemor ma'lumotlarini o'zgartirish"
+      },
+      "patients.delete": {
+        group: "patients",
+        label: "O'chirish",
+        description: "Bemorni bazadan butunlay o'chirish",
+        sensitive: true
+      },
+      "orders.read": {
+        group: "orders",
+        label: "Ko'rish",
+        description: "Buyurtmalar, tahlillar va natijalarni ko'rish"
+      },
+      "orders.create": {
+        group: "orders",
+        label: "Yaratish",
+        description: "Bemorga tahlil buyurtma qilish"
+      },
+      "orders.update": {
+        group: "orders",
+        label: "Tahrirlash",
+        description: "Tahlillar ro'yxati, chegirma va yo'naltiruvchini o'zgartirish"
+      },
+      "orders.cancel": {
+        group: "orders",
+        label: "Bekor qilish",
+        description: "Buyurtmani bekor qilingan holatga o'tkazish"
+      },
+      "orders.delete": {
+        group: "orders",
+        label: "O'chirish",
+        description: "Buyurtmani butunlay o'chirish",
+        sensitive: true
+      },
+      "samples.manage": {
+        group: "lab",
+        label: "Namunalar",
+        description: "Namuna olish, qabul qilish, rad etish va shtrix-kod skanerlash"
+      },
+      "results.enter": {
+        group: "lab",
+        label: "Natija kiritish",
+        description: "Tahlil natijalarini kiritish va tuzatish"
+      },
+      "results.send": {
+        group: "lab",
+        label: "Natija yuborish",
+        description: "Tayyor natijani bemorga Telegram orqali yuborish"
+      },
+      "tests.manage": {
+        group: "lab",
+        label: "Tahlillar katalogi",
+        description: "Tahlil qo'shish, narx va referens oraliqlarni o'zgartirish"
+      },
+      "finance.view": {
+        group: "finance",
+        label: "Moliyaviy ko'rsatkichlar",
+        description: "Bosh sahifada bugungi tushum va qarzdorlikni ko'rish"
+      },
+      "payments.create": {
+        group: "finance",
+        label: "To'lov qabul qilish",
+        description: "Buyurtma uchun to'lov qabul qilish"
+      },
+      "payments.refund": {
+        group: "finance",
+        label: "To'lovni qaytarish",
+        description: "Bemorga pulni qaytarish (TZ \xA79.2: faqat vakolatli shaxs)",
+        sensitive: true
+      },
+      "payments.delete": {
+        group: "finance",
+        label: "To'lov yozuvini o'chirish",
+        description: "Xato kiritilgan to'lov yozuvini o'chirish",
+        sensitive: true
+      },
+      "expenses.read": {
+        group: "finance",
+        label: "Xarajatlarni ko'rish",
+        description: "Xarajatlar ro'yxatini ko'rish"
+      },
+      "expenses.manage": {
+        group: "finance",
+        label: "Xarajatlarni boshqarish",
+        description: "Xarajat qo'shish va o'chirish"
+      },
+      "reports.view": {
+        group: "reports",
+        label: "Hisobotlar",
+        description: "Tushum, foyda, tahlillar va yo'naltiruvchilar hisobotlari"
+      },
+      "data.export": {
+        group: "reports",
+        label: "Bazani yuklab olish",
+        description: "Bemorlar, buyurtmalar va xarajatlarni CSV ko'rinishida to'liq yuklab olish",
+        sensitive: true
+      },
+      "settings.manage": {
+        group: "system",
+        label: "Klinika sozlamalari",
+        description: "Klinika nomi, manzili, rekvizitlari va Telegram sozlamalari"
+      },
+      "users.manage": {
+        group: "system",
+        label: "Xodimlar",
+        description: "Xodim qo'shish, tahrirlash, bloklash va qulfni ochish",
+        sensitive: true
+      },
+      "roles.manage": {
+        group: "system",
+        label: "Rollar va ruxsatlar",
+        description: "Rollarni yaratish va ularning ruxsatlarini o'zgartirish",
+        sensitive: true
+      },
+      "audit.read": {
+        group: "system",
+        label: "Audit jurnali",
+        description: "Kim, qachon, nima qilganini ko'rish"
+      },
+      "backup.download": {
+        group: "system",
+        label: "Zaxira nusxa",
+        description: "Butun bazaning zaxira nusxasini yuklab olish",
+        sensitive: true
+      }
+    };
+    ALL_PERMISSIONS = Object.keys(PERMISSIONS);
+    SUPER_ADMIN = "super_admin";
+    LEGACY_ADMIN = "admin";
+    SYSTEM_ROLES = [
+      {
+        key: SUPER_ADMIN,
+        name: "Super administrator",
+        description: "Butun tizimga to'liq kirish. Tahrirlab bo'lmaydi.",
+        permissions: ALL_PERMISSIONS
+      },
+      {
+        key: "rahbar",
+        name: "Klinika rahbari",
+        description: "Umumiy boshqaruv: barcha ma'lumotlarni ko'rish, hisobotlar, qaytarishlarni tasdiqlash",
+        permissions: [
+          "patients.read",
+          "orders.read",
+          "orders.cancel",
+          "finance.view",
+          "payments.refund",
+          "expenses.read",
+          "reports.view",
+          "data.export",
+          "audit.read"
+        ]
+      },
+      {
+        key: "registrator",
+        name: "Registrator",
+        description: "Bemorlarni ro'yxatga olish, buyurtma va to'lov qabul qilish",
+        permissions: [
+          "patients.read",
+          "patients.create",
+          "patients.update",
+          "orders.read",
+          "orders.create",
+          "orders.update",
+          "samples.manage",
+          "results.send",
+          "finance.view",
+          "payments.create"
+        ]
+      },
+      {
+        key: "shifokor",
+        name: "Shifokor",
+        description: "Tibbiy karta va buyurtmalar, bemor tahlil natijalarini ko'rish",
+        permissions: ["patients.read", "orders.read"]
+      },
+      {
+        key: "laborant",
+        name: "Laborant",
+        description: "Namunalarni qabul qilish va tahlil natijalarini kiritish",
+        permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send"]
+      },
+      {
+        key: "lab_mudiri",
+        name: "Laboratoriya mudiri",
+        description: "Laboratoriya ishini nazorat qilish, natijalarni tasdiqlash, tahlillar katalogi",
+        permissions: [
+          "patients.read",
+          "orders.read",
+          "orders.cancel",
+          "samples.manage",
+          "results.enter",
+          "results.send",
+          "tests.manage",
+          "reports.view"
+        ]
+      },
+      {
+        key: "omborchi",
+        name: "Omborchi",
+        description: "Ombor: kirim, chiqim va qoldiq",
+        permissions: []
+      },
+      {
+        key: "hamshira",
+        name: "Statsionar hamshirasi",
+        description: "Bemor parvarishi, muolajalar va namuna olish",
+        permissions: ["patients.read", "orders.read", "samples.manage"]
+      },
+      {
+        key: "kassir",
+        name: "Kassa xodimi",
+        description: "To'lovlarni qabul qilish",
+        permissions: ["patients.read", "orders.read", "finance.view", "payments.create"]
+      },
+      {
+        key: "buxgalter",
+        name: "Buxgalter",
+        description: "Moliyaviy hisobotlar va xarajatlar",
+        permissions: [
+          "orders.read",
+          "finance.view",
+          "expenses.read",
+          "expenses.manage",
+          "reports.view",
+          "data.export"
+        ]
+      },
+      {
+        key: "auditor",
+        name: "Auditor",
+        description: "Ruxsat etilgan tarix va hisobotlarni faqat ko'rish",
+        permissions: [
+          "patients.read",
+          "orders.read",
+          "finance.view",
+          "expenses.read",
+          "reports.view",
+          "audit.read"
+        ]
+      }
+    ];
+    SYSTEM_ROLE_KEYS = SYSTEM_ROLES.map((r) => r.key);
+  }
+});
+
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
+  EXPENSE_CATEGORIES: () => EXPENSE_CATEGORIES,
   ORDER_STATUSES: () => ORDER_STATUSES,
   ORDER_STATUS_LABELS: () => ORDER_STATUS_LABELS,
+  PAYMENT_METHODS: () => PAYMENT_METHODS,
   RESULT_FLAGS: () => RESULT_FLAGS,
-  ROLES: () => ROLES,
-  ROLE_LABELS: () => ROLE_LABELS,
+  SAMPLE_REJECT_REASONS: () => SAMPLE_REJECT_REASONS,
+  SAMPLE_STATUSES: () => SAMPLE_STATUSES,
+  SAMPLE_STATUS_LABELS: () => SAMPLE_STATUS_LABELS,
+  auditLog: () => auditLog,
+  changePasswordSchema: () => changePasswordSchema,
   createOrderSchema: () => createOrderSchema,
+  createPaymentSchema: () => createPaymentSchema,
+  expenses: () => expenses,
+  insertExpenseSchema: () => insertExpenseSchema,
   insertPatientSchema: () => insertPatientSchema,
+  insertRoleSchema: () => insertRoleSchema,
   insertTestSchema: () => insertTestSchema,
   insertUserSchema: () => insertUserSchema,
   labSettings: () => labSettings,
   labSettingsSchema: () => labSettingsSchema,
+  localDayString: () => localDayString,
   loginSchema: () => loginSchema,
   nationalPhoneDigits: () => nationalPhoneDigits,
   normalizeUzPhone: () => normalizeUzPhone,
   orderTests: () => orderTests,
   orders: () => orders,
   patients: () => patients,
+  payments: () => payments,
+  roles: () => roles,
+  samples: () => samples,
   saveResultsSchema: () => saveResultsSchema,
   sessions: () => sessions,
   telegramContacts: () => telegramContacts,
   tests: () => tests,
   updateOrderSchema: () => updateOrderSchema,
+  updateRoleSchema: () => updateRoleSchema,
+  updateSampleSchema: () => updateSampleSchema,
   updateUserSchema: () => updateUserSchema,
   users: () => users
 });
@@ -46,23 +347,25 @@ function normalizeUzPhone(value) {
   return `+998 ${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5, 7)} ${digits.slice(7, 9)}`;
 }
 function nationalPhoneDigits(value) {
-  let digits = (value ?? "").replace(/\D/g, "");
-  if (digits.startsWith("998")) digits = digits.slice(3);
-  else if (digits.length === 10 && digits.startsWith("8")) digits = digits.slice(1);
+  const raw = (value ?? "").trim();
+  const explicit = raw.match(/^\+\s*998\s*(.*)$/);
+  if (explicit) return explicit[1].replace(/\D/g, "").slice(0, 9);
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length > 9 && digits.startsWith("998")) return digits.slice(3, 12);
+  if (digits.length === 10 && digits.startsWith("8")) return digits.slice(1);
   return digits.slice(0, 9);
 }
-var money, isoTimestamp, ROLES, ROLE_LABELS, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, users, patients, tests, orders, orderTests, telegramContacts, sessions, labSettings, insertPatientSchema, insertTestSchema, createOrderSchema, updateOrderSchema, saveResultsSchema, insertUserSchema, updateUserSchema, loginSchema, labSettingsSchema;
+function localDayString(value) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+}
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, users, roles, patients, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, labSettings, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
+    init_permissions();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
-    ROLES = ["admin", "registrator", "laborant"];
-    ROLE_LABELS = {
-      admin: "Administrator",
-      registrator: "Registrator",
-      laborant: "Laborant"
-    };
     ORDER_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
     ORDER_STATUS_LABELS = {
       pending: "Kutilmoqda",
@@ -71,6 +374,32 @@ var init_schema = __esm({
       cancelled: "Bekor qilingan"
     };
     RESULT_FLAGS = ["low", "normal", "high"];
+    PAYMENT_METHODS = ["naqd", "karta", "o'tkazma"];
+    SAMPLE_STATUSES = ["kutilmoqda", "olindi", "qabul_qilindi", "rad_etildi"];
+    SAMPLE_STATUS_LABELS = {
+      kutilmoqda: "Kutilmoqda",
+      olindi: "Olindi",
+      qabul_qilindi: "Qabul qilindi",
+      rad_etildi: "Rad etildi"
+    };
+    SAMPLE_REJECT_REASONS = [
+      "Gemoliz",
+      "Miqdori yetarli emas",
+      "Noto'g'ri probirka",
+      "Probirka buzilgan",
+      "Belgilanmagan",
+      "Ivib qolgan",
+      "Boshqa"
+    ];
+    EXPENSE_CATEGORIES = [
+      "Reaktivlar",
+      "Ish haqi",
+      "Ijara",
+      "Kommunal",
+      "Jihoz",
+      "Soliq",
+      "Boshqa"
+    ];
     users = pgTable("users", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       username: text("username").notNull().unique(),
@@ -78,10 +407,40 @@ var init_schema = __esm({
       fullName: text("full_name").notNull(),
       role: text("role").notNull().default("registrator"),
       isActive: boolean("is_active").notNull().default(true),
-      createdAt: isoTimestamp("created_at").defaultNow().notNull()
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      /**
+       * Escalating lockout state, kept on the row rather than in memory.
+       *
+       * In memory it would not survive a restart — and on serverless, where each
+       * request may land on a different instance, it would barely survive at all.
+       * A week-long lock that a redeploy silently lifts is not a lock.
+       */
+      failedAttempts: integer("failed_attempts").notNull().default(0),
+      /** Null when the account is not locked. */
+      lockedUntil: isoTimestamp("locked_until"),
+      /** How many locks this account has served — drives the escalation. */
+      lockLevel: integer("lock_level").notNull().default(0),
+      lastFailedAt: isoTimestamp("last_failed_at")
+    });
+    roles = pgTable("roles", {
+      key: varchar("key").primaryKey(),
+      name: text("name").notNull(),
+      description: text("description"),
+      permissions: text("permissions").array().notNull().default(sql`'{}'::text[]`),
+      /** One of the TZ §3 roles. These cannot be deleted; their key is fixed. */
+      isSystem: boolean("is_system").notNull().default(false),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
     });
     patients = pgTable("patients", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // The number the registrator and the patient actually speak — "bemor №14",
+      // handed out like a queue ticket. Same identity-sequence trick as
+      // orders.orderNumber: Postgres allocates it, so two registrars saving at the
+      // same moment can never be given the same number. The uuid above stays the
+      // key everything else joins on.
+      patientNumber: integer("patient_number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
       fullName: text("full_name").notNull(),
       phone: text("phone").notNull(),
       address: text("address"),
@@ -113,6 +472,9 @@ var init_schema = __esm({
       paidAmount: money("paid_amount").notNull().default(0),
       status: text("status").notNull().default("pending"),
       notes: text("notes"),
+      /** Who sent the patient — the lab's main growth question. Free text: most
+          referrals are spoken, and a doctor directory would be a table nobody fills. */
+      referrer: text("referrer"),
       createdBy: varchar("created_by"),
       createdAt: isoTimestamp("created_at").defaultNow().notNull(),
       completedAt: isoTimestamp("completed_at"),
@@ -132,8 +494,78 @@ var init_schema = __esm({
       result: text("result"),
       flag: text("flag"),
       notes: text("notes"),
+      /** Who signed off this value. A result on a medical form always has to be
+          answerable for, and orders.createdBy only covers the registration. */
+      enteredBy: varchar("entered_by"),
       completedAt: isoTimestamp("completed_at")
     });
+    samples = pgTable(
+      "samples",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        orderId: varchar("order_id").notNull(),
+        /** Human- and scanner-readable, e.g. "LAB-1042". Unique across the lab. */
+        barcode: text("barcode").notNull().unique(),
+        status: text("status").notNull().default("kutilmoqda"),
+        /** Set when the tube is drawn, and by whom. */
+        collectedAt: isoTimestamp("collected_at"),
+        collectedBy: varchar("collected_by"),
+        collectedByName: text("collected_by_name"),
+        /** Set when the laboratory accepts the tube as fit to run. */
+        receivedAt: isoTimestamp("received_at"),
+        receivedBy: varchar("received_by"),
+        receivedByName: text("received_by_name"),
+        /** Set when the tube is refused; reason is required at that point. */
+        rejectedAt: isoTimestamp("rejected_at"),
+        rejectedBy: varchar("rejected_by"),
+        rejectedByName: text("rejected_by_name"),
+        rejectReason: text("reject_reason"),
+        rejectNote: text("reject_note"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull()
+      },
+      // Every order screen loads its sample by orderId; the barcode index backs
+      // the scanner lookup, which must stay fast with a full year of tubes in it.
+      (t) => ({
+        orderIdx: index("IDX_samples_order").on(t.orderId),
+        barcodeIdx: index("IDX_samples_barcode").on(t.barcode)
+      })
+    );
+    payments = pgTable("payments", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      orderId: varchar("order_id").notNull(),
+      /** Negative for a refund, so the history reads as a ledger. */
+      amount: money("amount").notNull(),
+      method: text("method").notNull().default("naqd"),
+      note: text("note"),
+      createdBy: varchar("created_by"),
+      createdByName: text("created_by_name"),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull()
+    });
+    expenses = pgTable("expenses", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      category: text("category").notNull(),
+      amount: money("amount").notNull(),
+      note: text("note"),
+      /** The day the money was actually spent, which is not always today. */
+      spentOn: text("spent_on").notNull(),
+      createdBy: varchar("created_by"),
+      createdByName: text("created_by_name"),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull()
+    });
+    auditLog = pgTable(
+      "audit_log",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        userId: varchar("user_id"),
+        userName: text("user_name").notNull(),
+        action: text("action").notNull(),
+        entity: text("entity").notNull(),
+        entityId: varchar("entity_id"),
+        summary: text("summary").notNull(),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull()
+      },
+      (t) => ({ createdIdx: index("IDX_audit_created").on(t.createdAt) })
+    );
     telegramContacts = pgTable("telegram_contacts", {
       chatId: text("chat_id").primaryKey(),
       phone: text("phone").notNull(),
@@ -160,7 +592,7 @@ var init_schema = __esm({
       director: text("director"),
       licenseNumber: text("license_number")
     });
-    insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true, telegramChatId: true, telegramLinkedAt: true }).extend({
+    insertPatientSchema = createInsertSchema(patients).omit({ id: true, patientNumber: true, createdAt: true, telegramChatId: true, telegramLinkedAt: true }).extend({
       fullName: z.string().trim().min(3, "F.I.Sh kamida 3 ta belgidan iborat bo'lishi kerak"),
       phone: z.string().trim().min(7, "Telefon raqamini to'g'ri kiriting").transform(normalizeUzPhone),
       age: z.coerce.number().int().min(0, "Yosh manfiy bo'lmasligi kerak").max(130, "Yoshni tekshiring").nullish(),
@@ -175,18 +607,60 @@ var init_schema = __esm({
       referenceRange: z.string().trim().nullish(),
       isActive: z.boolean().default(true)
     });
+    uniqueTestIds = z.array(z.string()).min(1, "Kamida bitta tahlil tanlang").transform((ids) => Array.from(new Set(ids)));
     createOrderSchema = z.object({
       patientId: z.string().min(1, "Bemorni tanlang"),
-      testIds: z.array(z.string()).min(1, "Kamida bitta tahlil tanlang"),
+      testIds: uniqueTestIds,
       discount: z.coerce.number().int().min(0).default(0),
       paidAmount: z.coerce.number().int().min(0).default(0),
-      notes: z.string().trim().nullish()
+      notes: z.string().trim().nullish(),
+      referrer: z.string().trim().nullish()
     });
     updateOrderSchema = z.object({
       status: z.enum(ORDER_STATUSES).optional(),
       discount: z.coerce.number().int().min(0).optional(),
       paidAmount: z.coerce.number().int().min(0).optional(),
-      notes: z.string().trim().nullish()
+      notes: z.string().trim().nullish(),
+      referrer: z.string().trim().nullish(),
+      /**
+       * The order's whole test list, when the registrar corrects it. Sending the
+       * full list rather than add/remove deltas is what makes the edit safe under
+       * two people editing at once: last writer wins on a set, where deltas would
+       * silently compound. Lines already holding a result are never dropped —
+       * see updateOrder in the storage layer.
+       */
+      testIds: uniqueTestIds.optional()
+    });
+    updateSampleSchema = z.object({
+      status: z.enum(SAMPLE_STATUSES),
+      rejectReason: z.enum(SAMPLE_REJECT_REASONS).nullish(),
+      rejectNote: z.string().trim().max(300).nullish()
+    }).refine((v) => v.status !== "rad_etildi" || Boolean(v.rejectReason), {
+      message: "Rad etish sababini tanlang",
+      path: ["rejectReason"]
+    });
+    createPaymentSchema = z.object({
+      /** Negative is allowed: that is how a refund is recorded. */
+      amount: z.coerce.number().int().refine((n) => n !== 0, "Summani kiriting"),
+      method: z.enum(PAYMENT_METHODS).default("naqd"),
+      note: z.string().trim().nullish()
+    });
+    insertExpenseSchema = z.object({
+      category: z.enum(EXPENSE_CATEGORIES),
+      amount: z.coerce.number().int().min(1, "Summani kiriting"),
+      note: z.string().trim().nullish(),
+      spentOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Sanani tanlang").default(() => localDayString(/* @__PURE__ */ new Date()))
+    });
+    changePasswordSchema = z.object({
+      currentPassword: z.string().min(1, "Joriy parolni kiriting"),
+      newPassword: z.string().min(5, "Yangi parol kamida 5 ta belgidan iborat bo'lishi kerak"),
+      confirmPassword: z.string().min(1, "Parolni takrorlang")
+    }).refine((v) => v.newPassword === v.confirmPassword, {
+      message: "Parollar mos kelmadi",
+      path: ["confirmPassword"]
+    }).refine((v) => v.newPassword !== v.currentPassword, {
+      message: "Yangi parol eskisidan farq qilishi kerak",
+      path: ["newPassword"]
     });
     saveResultsSchema = z.object({
       results: z.array(
@@ -202,12 +676,26 @@ var init_schema = __esm({
       username: z.string().trim().min(3, "Login kamida 3 ta belgidan iborat bo'lishi kerak").regex(/^[a-z0-9_.-]+$/i, "Faqat lotin harflari, raqam va _ . - belgilari"),
       password: z.string().min(5, "Parol kamida 5 ta belgidan iborat bo'lishi kerak"),
       fullName: z.string().trim().min(3, "F.I.Sh kiriting"),
-      role: z.enum(ROLES),
+      role: z.string().trim().min(1, "Rolni tanlang"),
       isActive: z.boolean().default(true)
     });
     updateUserSchema = insertUserSchema.partial().extend({
       password: z.string().min(5, "Parol kamida 5 ta belgidan iborat bo'lishi kerak").optional().or(z.literal(""))
     });
+    permissionList = z.array(z.string()).transform((list, ctx) => {
+      const unknown = list.filter((p) => !isPermission(p));
+      if (unknown.length) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Noma'lum ruxsat: ${unknown.join(", ")}` });
+        return z.NEVER;
+      }
+      return Array.from(new Set(list));
+    });
+    insertRoleSchema = z.object({
+      name: z.string().trim().min(2, "Rol nomini kiriting").max(60, "Nom juda uzun"),
+      description: z.string().trim().max(240, "Tavsif juda uzun").nullish(),
+      permissions: permissionList.default([])
+    });
+    updateRoleSchema = insertRoleSchema.partial();
     loginSchema = z.object({
       username: z.string().trim().min(1, "Loginni kiriting"),
       password: z.string().min(1, "Parolni kiriting")
@@ -248,6 +736,66 @@ var init_password = __esm({
   }
 });
 
+// shared/reference-range.ts
+function parseResultValue(result) {
+  const raw = (result ?? "").trim().replace(",", ".");
+  if (!raw) return null;
+  if (!/^-?\d+(\.\d+)?$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+function parseBounds(clause) {
+  const text2 = clause.trim();
+  const between = text2.match(new RegExp(`(${NUM})\\s*[-\u2013\u2014]\\s*(${NUM})`));
+  if (between) {
+    const min = toNum(between[1]);
+    const max = toNum(between[2]);
+    if (min <= max) return { min, max };
+    return null;
+  }
+  const upper = text2.match(new RegExp(`[<\u2264]\\s*(${NUM})`));
+  if (upper) return { max: toNum(upper[1]) };
+  const lower = text2.match(new RegExp(`[>\u2265]\\s*(${NUM})`));
+  if (lower) return { min: toNum(lower[1]) };
+  return null;
+}
+function selectClause(range, ctx) {
+  const clauses = range.split(/[,;]/).map((c) => c.trim()).filter(Boolean);
+  const sexed = clauses.filter((c) => MALE.test(c) || FEMALE.test(c));
+  if (sexed.length === 0) return range;
+  const gender = (ctx.gender ?? "").trim().toLowerCase();
+  const wantMale = MALE.test(gender);
+  const wantFemale = FEMALE.test(gender);
+  if (!wantMale && !wantFemale) return null;
+  const match = sexed.find((c) => wantMale ? MALE.test(c) : FEMALE.test(c));
+  if (!match) return null;
+  return match.replace(/^[^:]*:/, "");
+}
+function computeFlag(result, referenceRange, ctx = {}) {
+  const value = parseResultValue(result);
+  if (value === null) return null;
+  const range = (referenceRange ?? "").trim();
+  if (!range) return null;
+  const clause = selectClause(range, ctx);
+  if (clause === null) return null;
+  const bounds = parseBounds(clause);
+  if (!bounds) return null;
+  if (bounds.min === void 0 && bounds.max === void 0) return null;
+  if (bounds.min !== void 0 && value < bounds.min) return "low";
+  if (bounds.max !== void 0 && value > bounds.max) return "high";
+  return "normal";
+}
+var NUM, toNum, MALE, FEMALE;
+var init_reference_range = __esm({
+  "shared/reference-range.ts"() {
+    "use strict";
+    NUM = String.raw`-?\d+(?:[.,]\d+)?`;
+    toNum = (s) => Number(s.replace(",", "."));
+    MALE = /erkak|мужч|male/i;
+    FEMALE = /ayol|женщ|female/i;
+  }
+});
+
 // server/storage-types.ts
 function localDay(value) {
   const d = typeof value === "string" ? new Date(value) : value;
@@ -257,10 +805,23 @@ function localDay(value) {
 function todayKey() {
   return localDay(/* @__PURE__ */ new Date());
 }
+function resolveFlag(incoming, line, gender) {
+  if (incoming.flag) return incoming.flag;
+  return computeFlag(incoming.result, line.referenceRange, { gender });
+}
+function sortRoles(list) {
+  const rank = (r) => {
+    const i = SYSTEM_ROLE_KEYS.indexOf(r.key);
+    return r.isSystem && i >= 0 ? i : SYSTEM_ROLE_KEYS.length;
+  };
+  return [...list].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
 var DEFAULT_SETTINGS, SEED_USERS;
 var init_storage_types = __esm({
   "server/storage-types.ts"() {
     "use strict";
+    init_reference_range();
+    init_permissions();
     DEFAULT_SETTINGS = {
       id: "default",
       labName: "MedLab",
@@ -274,7 +835,7 @@ var init_storage_types = __esm({
       // A single word on purpose: the dashboard greets people by their given name,
       // which it takes to be the second word of "Familiya Ism Otasining-ismi".
       // A two-word job title would come out as "Salom, administratori".
-      { username: "admin", password: "admin123", fullName: "Administrator", role: "admin" }
+      { username: "admin", password: "admin123", fullName: "Administrator", role: SUPER_ADMIN }
     ];
   }
 });
@@ -507,12 +1068,108 @@ var init_tests_data = __esm({
       "116": { unit: "pmol/l", referenceRange: "3.1-6.8" },
       "117": { unit: "pmol/l", referenceRange: "12-22" },
       "118": { unit: "mkME/ml", referenceRange: "0.4-4.0" },
-      "119": { unit: "ME/ml", referenceRange: "< 34" }
+      "119": { unit: "ME/ml", referenceRange: "< 34" },
+      // --- Ko'p ko'rsatkichli panellar -------------------------------------
+      // Bitta son emas, blankaga bir nechta ko'rsatkich yoziladi. Soxta yagona
+      // oraliq berishdan ko'ra, tabiatini ochiq yozgan to'g'riroq.
+      "1": { referenceRange: "Ko'rsatkichlar bo'yicha" },
+      "2": { referenceRange: "Ko'rsatkichlar bo'yicha" },
+      "6": { referenceRange: "Ko'rsatkichlar bo'yicha" },
+      "12": { referenceRange: "Ko'rsatkichlar bo'yicha" },
+      // --- Umumiy klinika ---------------------------------------------------
+      "7": { unit: "1 ml", referenceRange: "Leyk. < 2000, Erit. < 1000" },
+      "8": { referenceRange: "Manfiy" },
+      "9": { referenceRange: "Manfiy" },
+      "10": { referenceRange: "Manfiy" },
+      "11": { unit: "g/l", referenceRange: "< 0.033" },
+      // --- Kaprologiya ------------------------------------------------------
+      "13": { referenceRange: "Topilmadi" },
+      "14": { referenceRange: "Manfiy" },
+      // --- Biokimyo / koagulogramma ----------------------------------------
+      "31": { unit: "mmol/sut", referenceRange: "1.48-4.43" },
+      "48": { referenceRange: "IV-V daraja" },
+      // --- Reproduktiv gormonlar -------------------------------------------
+      // Ayol qiymatlari sikl fazasiga bog'liq; bu yerda eng ko'p ishlatiladigan
+      // follikulyar/lyuteal faza berilgan, laborant zarur bo'lsa tuzatadi.
+      "56": { unit: "mME/ml", referenceRange: "Erkak: 1.5-12.4, Ayol: 3.5-12.5" },
+      "57": { unit: "mME/ml", referenceRange: "Erkak: 1.7-8.6, Ayol: 2.4-12.6" },
+      "59": { unit: "pg/ml", referenceRange: "Erkak: 7.6-42.6, Ayol: 12.5-166" },
+      "61": { unit: "ng/ml", referenceRange: "1.0-10.6" },
+      "63": { unit: "pg/ml", referenceRange: "Erkak: 8.8-27.0, Ayol: 0.29-3.18" },
+      "64": { unit: "ng/ml", referenceRange: "Erkak: 0.2-1.4, Ayol: 1.7-27.0" },
+      "68": { unit: "ng/ml", referenceRange: "1.1-4.4" },
+      // --- Immunologiya -----------------------------------------------------
+      "65": { unit: "ME/ml", referenceRange: "< 100" },
+      "94": { unit: "ME/ml", referenceRange: "< 17" },
+      "95": { referenceRange: "Manfiy (< 1:80)" },
+      // --- Serologiya: sifatiy testlar --------------------------------------
+      "69": { referenceRange: "Manfiy" },
+      "72": { referenceRange: "Manfiy" },
+      "73": { referenceRange: "Manfiy" },
+      "74": { referenceRange: "Manfiy" },
+      "75": { referenceRange: "Manfiy" },
+      "76": { referenceRange: "Manfiy" },
+      "77": { referenceRange: "Manfiy" },
+      "78": { referenceRange: "Manfiy" },
+      "79": { referenceRange: "Manfiy" },
+      "80": { referenceRange: "Manfiy" },
+      "81": { referenceRange: "Manfiy" },
+      "82": { referenceRange: "Manfiy" },
+      "83": { referenceRange: "Manfiy" },
+      "100": { referenceRange: "Manfiy" },
+      // --- PTsR -------------------------------------------------------------
+      "108": { referenceRange: "Aniqlanmadi" },
+      "110": { referenceRange: "Aniqlanmadi" },
+      "112": { referenceRange: "Aniqlanmadi" },
+      "109": { unit: "ME/ml", referenceRange: "Aniqlanmadi" },
+      "111": { unit: "ME/ml", referenceRange: "Aniqlanmadi" },
+      "113": { unit: "ME/ml", referenceRange: "Aniqlanmadi" }
+    };
+  }
+});
+
+// shared/sample.ts
+function sampleBarcode(orderNumber) {
+  return `${BARCODE_PREFIX}-${orderNumber}`;
+}
+function parseBarcode(value) {
+  const raw = (value ?? "").trim().toUpperCase();
+  if (!raw) return null;
+  const match = raw.match(new RegExp(`^(?:${BARCODE_PREFIX}[-\\s]?)?(\\d{1,9})$`));
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+function canTransition(from, to) {
+  return TRANSITIONS[from]?.includes(to) ?? false;
+}
+function transitionError(from, to) {
+  if (from === to) return `Namuna allaqachon "${SAMPLE_STATUS_LABELS[to]}" holatida`;
+  if (from === "rad_etildi") return "Rad etilgan namunani qayta ochib bo'lmaydi";
+  return `"${SAMPLE_STATUS_LABELS[from]}" holatidan "${SAMPLE_STATUS_LABELS[to]}" holatiga o'tib bo'lmaydi`;
+}
+var BARCODE_PREFIX, TRANSITIONS;
+var init_sample = __esm({
+  "shared/sample.ts"() {
+    "use strict";
+    init_schema();
+    BARCODE_PREFIX = "LAB";
+    TRANSITIONS = {
+      kutilmoqda: ["olindi", "rad_etildi"],
+      olindi: ["qabul_qilindi", "kutilmoqda", "rad_etildi"],
+      qabul_qilindi: ["olindi", "rad_etildi"],
+      // Terminal: the tube is physically gone. A new draw is a new sample.
+      rad_etildi: []
     };
   }
 });
 
 // server/db-pg.ts
+var db_pg_exports = {};
+__export(db_pg_exports, {
+  db: () => db,
+  pool: () => pool
+});
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import ws from "ws";
@@ -523,10 +1180,26 @@ var init_db_pg = __esm({
     init_schema();
     neonConfig.webSocketConstructor = ws;
     neonConfig.poolQueryViaFetch = true;
+    neonConfig.useSecureWebSocket = true;
+    neonConfig.pipelineConnect = false;
     if (!process.env.DATABASE_URL) {
       throw new Error("DATABASE_URL topilmadi \u2014 .env faylini tekshiring");
     }
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      connectionTimeoutMillis: 1e4,
+      // 10 soniya
+      idleTimeoutMillis: 3e4,
+      // 30 soniya
+      max: 10,
+      // maksimal connection soni
+      // Query timeout - agar so'rov juda uzoq davom etsa, bekor qiladi
+      query_timeout: 3e4,
+      // 30 soniya
+      // Statement timeout - har bir SQL statement uchun
+      statement_timeout: 3e4
+      // 30 soniya
+    });
     pool.on("error", (err) => {
       console.error("[db] pool xatosi (so'rov qayta uriniladi):", err.message);
     });
@@ -537,17 +1210,23 @@ var init_db_pg = __esm({
 // server/storage-pg.ts
 var storage_pg_exports = {};
 __export(storage_pg_exports, {
-  PgStorage: () => PgStorage
+  PgStorage: () => PgStorage,
+  isMissingTable: () => isMissingTable
 });
 import { and, asc, desc, eq, gte, inArray, lte, or, sql as sql2 } from "drizzle-orm";
-var iso, mapUser, mapPatient, mapOrder, mapItem, strip, dayExpr, PgStorage;
+function isMissingTable(err) {
+  return err?.code === "42P01";
+}
+var iso, mapUser, mapPatient, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
     init_tests_data();
     init_schema();
+    init_sample();
     init_db_pg();
     init_password();
+    init_permissions();
     init_storage_types();
     iso = (value) => value ? new Date(value).toISOString() : value;
     mapUser = (row) => ({ ...row, createdAt: iso(row.createdAt) });
@@ -568,11 +1247,25 @@ var init_storage_pg = __esm({
       flag: row.flag,
       completedAt: iso(row.completedAt)
     });
+    mapSample = (row) => ({
+      ...row,
+      status: row.status,
+      createdAt: iso(row.createdAt),
+      collectedAt: iso(row.collectedAt),
+      receivedAt: iso(row.receivedAt),
+      rejectedAt: iso(row.rejectedAt)
+    });
     strip = (user) => {
       const { password: _password, ...pub } = mapUser(user);
       return pub;
     };
     dayExpr = sql2`(${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date`;
+    mapRole = (row) => ({
+      ...row,
+      createdAt: iso(row.createdAt) ?? row.createdAt,
+      updatedAt: iso(row.updatedAt),
+      permissions: (row.permissions ?? []).filter(isPermission)
+    });
     PgStorage = class {
       async seed() {
         let createdTests = 0;
@@ -611,7 +1304,64 @@ var init_storage_pg = __esm({
         if (existing.length === 0) {
           await db.insert(labSettings).values(DEFAULT_SETTINGS);
         }
-        return { createdTests, createdUsers };
+        const migrated = await db.update(users).set({ role: SUPER_ADMIN }).where(eq(users.role, LEGACY_ADMIN)).returning({ id: users.id });
+        let createdRoles = 0;
+        try {
+          const inserted = await db.insert(roles).values(
+            SYSTEM_ROLES.map((r) => ({
+              key: r.key,
+              name: r.name,
+              description: r.description,
+              permissions: [...r.permissions],
+              isSystem: true
+            }))
+          ).onConflictDoNothing({ target: roles.key }).returning({ key: roles.key });
+          createdRoles = inserted.length;
+        } catch (err) {
+          if (!isMissingTable(err)) throw err;
+          console.warn(
+            "[rbac] 'roles' jadvali topilmadi \u2014 standart rollar ishlatiladi. Jadvalni yaratish uchun: npm run db:roles"
+          );
+        }
+        return { createdTests, createdUsers, createdRoles, migratedAdmins: migrated.length };
+      }
+      // ---------------------------------------------------------------- roles
+      async listRoles() {
+        const rows = await db.select({
+          role: roles,
+          userCount: sql2`(SELECT count(*)::int FROM ${users} WHERE ${users.role} = ${roles.key})`
+        }).from(roles);
+        return sortRoles(rows.map((r) => ({ ...mapRole(r.role), userCount: r.userCount })));
+      }
+      async getRole(key) {
+        const [row] = await db.select().from(roles).where(eq(roles.key, key)).limit(1);
+        return row && mapRole(row);
+      }
+      async createRole(input, actor) {
+        const [row] = await db.insert(roles).values({
+          key: input.key,
+          name: input.name,
+          description: input.description ?? null,
+          permissions: [...input.permissions],
+          isSystem: input.isSystem ?? false,
+          updatedBy: actor.id
+        }).returning();
+        return mapRole(row);
+      }
+      async updateRole(key, input, actor) {
+        const patch = {
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedBy: actor.id
+        };
+        if (input.name !== void 0) patch.name = input.name;
+        if (input.description !== void 0) patch.description = input.description ?? null;
+        if (input.permissions !== void 0) patch.permissions = [...input.permissions];
+        const [row] = await db.update(roles).set(patch).where(eq(roles.key, key)).returning();
+        return row && mapRole(row);
+      }
+      async deleteRole(key) {
+        const rows = await db.delete(roles).where(and(eq(roles.key, key), eq(roles.isSystem, false))).returning({ key: roles.key });
+        return rows.length > 0;
       }
       // ---------------------------------------------------------------- users
       async listUsers() {
@@ -654,6 +1404,15 @@ var init_storage_pg = __esm({
         const rows = await db.delete(users).where(eq(users.id, id)).returning({ id: users.id });
         return rows.length > 0;
       }
+      async setLockState(userId, state) {
+        await db.update(users).set({
+          failedAttempts: state.failedAttempts,
+          lockedUntil: state.lockedUntil,
+          lockLevel: state.lockLevel,
+          // Stamped on every write so an admin can see when the trouble started.
+          lastFailedAt: state.failedAttempts > 0 || state.lockedUntil ? (/* @__PURE__ */ new Date()).toISOString() : null
+        }).where(eq(users.id, userId));
+      }
       // ------------------------------------------------------------- patients
       async listPatients(query = {}) {
         const search = query.search?.trim();
@@ -669,9 +1428,11 @@ var init_storage_pg = __esm({
           if (digits.length >= 3) {
             parts.push(sql2`regexp_replace(${patients.phone}, '[^0-9]', '', 'g') LIKE ${"%" + digits + "%"}`);
           }
+          const numberMatch = search.match(/^#?\s*(\d{1,9})$/);
+          if (numberMatch) parts.push(eq(patients.patientNumber, Number(numberMatch[1])));
           where = or(...parts);
         }
-        let q = db.select().from(patients).where(where).orderBy(desc(patients.createdAt)).$dynamic();
+        let q = db.select().from(patients).where(where).orderBy(desc(patients.createdAt), desc(patients.patientNumber)).$dynamic();
         if (query.limit !== void 0) q = q.limit(query.limit);
         if (query.offset) q = q.offset(query.offset);
         const [rows, [{ count }]] = await Promise.all([
@@ -759,16 +1520,18 @@ var init_storage_pg = __esm({
         return rows.length > 0;
       }
       // --------------------------------------------------------------- orders
-      /** Attaches patient + line items to a set of orders in two extra queries. */
+      /** Attaches patient + line items + sample to a set of orders in three extra queries. */
       async hydrate(rows) {
         if (rows.length === 0) return [];
         const orderIds = rows.map((o) => o.id);
         const patientIds = Array.from(new Set(rows.map((o) => o.patientId)));
-        const [items, people] = await Promise.all([
+        const [items, people, tubes] = await Promise.all([
           db.select().from(orderTests).where(inArray(orderTests.orderId, orderIds)),
-          db.select().from(patients).where(inArray(patients.id, patientIds))
+          db.select().from(patients).where(inArray(patients.id, patientIds)),
+          db.select().from(samples).where(inArray(samples.orderId, orderIds))
         ]);
         const byPatient = new Map(people.map((p) => [p.id, mapPatient(p)]));
+        const bySample = new Map(tubes.map((s) => [s.orderId, mapSample(s)]));
         const byOrder = /* @__PURE__ */ new Map();
         for (const item of items) {
           const list = byOrder.get(item.orderId) ?? [];
@@ -778,7 +1541,9 @@ var init_storage_pg = __esm({
         return rows.map((row) => ({
           ...mapOrder(row),
           patient: byPatient.get(row.patientId) ?? null,
-          items: byOrder.get(row.id) ?? []
+          items: byOrder.get(row.id) ?? [],
+          // Null for orders created before sample tracking existed.
+          sample: bySample.get(row.id) ?? null
         }));
       }
       async listOrders(query = {}) {
@@ -852,7 +1617,27 @@ var init_storage_pg = __esm({
       async getOrder(id) {
         const rows = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
         const [hydrated] = await this.hydrate(rows);
+        if (!hydrated) return void 0;
+        hydrated.payments = await this.listPayments(id);
         return hydrated;
+      }
+      async listPayments(orderId) {
+        const rows = await db.select().from(payments).where(eq(payments.orderId, orderId)).orderBy(desc(payments.createdAt));
+        return rows.map((r) => ({
+          ...r,
+          method: r.method,
+          createdAt: iso(r.createdAt)
+        }));
+      }
+      /**
+       * orders.paidAmount is a cache of the ledger. Recomputing it from the rows
+       * after every change is what keeps the two from drifting — incrementing it in
+       * place silently loses a payment whenever a write fails halfway.
+       */
+      async syncPaid(tx, orderId) {
+        await tx.update(orders).set({
+          paidAmount: sql2`greatest(0, (SELECT coalesce(sum(amount), 0)::int FROM ${payments} WHERE order_id = ${orderId}))`
+        }).where(eq(orders.id, orderId));
       }
       async createOrder(input) {
         const patient = await this.getPatient(input.patientId);
@@ -862,16 +1647,18 @@ var init_storage_pg = __esm({
         const subtotal = selected.reduce((sum, t) => sum + t.price, 0);
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
+        const opening = Math.min(input.paidAmount, total);
         const orderId = await db.transaction(async (tx) => {
           const [order] = await tx.insert(orders).values({
             patientId: input.patientId,
             totalAmount: total,
             discount,
-            paidAmount: Math.min(input.paidAmount, total),
+            paidAmount: opening,
             status: "pending",
             notes: input.notes ?? null,
+            referrer: input.referrer ?? null,
             createdBy: input.createdBy ?? null
-          }).returning({ id: orders.id });
+          }).returning({ id: orders.id, orderNumber: orders.orderNumber });
           await tx.insert(orderTests).values(
             selected.map((t) => ({
               orderId: order.id,
@@ -882,6 +1669,21 @@ var init_storage_pg = __esm({
               referenceRange: t.referenceRange
             }))
           );
+          await tx.insert(samples).values({
+            orderId: order.id,
+            barcode: sampleBarcode(order.orderNumber),
+            status: "kutilmoqda"
+          });
+          if (opening > 0) {
+            const [staff] = input.createdBy ? await tx.select({ fullName: users.fullName }).from(users).where(eq(users.id, input.createdBy)).limit(1) : [];
+            await tx.insert(payments).values({
+              orderId: order.id,
+              amount: opening,
+              method: "naqd",
+              createdBy: input.createdBy ?? null,
+              createdByName: staff?.fullName ?? "\u2014"
+            });
+          }
           return order.id;
         });
         return await this.getOrder(orderId);
@@ -889,15 +1691,15 @@ var init_storage_pg = __esm({
       async updateOrder(id, input) {
         const [current] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
         if (!current) return void 0;
+        if (input.testIds) await this.replaceOrderTests(id, input.testIds);
         const patch = {};
-        if (input.discount !== void 0) {
+        if (input.discount !== void 0 || input.testIds) {
           const [{ subtotal }] = await db.select({ subtotal: sql2`coalesce(sum(${orderTests.price}), 0)::int` }).from(orderTests).where(eq(orderTests.orderId, id));
-          patch.discount = Math.min(input.discount, subtotal);
+          patch.discount = Math.min(input.discount ?? current.discount, subtotal);
           patch.totalAmount = subtotal - patch.discount;
         }
-        const effectiveTotal = patch.totalAmount ?? current.totalAmount;
-        if (input.paidAmount !== void 0) patch.paidAmount = Math.min(input.paidAmount, effectiveTotal);
         if (input.notes !== void 0) patch.notes = input.notes ?? null;
+        if (input.referrer !== void 0) patch.referrer = input.referrer ?? null;
         if (input.status) {
           patch.status = input.status;
           patch.completedAt = input.status === "completed" ? (/* @__PURE__ */ new Date()).toISOString() : null;
@@ -907,18 +1709,60 @@ var init_storage_pg = __esm({
         }
         return this.getOrder(id);
       }
-      async saveResults(id, results) {
+      /**
+       * Makes the order's line items match `testIds`.
+       *
+       * Two rules the caller cannot override. A line that already holds a result is
+       * kept even if the caller left it out — an entered value is unrecoverable,
+       * and a mis-click on a checkbox must not destroy one. And a test already on
+       * the order keeps its original line, so its result, notes and the price
+       * snapshot taken at registration all survive the edit.
+       */
+      async replaceOrderTests(orderId, testIds) {
+        const current = await db.select().from(orderTests).where(eq(orderTests.orderId, orderId));
+        const wanted = new Set(testIds);
+        const drop = current.filter((i) => !wanted.has(i.testId) && !i.result).map((i) => i.id);
+        const present = new Set(current.filter((i) => !drop.includes(i.id)).map((i) => i.testId));
+        const addIds = testIds.filter((t) => !present.has(t));
+        const toAdd = addIds.length ? await db.select().from(tests).where(inArray(tests.id, addIds)) : [];
+        if (drop.length === 0 && toAdd.length === 0) return;
+        await db.transaction(async (tx) => {
+          if (drop.length) await tx.delete(orderTests).where(inArray(orderTests.id, drop));
+          if (toAdd.length) {
+            await tx.insert(orderTests).values(
+              toAdd.map((t) => ({
+                orderId,
+                testId: t.id,
+                testName: t.name,
+                price: t.price,
+                unit: t.unit,
+                referenceRange: t.referenceRange
+              }))
+            );
+          }
+        });
+      }
+      async saveResults(id, results, actor) {
         const [current] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
         if (!current) return void 0;
         const now = (/* @__PURE__ */ new Date()).toISOString();
+        const [patient] = await db.select({ gender: patients.gender }).from(patients).where(eq(patients.id, current.patientId)).limit(1);
+        const lines = await db.select({ id: orderTests.id, referenceRange: orderTests.referenceRange }).from(orderTests).where(eq(orderTests.orderId, id));
+        const rangeById = new Map(lines.map((l) => [l.id, l.referenceRange]));
         await db.transaction(async (tx) => {
           for (const incoming of results) {
             const value = incoming.result?.trim() || null;
+            const flag = resolveFlag(
+              incoming,
+              { referenceRange: rangeById.get(incoming.id) ?? null },
+              patient?.gender
+            );
             await tx.update(orderTests).set({
               result: value,
-              flag: incoming.flag ?? null,
+              flag,
               notes: incoming.notes?.trim() || null,
-              completedAt: value ? now : null
+              completedAt: value ? now : null,
+              ...value && actor ? { enteredBy: actor.name } : {}
             }).where(and(eq(orderTests.id, incoming.id), eq(orderTests.orderId, id)));
           }
           if (current.status !== "cancelled") {
@@ -935,9 +1779,153 @@ var init_storage_pg = __esm({
       async deleteOrder(id) {
         return db.transaction(async (tx) => {
           await tx.delete(orderTests).where(eq(orderTests.orderId, id));
+          await tx.delete(payments).where(eq(payments.orderId, id));
+          await tx.delete(samples).where(eq(samples.orderId, id));
           const rows = await tx.delete(orders).where(eq(orders.id, id)).returning({ id: orders.id });
           return rows.length > 0;
         });
+      }
+      // -------------------------------------------------------------- samples
+      async getOrderByBarcode(barcode) {
+        const orderNumber = parseBarcode(barcode);
+        if (orderNumber === null) return void 0;
+        const [row] = await db.select({ id: orders.id }).from(orders).where(eq(orders.orderNumber, orderNumber)).limit(1);
+        return row ? this.getOrder(row.id) : void 0;
+      }
+      async updateSampleStatus(orderId, input, actor) {
+        const [current] = await db.select().from(samples).where(eq(samples.orderId, orderId)).limit(1);
+        if (!current) return void 0;
+        const from = current.status;
+        if (!canTransition(from, input.status)) return { error: transitionError(from, input.status) };
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const patch = { status: input.status };
+        switch (input.status) {
+          case "olindi":
+            patch.collectedAt = now;
+            patch.collectedBy = actor.id;
+            patch.collectedByName = actor.name;
+            patch.receivedAt = null;
+            patch.receivedBy = null;
+            patch.receivedByName = null;
+            break;
+          case "qabul_qilindi":
+            patch.receivedAt = now;
+            patch.receivedBy = actor.id;
+            patch.receivedByName = actor.name;
+            break;
+          case "kutilmoqda":
+            patch.collectedAt = null;
+            patch.collectedBy = null;
+            patch.collectedByName = null;
+            patch.receivedAt = null;
+            patch.receivedBy = null;
+            patch.receivedByName = null;
+            break;
+          case "rad_etildi":
+            patch.rejectedAt = now;
+            patch.rejectedBy = actor.id;
+            patch.rejectedByName = actor.name;
+            patch.rejectReason = input.rejectReason ?? null;
+            patch.rejectNote = input.rejectNote ?? null;
+            break;
+        }
+        const [updated] = await db.update(samples).set(patch).where(eq(samples.id, current.id)).returning();
+        const order = await this.getOrder(orderId);
+        if (!order) return void 0;
+        return { sample: mapSample(updated), order };
+      }
+      // ------------------------------------------------------------- payments
+      async addPayment(orderId, input, actor) {
+        const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+        if (!order) return void 0;
+        const [{ paid }] = await db.select({ paid: sql2`coalesce(sum(${payments.amount}), 0)::int` }).from(payments).where(eq(payments.orderId, orderId));
+        const room = order.totalAmount - paid;
+        const amount = input.amount > 0 ? Math.min(input.amount, room) : Math.max(input.amount, -paid);
+        if (amount === 0) {
+          throw new Error(
+            input.amount > 0 ? "Buyurtma allaqachon to'liq to'langan" : "Qaytariladigan to'lov yo'q"
+          );
+        }
+        await db.transaction(async (tx) => {
+          await tx.insert(payments).values({
+            orderId,
+            amount,
+            method: input.method,
+            note: input.note?.trim() || null,
+            createdBy: actor.id,
+            createdByName: actor.name
+          });
+          await this.syncPaid(tx, orderId);
+        });
+        return this.getOrder(orderId);
+      }
+      async deletePayment(paymentId) {
+        const [row] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+        if (!row) return false;
+        await db.transaction(async (tx) => {
+          await tx.delete(payments).where(eq(payments.id, paymentId));
+          await this.syncPaid(tx, row.orderId);
+        });
+        return true;
+      }
+      // ------------------------------------------------------------- expenses
+      async listExpenses(query = {}) {
+        const parts = [];
+        if (query.from) parts.push(gte(expenses.spentOn, query.from));
+        if (query.to) parts.push(lte(expenses.spentOn, query.to));
+        const where = parts.length ? and(...parts) : void 0;
+        let q = db.select().from(expenses).where(where).orderBy(desc(expenses.spentOn), desc(expenses.createdAt)).$dynamic();
+        if (query.limit !== void 0) q = q.limit(query.limit);
+        if (query.offset) q = q.offset(query.offset);
+        const [rows, [agg]] = await Promise.all([
+          q,
+          db.select({
+            count: sql2`count(*)::int`,
+            sum: sql2`coalesce(sum(${expenses.amount}), 0)::int`
+          }).from(expenses).where(where)
+        ]);
+        return {
+          items: rows.map((r) => ({ ...r, createdAt: iso(r.createdAt) })),
+          total: agg?.count ?? 0,
+          total_amount: agg?.sum ?? 0
+        };
+      }
+      async createExpense(input, actor) {
+        const [row] = await db.insert(expenses).values({
+          category: input.category,
+          amount: input.amount,
+          note: input.note?.trim() || null,
+          spentOn: input.spentOn,
+          createdBy: actor.id,
+          createdByName: actor.name
+        }).returning();
+        return { ...row, createdAt: iso(row.createdAt) };
+      }
+      async deleteExpense(id) {
+        const rows = await db.delete(expenses).where(eq(expenses.id, id)).returning({ id: expenses.id });
+        return rows.length > 0;
+      }
+      // ---------------------------------------------------------------- audit
+      async writeAudit(input) {
+        await db.insert(auditLog).values({
+          userId: input.actor.id,
+          userName: input.actor.name,
+          action: input.action,
+          entity: input.entity,
+          entityId: input.entityId ?? null,
+          summary: input.summary
+        });
+      }
+      async listAudit(query = {}) {
+        const where = query.entity ? eq(auditLog.entity, query.entity) : void 0;
+        let q = db.select().from(auditLog).where(where).orderBy(desc(auditLog.createdAt)).$dynamic();
+        if (query.limit !== void 0) q = q.limit(query.limit);
+        if (query.offset) q = q.offset(query.offset);
+        const [rows, [{ count }]] = await Promise.all([
+          q,
+          db.select({ count: sql2`count(*)::int` }).from(auditLog).where(where)
+        ]);
+        return { items: rows.map((r) => ({ ...r, createdAt: iso(r.createdAt) })), total: count };
       }
       // ------------------------------------------------------------- telegram
       async linkTelegram(patientId, chatId) {
@@ -1052,16 +2040,36 @@ var init_storage_pg = __esm({
             revenue: sql2`coalesce(sum(${orderTests.price}), 0)::int`
           }).from(orderTests).innerJoin(orders, eq(orders.id, orderTests.orderId)).leftJoin(tests, eq(tests.id, orderTests.testId)).where(inRange).groupBy(sql2`coalesce(${tests.category}, 'Boshqa')`).orderBy(desc(sql2`sum(${orderTests.price})`))
         ]);
+        const spentInRange = and(gte(expenses.spentOn, from), lte(expenses.spentOn, to));
+        const [expensesByCategory, byReferrer] = await Promise.all([
+          db.select({
+            category: expenses.category,
+            amount: sql2`coalesce(sum(${expenses.amount}), 0)::int`
+          }).from(expenses).where(spentInRange).groupBy(expenses.category).orderBy(desc(sql2`sum(${expenses.amount})`)),
+          db.select({
+            referrer: sql2`coalesce(nullif(btrim(${orders.referrer}), ''), '—')`,
+            patients: sql2`count(distinct ${orders.patientId})::int`,
+            revenue: sql2`coalesce(sum(${orders.totalAmount}), 0)::int`
+          }).from(orders).where(inRange).groupBy(sql2`coalesce(nullif(btrim(${orders.referrer}), ''), '—')`).orderBy(desc(sql2`sum(${orders.totalAmount})`)).limit(10)
+        ]);
         const totalTests = byCategory.reduce((sum, c) => sum + c.count, 0);
+        const totalExpenses = expensesByCategory.reduce((sum, e) => sum + e.amount, 0);
+        const totalPaid = totals?.totalPaid ?? 0;
         return {
           range: { from, to },
           points,
           totalRevenue: totals?.totalRevenue ?? 0,
-          totalPaid: totals?.totalPaid ?? 0,
+          totalPaid,
           totalPatients: totals?.totalPatients ?? 0,
           totalTests,
           topTests,
-          byCategory
+          byCategory,
+          totalExpenses,
+          // Against money actually collected, not invoiced: an unpaid bill is not
+          // cash the lab can spend.
+          netProfit: totalPaid - totalExpenses,
+          expensesByCategory,
+          byReferrer
         };
       }
       // ------------------------------------------------------------- settings
@@ -1093,7 +2101,9 @@ import path from "path";
 function readDbSync() {
   try {
     const raw = fsSync.readFileSync(DB_FILE, "utf8");
-    return { ...emptyDb(), ...JSON.parse(raw) };
+    const base = emptyDb();
+    const saved = JSON.parse(raw);
+    return { ...base, ...saved, counters: { ...base.counters, ...saved.counters } };
   } catch {
     return emptyDb();
   }
@@ -1110,15 +2120,20 @@ var DATA_DIR, DB_FILE, TMP_FILE, emptyDb, queue;
 var init_db = __esm({
   "server/db.ts"() {
     "use strict";
-    DATA_DIR = path.resolve(import.meta.dirname, "..", ".data");
+    DATA_DIR = process.env.MEDLAB_TEST_DIR ? path.resolve(process.env.MEDLAB_TEST_DIR) : path.resolve(import.meta.dirname, "..", ".data");
     DB_FILE = path.join(DATA_DIR, "db.json");
     TMP_FILE = path.join(DATA_DIR, "db.tmp.json");
     emptyDb = () => ({
       users: [],
+      roles: [],
       patients: [],
       tests: [],
       orders: [],
       orderTests: [],
+      samples: [],
+      payments: [],
+      expenses: [],
+      auditLog: [],
       telegramContacts: [],
       settings: {
         id: "default",
@@ -1129,7 +2144,7 @@ var init_db = __esm({
         director: null,
         licenseNumber: null
       },
-      counters: { orderNumber: 1e3 }
+      counters: { orderNumber: 1e3, patientNumber: 0 }
     });
     queue = Promise.resolve();
   }
@@ -1148,22 +2163,29 @@ function phoneContains(phone, search) {
   const needle = digitsOf(search);
   return needle.length >= 3 && digitsOf(phone).includes(needle);
 }
+function asNumberSearch(search) {
+  const match = search.trim().match(/^#?\s*(\d{1,9})$/);
+  return match ? Number(match[1]) : null;
+}
 function isWaiting(order) {
   return order.items.some((i) => !i.result);
 }
 function isReady(order) {
   return order.items.length > 0 && order.items.every((i) => i.result);
 }
-var digitsOf, FileStorage;
+var digitsOf, copyRole, FileStorage;
 var init_storage_file = __esm({
   "server/storage-file.ts"() {
     "use strict";
     init_tests_data();
     init_schema();
+    init_sample();
     init_db();
     init_password();
+    init_permissions();
     init_storage_types();
     digitsOf = (value) => (value ?? "").replace(/\D/g, "");
+    copyRole = (r) => ({ ...r, permissions: [...r.permissions] });
     FileStorage = class {
       db;
       constructor() {
@@ -1199,13 +2221,108 @@ var init_storage_file = __esm({
               fullName: u.fullName,
               role: u.role,
               isActive: true,
-              createdAt: (/* @__PURE__ */ new Date()).toISOString()
+              createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+              failedAttempts: 0,
+              lockedUntil: null,
+              lockLevel: 0,
+              lastFailedAt: null
             });
           }
           createdUsers = SEED_USERS.length;
         }
-        if (createdTests || createdUsers) await this.persist();
-        return { createdTests, createdUsers };
+        const numbered = this.backfillPatientNumbers();
+        let createdRoles = 0;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const def of SYSTEM_ROLES) {
+          if (this.db.roles.some((r) => r.key === def.key)) continue;
+          this.db.roles.push({
+            key: def.key,
+            name: def.name,
+            description: def.description,
+            permissions: [...def.permissions],
+            isSystem: true,
+            createdAt: now,
+            updatedAt: null,
+            updatedBy: null
+          });
+          createdRoles++;
+        }
+        let migratedAdmins = 0;
+        for (const u of this.db.users) {
+          if (u.role === LEGACY_ADMIN) {
+            u.role = SUPER_ADMIN;
+            migratedAdmins++;
+          }
+        }
+        if (createdTests || createdUsers || numbered || createdRoles || migratedAdmins) await this.persist();
+        return { createdTests, createdUsers, createdRoles, migratedAdmins };
+      }
+      // ---------------------------------------------------------------- roles
+      async listRoles() {
+        const counts = /* @__PURE__ */ new Map();
+        for (const u of this.db.users) counts.set(u.role, (counts.get(u.role) ?? 0) + 1);
+        return sortRoles(this.db.roles).map((r) => ({ ...copyRole(r), userCount: counts.get(r.key) ?? 0 }));
+      }
+      /**
+       * Roles are handed out as copies. The routes read a role, update it, then
+       * diff the two for the audit log; returning the stored object itself made
+       * "before" change along with the update and the diff come out empty.
+       */
+      async getRole(key) {
+        const role = this.db.roles.find((r) => r.key === key);
+        return role && copyRole(role);
+      }
+      async createRole(input, actor) {
+        if (this.db.roles.some((r) => r.key === input.key)) {
+          throw new Error("Bu kalitli rol allaqachon mavjud");
+        }
+        const role = {
+          key: input.key,
+          name: input.name,
+          description: input.description ?? null,
+          permissions: [...input.permissions],
+          isSystem: input.isSystem ?? false,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: null,
+          updatedBy: actor.id
+        };
+        this.db.roles.push(role);
+        await this.persist();
+        return copyRole(role);
+      }
+      async updateRole(key, input, actor) {
+        const role = this.db.roles.find((r) => r.key === key);
+        if (!role) return void 0;
+        if (input.name !== void 0) role.name = input.name;
+        if (input.description !== void 0) role.description = input.description ?? null;
+        if (input.permissions !== void 0) role.permissions = [...input.permissions];
+        role.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        role.updatedBy = actor.id;
+        await this.persist();
+        return copyRole(role);
+      }
+      async deleteRole(key) {
+        const role = this.db.roles.find((r) => r.key === key);
+        if (!role || role.isSystem) return false;
+        this.db.roles = this.db.roles.filter((r) => r.key !== key);
+        await this.persist();
+        return true;
+      }
+      /**
+       * Gives a number to every patient saved before patientNumber existed, oldest
+       * first, so the sequence still reads as the order people walked in. Returns
+       * how many were touched; zero on every boot after the first.
+       */
+      backfillPatientNumbers() {
+        const missing = this.db.patients.filter((p) => typeof p.patientNumber !== "number").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        let next = Math.max(
+          this.db.counters.patientNumber,
+          ...this.db.patients.map((p) => p.patientNumber ?? 0),
+          0
+        );
+        for (const patient of missing) patient.patientNumber = ++next;
+        this.db.counters.patientNumber = next;
+        return missing.length;
       }
       // ---------------------------------------------------------------- users
       async listUsers() {
@@ -1225,7 +2342,11 @@ var init_storage_file = __esm({
           fullName: input.fullName,
           role: input.role,
           isActive: input.isActive ?? true,
-          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          failedAttempts: 0,
+          lockedUntil: null,
+          lockLevel: 0,
+          lastFailedAt: null
         };
         this.db.users.push(user);
         await this.persist();
@@ -1251,16 +2372,26 @@ var init_storage_file = __esm({
         await this.persist();
         return true;
       }
+      async setLockState(userId, state) {
+        const user = this.db.users.find((u) => u.id === userId);
+        if (!user) return;
+        user.failedAttempts = state.failedAttempts;
+        user.lockedUntil = state.lockedUntil;
+        user.lockLevel = state.lockLevel;
+        user.lastFailedAt = state.failedAttempts > 0 || state.lockedUntil ? (/* @__PURE__ */ new Date()).toISOString() : null;
+        await this.persist();
+      }
       // ------------------------------------------------------------- patients
       async listPatients(query = {}) {
         const search = query.search?.trim().toLowerCase();
         let rows = [...this.db.patients];
         if (search) {
+          const wantedNumber = asNumberSearch(search);
           rows = rows.filter(
-            (p) => contains(p.fullName, search) || contains(p.phone, search) || phoneContains(p.phone, search) || contains(p.address, search)
+            (p) => p.patientNumber === wantedNumber || contains(p.fullName, search) || contains(p.phone, search) || phoneContains(p.phone, search) || contains(p.address, search)
           );
         }
-        rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.patientNumber - a.patientNumber);
         const total = rows.length;
         const offset = query.offset ?? 0;
         const limit = query.limit ?? total;
@@ -1278,8 +2409,10 @@ var init_storage_file = __esm({
         return this.db.patients.find((p) => p.telegramChatId === chatId);
       }
       async createPatient(input) {
+        this.db.counters.patientNumber += 1;
         const patient = {
           id: randomUUID(),
+          patientNumber: this.db.counters.patientNumber,
           fullName: input.fullName,
           phone: input.phone,
           address: input.address ?? null,
@@ -1356,12 +2489,31 @@ var init_storage_file = __esm({
         return true;
       }
       // --------------------------------------------------------------- orders
-      hydrate(order) {
-        return {
+      /** `withPayments` is opt-in: the list screens never render the ledger. */
+      hydrate(order, withPayments = false) {
+        const full = {
           ...order,
           patient: this.db.patients.find((p) => p.id === order.patientId) ?? null,
-          items: this.db.orderTests.filter((ot) => ot.orderId === order.id)
+          items: this.db.orderTests.filter((ot) => ot.orderId === order.id),
+          // Null for orders created before sample tracking existed.
+          sample: this.db.samples.find((s) => s.orderId === order.id) ?? null
         };
+        if (withPayments) {
+          full.payments = this.db.payments.filter((p) => p.orderId === order.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        }
+        return full;
+      }
+      /**
+       * orders.paidAmount is a cache of the ledger. Recomputing it from the rows
+       * after every change is what keeps the two from drifting — the alternative,
+       * incrementing it in place, silently loses a payment whenever a write fails
+       * halfway.
+       */
+      syncPaid(orderId) {
+        const order = this.db.orders.find((o) => o.id === orderId);
+        if (!order) return;
+        const sum = this.db.payments.filter((p) => p.orderId === orderId).reduce((acc, p) => acc + p.amount, 0);
+        order.paidAmount = Math.max(0, sum);
       }
       async listOrders(query = {}) {
         const search = query.search?.trim().toLowerCase();
@@ -1402,7 +2554,7 @@ var init_storage_file = __esm({
       }
       async getOrder(id) {
         const order = this.db.orders.find((o) => o.id === id);
-        return order ? this.hydrate(order) : void 0;
+        return order ? this.hydrate(order, true) : void 0;
       }
       async createOrder(input) {
         if (!this.db.patients.some((p) => p.id === input.patientId)) {
@@ -1414,21 +2566,56 @@ var init_storage_file = __esm({
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
         this.db.counters.orderNumber += 1;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
         const order = {
           id: randomUUID(),
           orderNumber: this.db.counters.orderNumber,
           patientId: input.patientId,
           totalAmount: total,
           discount,
-          paidAmount: Math.min(input.paidAmount, total),
+          paidAmount: 0,
+          // set by syncPaid below, from the opening payment
           status: "pending",
           notes: input.notes ?? null,
+          referrer: input.referrer ?? null,
           createdBy: input.createdBy ?? null,
-          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdAt: now,
           completedAt: null,
           telegramSentAt: null
         };
         this.db.orders.push(order);
+        this.db.samples.push({
+          id: randomUUID(),
+          orderId: order.id,
+          barcode: sampleBarcode(order.orderNumber),
+          status: "kutilmoqda",
+          collectedAt: null,
+          collectedBy: null,
+          collectedByName: null,
+          receivedAt: null,
+          receivedBy: null,
+          receivedByName: null,
+          rejectedAt: null,
+          rejectedBy: null,
+          rejectedByName: null,
+          rejectReason: null,
+          rejectNote: null,
+          createdAt: now
+        });
+        const opening = Math.min(input.paidAmount, total);
+        if (opening > 0) {
+          this.db.payments.push({
+            id: randomUUID(),
+            orderId: order.id,
+            amount: opening,
+            method: "naqd",
+            note: null,
+            createdBy: input.createdBy ?? null,
+            createdByName: this.db.users.find((u) => u.id === input.createdBy)?.fullName ?? "\u2014",
+            createdAt: now
+          });
+        }
+        this.syncPaid(order.id);
         for (const t of selected) {
           const item = {
             id: randomUUID(),
@@ -1441,42 +2628,89 @@ var init_storage_file = __esm({
             result: null,
             flag: null,
             notes: null,
+            enteredBy: null,
             completedAt: null
           };
           this.db.orderTests.push(item);
         }
         await this.persist();
-        return this.hydrate(order);
+        return this.hydrate(order, true);
       }
       async updateOrder(id, input) {
         const order = this.db.orders.find((o) => o.id === id);
         if (!order) return void 0;
-        if (input.discount !== void 0) {
+        if (input.testIds) this.replaceOrderTests(id, input.testIds);
+        if (input.discount !== void 0 || input.testIds) {
           const subtotal = this.db.orderTests.filter((i) => i.orderId === id).reduce((s, i) => s + i.price, 0);
-          order.discount = Math.min(input.discount, subtotal);
+          const discount = input.discount ?? order.discount;
+          order.discount = Math.min(discount, subtotal);
           order.totalAmount = subtotal - order.discount;
         }
-        if (input.paidAmount !== void 0) order.paidAmount = Math.min(input.paidAmount, order.totalAmount);
         if (input.notes !== void 0) order.notes = input.notes ?? null;
+        if (input.referrer !== void 0) order.referrer = input.referrer ?? null;
         if (input.status) {
           order.status = input.status;
           order.completedAt = input.status === "completed" ? (/* @__PURE__ */ new Date()).toISOString() : null;
         }
         await this.persist();
-        return this.hydrate(order);
+        return this.hydrate(order, true);
       }
-      async saveResults(id, results) {
+      /**
+       * Makes the order's line items match `testIds`.
+       *
+       * Two rules the caller cannot override. A line that already holds a result is
+       * kept even if the caller left it out — an entered value is unrecoverable,
+       * and a mis-click on a checkbox must not destroy one. And a test that is
+       * already on the order keeps its original line, so its result, notes and the
+       * price snapshot taken at registration all survive the edit.
+       */
+      replaceOrderTests(orderId, testIds) {
+        const current = this.db.orderTests.filter((i) => i.orderId === orderId);
+        const wanted = new Set(testIds);
+        const keep = new Set(
+          current.filter((i) => wanted.has(i.testId) || i.result).map((i) => i.id)
+        );
+        this.db.orderTests = this.db.orderTests.filter(
+          (i) => i.orderId !== orderId || keep.has(i.id)
+        );
+        const present = new Set(
+          this.db.orderTests.filter((i) => i.orderId === orderId).map((i) => i.testId)
+        );
+        for (const testId of testIds) {
+          if (present.has(testId)) continue;
+          const t = this.db.tests.find((x) => x.id === testId);
+          if (!t) continue;
+          this.db.orderTests.push({
+            id: randomUUID(),
+            orderId,
+            testId: t.id,
+            testName: t.name,
+            price: t.price,
+            unit: t.unit,
+            referenceRange: t.referenceRange,
+            result: null,
+            flag: null,
+            notes: null,
+            enteredBy: null,
+            completedAt: null
+          });
+          present.add(testId);
+        }
+      }
+      async saveResults(id, results, actor) {
         const order = this.db.orders.find((o) => o.id === id);
         if (!order) return void 0;
+        const patient = this.db.patients.find((p) => p.id === order.patientId);
         const now = (/* @__PURE__ */ new Date()).toISOString();
         for (const incoming of results) {
           const item = this.db.orderTests.find((i) => i.id === incoming.id && i.orderId === id);
           if (!item) continue;
           const value = incoming.result?.trim() || null;
           item.result = value;
-          item.flag = incoming.flag ?? null;
+          item.flag = resolveFlag(incoming, item, patient?.gender);
           item.notes = incoming.notes?.trim() || null;
           item.completedAt = value ? now : null;
+          if (value && actor) item.enteredBy = actor.name;
         }
         const items = this.db.orderTests.filter((i) => i.orderId === id);
         const filled = items.filter((i) => Boolean(i.result)).length;
@@ -1493,15 +2727,159 @@ var init_storage_file = __esm({
           }
         }
         await this.persist();
-        return this.hydrate(order);
+        return this.hydrate(order, true);
       }
       async deleteOrder(id) {
         const before = this.db.orders.length;
         this.db.orders = this.db.orders.filter((o) => o.id !== id);
         if (this.db.orders.length === before) return false;
         this.db.orderTests = this.db.orderTests.filter((i) => i.orderId !== id);
+        this.db.payments = this.db.payments.filter((p) => p.orderId !== id);
+        this.db.samples = this.db.samples.filter((s) => s.orderId !== id);
         await this.persist();
         return true;
+      }
+      // -------------------------------------------------------------- samples
+      async getOrderByBarcode(barcode) {
+        const orderNumber = parseBarcode(barcode);
+        if (orderNumber === null) return void 0;
+        const order = this.db.orders.find((o) => o.orderNumber === orderNumber);
+        return order ? this.hydrate(order, true) : void 0;
+      }
+      async updateSampleStatus(orderId, input, actor) {
+        const sample = this.db.samples.find((s) => s.orderId === orderId);
+        if (!sample) return void 0;
+        const from = sample.status;
+        if (!canTransition(from, input.status)) return { error: transitionError(from, input.status) };
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        sample.status = input.status;
+        switch (input.status) {
+          case "olindi":
+            sample.collectedAt = now;
+            sample.collectedBy = actor.id;
+            sample.collectedByName = actor.name;
+            sample.receivedAt = null;
+            sample.receivedBy = null;
+            sample.receivedByName = null;
+            break;
+          case "qabul_qilindi":
+            sample.receivedAt = now;
+            sample.receivedBy = actor.id;
+            sample.receivedByName = actor.name;
+            break;
+          case "kutilmoqda":
+            sample.collectedAt = null;
+            sample.collectedBy = null;
+            sample.collectedByName = null;
+            sample.receivedAt = null;
+            sample.receivedBy = null;
+            sample.receivedByName = null;
+            break;
+          case "rad_etildi":
+            sample.rejectedAt = now;
+            sample.rejectedBy = actor.id;
+            sample.rejectedByName = actor.name;
+            sample.rejectReason = input.rejectReason ?? null;
+            sample.rejectNote = input.rejectNote ?? null;
+            break;
+        }
+        await this.persist();
+        const order = this.hydrate(this.db.orders.find((o) => o.id === orderId), true);
+        return { sample, order };
+      }
+      // ------------------------------------------------------------- payments
+      async addPayment(orderId, input, actor) {
+        const order = this.db.orders.find((o) => o.id === orderId);
+        if (!order) return void 0;
+        const paid = this.db.payments.filter((p) => p.orderId === orderId).reduce((s, p) => s + p.amount, 0);
+        const room = order.totalAmount - paid;
+        const amount = input.amount > 0 ? Math.min(input.amount, room) : Math.max(input.amount, -paid);
+        if (amount === 0) {
+          throw new Error(
+            input.amount > 0 ? "Buyurtma allaqachon to'liq to'langan" : "Qaytariladigan to'lov yo'q"
+          );
+        }
+        this.db.payments.push({
+          id: randomUUID(),
+          orderId,
+          amount,
+          method: input.method,
+          note: input.note?.trim() || null,
+          createdBy: actor.id,
+          createdByName: actor.name,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        this.syncPaid(orderId);
+        await this.persist();
+        return this.hydrate(order, true);
+      }
+      async deletePayment(paymentId) {
+        const row = this.db.payments.find((p) => p.id === paymentId);
+        if (!row) return false;
+        this.db.payments = this.db.payments.filter((p) => p.id !== paymentId);
+        this.syncPaid(row.orderId);
+        await this.persist();
+        return true;
+      }
+      // ------------------------------------------------------------- expenses
+      async listExpenses(query = {}) {
+        let rows = [...this.db.expenses];
+        if (query.from) rows = rows.filter((e) => e.spentOn >= query.from);
+        if (query.to) rows = rows.filter((e) => e.spentOn <= query.to);
+        rows.sort((a, b) => b.spentOn.localeCompare(a.spentOn) || b.createdAt.localeCompare(a.createdAt));
+        const total = rows.length;
+        const total_amount = rows.reduce((s, e) => s + e.amount, 0);
+        const offset = query.offset ?? 0;
+        const limit = query.limit ?? total;
+        return { items: rows.slice(offset, offset + limit), total, total_amount };
+      }
+      async createExpense(input, actor) {
+        const row = {
+          id: randomUUID(),
+          category: input.category,
+          amount: input.amount,
+          note: input.note?.trim() || null,
+          spentOn: input.spentOn,
+          createdBy: actor.id,
+          createdByName: actor.name,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        this.db.expenses.push(row);
+        await this.persist();
+        return row;
+      }
+      async deleteExpense(id) {
+        const before = this.db.expenses.length;
+        this.db.expenses = this.db.expenses.filter((e) => e.id !== id);
+        if (this.db.expenses.length === before) return false;
+        await this.persist();
+        return true;
+      }
+      // ---------------------------------------------------------------- audit
+      async writeAudit(input) {
+        this.db.auditLog.push({
+          id: randomUUID(),
+          userId: input.actor.id,
+          userName: input.actor.name,
+          action: input.action,
+          entity: input.entity,
+          entityId: input.entityId ?? null,
+          summary: input.summary,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        if (this.db.auditLog.length > 5e3) {
+          this.db.auditLog = this.db.auditLog.slice(-5e3);
+        }
+        await this.persist();
+      }
+      async listAudit(query = {}) {
+        let rows = [...this.db.auditLog];
+        if (query.entity) rows = rows.filter((e) => e.entity === query.entity);
+        rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        const total = rows.length;
+        const offset = query.offset ?? 0;
+        const limit = query.limit ?? total;
+        return { items: rows.slice(offset, offset + limit), total };
       }
       // ------------------------------------------------------------- telegram
       async linkTelegram(patientId, chatId) {
@@ -1610,15 +2988,34 @@ var init_storage_file = __esm({
           c.revenue += item.price;
           catAgg.set(category, c);
         }
+        const refAgg = /* @__PURE__ */ new Map();
+        for (const order of inRange) {
+          const key = order.referrer?.trim() || "\u2014";
+          const bucket = refAgg.get(key) ?? { patients: /* @__PURE__ */ new Set(), revenue: 0 };
+          bucket.patients.add(order.patientId);
+          bucket.revenue += order.totalAmount;
+          refAgg.set(key, bucket);
+        }
+        const spent = this.db.expenses.filter((e) => e.spentOn >= from && e.spentOn <= to);
+        const totalExpenses = spent.reduce((s, e) => s + e.amount, 0);
+        const expAgg = /* @__PURE__ */ new Map();
+        for (const e of spent) expAgg.set(e.category, (expAgg.get(e.category) ?? 0) + e.amount);
+        const totalPaid = inRange.reduce((s, o) => s + o.paidAmount, 0);
         return {
           range: { from, to },
           points,
           totalRevenue: inRange.reduce((s, o) => s + o.totalAmount, 0),
-          totalPaid: inRange.reduce((s, o) => s + o.paidAmount, 0),
+          totalPaid,
           totalPatients: new Set(inRange.map((o) => o.patientId)).size,
           totalTests: items.length,
           topTests: Array.from(testAgg.entries()).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.revenue - a.revenue).slice(0, 8),
-          byCategory: Array.from(catAgg.entries()).map(([category, v]) => ({ category, ...v })).sort((a, b) => b.revenue - a.revenue)
+          byCategory: Array.from(catAgg.entries()).map(([category, v]) => ({ category, ...v })).sort((a, b) => b.revenue - a.revenue),
+          totalExpenses,
+          // Against money actually collected, not invoiced: an unpaid bill is not
+          // cash the lab can spend.
+          netProfit: totalPaid - totalExpenses,
+          expensesByCategory: Array.from(expAgg.entries()).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount),
+          byReferrer: Array.from(refAgg.entries()).map(([referrer, v]) => ({ referrer, patients: v.patients.size, revenue: v.revenue })).sort((a, b) => b.revenue - a.revenue).slice(0, 10)
         };
       }
       // ------------------------------------------------------------- settings
@@ -1653,9 +3050,88 @@ import express from "express";
 
 // server/routes.ts
 init_schema();
+init_permissions();
 import passport2 from "passport";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
+
+// shared/lockout.ts
+var MINUTE = 60 * 1e3;
+var HOUR = 60 * MINUTE;
+var ATTEMPTS_BEFORE_LOCK = 3;
+var LOCK_DURATIONS_MS = [1 * HOUR, 2 * HOUR, 3 * HOUR];
+var FINAL_LOCK_MS = 7 * 24 * HOUR;
+var UNLOCKED = { failedAttempts: 0, lockedUntil: null, lockLevel: 0 };
+function lockRemainingMs(lockedUntil, now = Date.now()) {
+  if (!lockedUntil) return 0;
+  const until = new Date(lockedUntil).getTime();
+  if (!Number.isFinite(until)) return 0;
+  return Math.max(0, until - now);
+}
+function registerFailure(state, now = Date.now()) {
+  const attempts2 = state.failedAttempts + 1;
+  const threshold = state.lockLevel === 0 ? ATTEMPTS_BEFORE_LOCK : 1;
+  if (attempts2 < threshold) {
+    return {
+      failedAttempts: attempts2,
+      lockedUntil: state.lockedUntil,
+      lockLevel: state.lockLevel,
+      justLocked: false,
+      lockedForMs: null
+    };
+  }
+  const duration = lockDurationFor(state.lockLevel);
+  return {
+    // The count restarts for the next round; lockLevel is what remembers.
+    failedAttempts: 0,
+    lockedUntil: new Date(now + duration).toISOString(),
+    lockLevel: state.lockLevel + 1,
+    justLocked: true,
+    lockedForMs: duration
+  };
+}
+function lockDurationFor(level) {
+  return LOCK_DURATIONS_MS[level] ?? FINAL_LOCK_MS;
+}
+function isFinalLock(state) {
+  return state.lockLevel > LOCK_DURATIONS_MS.length;
+}
+function registerSuccess() {
+  return { ...UNLOCKED };
+}
+function formatLockRemaining(ms) {
+  if (ms <= 0) return "0 daqiqa";
+  const totalMinutes = Math.ceil(ms / MINUTE);
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor(totalMinutes % (24 * 60) / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [];
+  if (days > 0) {
+    parts.push(`${days} kun`);
+    if (hours > 0) parts.push(`${hours} soat`);
+  } else if (hours > 0) {
+    parts.push(`${hours} soat`);
+    if (minutes > 0) parts.push(`${minutes} daqiqa`);
+  } else {
+    parts.push(`${minutes} daqiqa`);
+  }
+  return parts.join(" ");
+}
+function lockMessage(remainingMs, finalLock) {
+  const left = formatLockRemaining(remainingMs);
+  if (finalLock) {
+    return `Hisob bir haftaga qulflandi. ${left} qoldi \u2014 administratorga murojaat qiling.`;
+  }
+  return `Ko'p marta xato parol kiritildi. Hisob qulflandi, ${left} dan so'ng qayta urinib ko'ring.`;
+}
+function attemptsLeftMessage(attemptsLeft, lockLevel = 0) {
+  if (attemptsLeft <= 0) return null;
+  if (lockLevel > 0) {
+    const next = formatLockRemaining(lockDurationFor(lockLevel));
+    return `Diqqat: yana bitta xato urinishda hisob ${next}ga qulflanadi.`;
+  }
+  return attemptsLeft === 1 ? "Yana bitta xato urinishdan so'ng hisob 1 soatga qulflanadi." : `Yana ${attemptsLeft} ta urinish qoldi \u2014 keyin hisob qulflanadi.`;
+}
 
 // server/auth.ts
 init_password();
@@ -1678,20 +3154,100 @@ async function createStorage() {
 }
 var storage = await createStorage();
 
+// server/rbac.ts
+init_permissions();
+var ROLE_TTL_MS = 6e4;
+var cache = null;
+var inflight = null;
+function fallbackRoles() {
+  const now = (/* @__PURE__ */ new Date(0)).toISOString();
+  return new Map(
+    SYSTEM_ROLES.map((r) => [
+      r.key,
+      {
+        key: r.key,
+        name: r.name,
+        description: r.description,
+        permissions: [...r.permissions],
+        isSystem: true,
+        createdAt: now,
+        updatedAt: null,
+        updatedBy: null
+      }
+    ])
+  );
+}
+async function fetchRoles() {
+  try {
+    const list = await storage.listRoles();
+    return new Map(list.map(({ userCount: _count, ...role }) => [role.key, role]));
+  } catch (err) {
+    if (err?.code === "42P01") return fallbackRoles();
+    throw err;
+  }
+}
+async function getRoles() {
+  if (cache && Date.now() - cache.loadedAt < ROLE_TTL_MS) return cache.roles;
+  inflight ??= fetchRoles().then((roles2) => {
+    cache = { roles: roles2, loadedAt: Date.now() };
+    return roles2;
+  }).finally(() => {
+    inflight = null;
+  });
+  return inflight;
+}
+function invalidateRoles() {
+  cache = null;
+}
+async function toSessionUser(user) {
+  const key = canonicalRoleKey(user.role);
+  const role = (await getRoles()).get(key);
+  return {
+    ...user,
+    role: key,
+    roleName: role?.name ?? (key === SUPER_ADMIN ? "Super administrator" : "Rol belgilanmagan"),
+    permissions: resolvePermissions(key, role?.permissions)
+  };
+}
+function hasPermission(req, permission) {
+  return Boolean(req.user?.permissions?.includes(permission));
+}
+function isSuperAdmin(req) {
+  return req.user?.role === SUPER_ADMIN;
+}
+function requirePermission(...permissions) {
+  return (req, res, next) => {
+    if (!req.isAuthenticated?.() || !req.user) {
+      return res.status(401).json({ message: "Avval tizimga kiring" });
+    }
+    if (!permissions.some((p) => hasPermission(req, p))) {
+      return res.status(403).json({ message: "Bu amal uchun ruxsatingiz yo'q" });
+    }
+    next();
+  };
+}
+
 // server/auth.ts
+var pool2 = process.env.DATABASE_URL ? (await Promise.resolve().then(() => (init_db_pg(), db_pg_exports))).pool : null;
 var MemoryStore = createMemoryStore(session);
 var PgSession = connectPgSimple(session);
 function createSessionStore() {
-  if (!process.env.DATABASE_URL) {
+  if (!pool2) {
     return new MemoryStore({ checkPeriod: 24 * 60 * 60 * 1e3 });
   }
   return new PgSession({
-    conString: process.env.DATABASE_URL,
+    pool: pool2,
+    // Pool obyektini to'g'ridan-to'g'ri ulash
     tableName: "session",
     createTableIfMissing: true,
     pruneSessionInterval: 60 * 60
     // seconds
   });
+}
+var SESSION_USER_TTL_MS = 3e4;
+var sessionUsers = /* @__PURE__ */ new Map();
+function forgetSessionUser(id) {
+  sessionUsers.delete(id);
 }
 function setupAuth(app) {
   app.set("trust proxy", 1);
@@ -1723,7 +3279,7 @@ function setupAuth(app) {
           return done(null, false, { message: "Hisob bloklangan. Administratorga murojaat qiling" });
         }
         const { password: _password, ...pub } = user;
-        return done(null, pub);
+        return done(null, await toSessionUser(pub));
       } catch (err) {
         return done(err);
       }
@@ -1732,10 +3288,16 @@ function setupAuth(app) {
   passport.serializeUser((user, done) => done(null, user.id));
   passport.deserializeUser(async (id, done) => {
     try {
+      const hit = sessionUsers.get(id);
+      if (hit && hit.expires > Date.now()) return done(null, await toSessionUser(hit.user));
       const user = await storage.getUser(id);
-      if (!user || !user.isActive) return done(null, false);
+      if (!user || !user.isActive) {
+        sessionUsers.delete(id);
+        return done(null, false);
+      }
       const { password: _password, ...pub } = user;
-      done(null, pub);
+      sessionUsers.set(id, { user: pub, expires: Date.now() + SESSION_USER_TTL_MS });
+      done(null, await toSessionUser(pub));
     } catch (err) {
       done(err);
     }
@@ -1743,24 +3305,85 @@ function setupAuth(app) {
   app.use(passport.initialize());
   app.use(passport.session());
 }
+var MAX_ATTEMPTS = 8;
+var WINDOW_MS = 15 * 60 * 1e3;
+var attempts = /* @__PURE__ */ new Map();
+var MAX_TRACKED = 5e3;
+function attemptKey(req) {
+  const username = String(req.body?.username ?? "").trim().toLowerCase();
+  return `${req.ip ?? "?"}|${username}`;
+}
+function sweep(now) {
+  for (const [key, a] of attempts) {
+    if (now - a.firstAt > WINDOW_MS && now > a.blockedUntil) attempts.delete(key);
+  }
+  if (attempts.size > MAX_TRACKED) {
+    const oldest = [...attempts.entries()].sort((a, b) => a[1].firstAt - b[1].firstAt);
+    for (const [key] of oldest.slice(0, attempts.size - MAX_TRACKED)) attempts.delete(key);
+  }
+}
+function loginRateLimit(req, res, next) {
+  const now = Date.now();
+  sweep(now);
+  const entry = attempts.get(attemptKey(req));
+  if (entry && now < entry.blockedUntil) {
+    const minutes = Math.ceil((entry.blockedUntil - now) / 6e4);
+    return res.status(429).json({
+      message: `Juda ko'p urinish. ${minutes} daqiqadan so'ng qayta urinib ko'ring`
+    });
+  }
+  next();
+}
+function recordFailedLogin(req) {
+  const now = Date.now();
+  const key = attemptKey(req);
+  const entry = attempts.get(key);
+  if (!entry || now - entry.firstAt > WINDOW_MS) {
+    attempts.set(key, { count: 1, firstAt: now, blockedUntil: 0 });
+    return;
+  }
+  entry.count += 1;
+  if (entry.count >= MAX_ATTEMPTS) {
+    entry.blockedUntil = now + WINDOW_MS;
+    entry.count = 0;
+    entry.firstAt = now;
+  }
+}
+function clearFailedLogins(req) {
+  attempts.delete(attemptKey(req));
+}
 function requireAuth(req, res, next) {
   if (!req.isAuthenticated?.()) {
     return res.status(401).json({ message: "Avval tizimga kiring" });
   }
   next();
 }
-function requireRole(...roles) {
-  return (req, res, next) => {
-    if (!req.isAuthenticated?.()) {
-      return res.status(401).json({ message: "Avval tizimga kiring" });
-    }
-    const role = req.user?.role;
-    if (role !== "admin" && (!role || !roles.includes(role))) {
-      return res.status(403).json({ message: "Bu amal uchun ruxsatingiz yo'q" });
-    }
-    next();
-  };
+
+// server/csv.ts
+function field(value) {
+  if (value === null || value === void 0) return "";
+  let text2 = String(value);
+  if (/^[=+\-@\t\r]/.test(text2)) text2 = "'" + text2;
+  if (/[",\r\n]/.test(text2)) return `"${text2.replace(/"/g, '""')}"`;
+  return text2;
 }
+function toCsv(headers, rows) {
+  const lines = [headers.map(field).join(","), ...rows.map((r) => r.map(field).join(","))];
+  return "\uFEFF" + lines.join("\r\n") + "\r\n";
+}
+function csvHeaders(res, filename) {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Cache-Control", "no-store");
+}
+function stamp() {
+  const d = /* @__PURE__ */ new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// server/routes.ts
+init_password();
 
 // server/telegram.ts
 init_schema();
@@ -1780,6 +3403,7 @@ function log(message, source = "express") {
 // server/telegram.ts
 var token = process.env.TELEGRAM_BOT_TOKEN?.trim();
 var telegramEnabled = Boolean(token);
+var telegramUsesWebhook = Boolean(process.env.VERCEL);
 var webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim() || void 0;
 var MAX_MESSAGE = 3500;
 var CONTACT_BUTTON = "\u{1F4F1} Telefon raqamimni yuborish";
@@ -2035,6 +3659,17 @@ var numberParam = (value, fallback) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 };
+var stringParam = (value) => typeof value === "string" && value ? value : void 0;
+function actorOf(req) {
+  return { id: req.user?.id ?? null, name: req.user?.fullName ?? "Tizim" };
+}
+async function audit(req, action, entity, entityId, summary) {
+  try {
+    await storage.writeAudit({ actor: actorOf(req), action, entity, entityId, summary });
+  } catch (err) {
+    console.error("[audit] yozib bo'lmadi:", err);
+  }
+}
 async function registerRoutes(app) {
   setupAuth(app);
   console.log(`[db] ${usingPostgres ? "Postgres (Neon)" : "Mahalliy JSON (.data/db.json)"}`);
@@ -2045,10 +3680,10 @@ async function registerRoutes(app) {
   if (seeded.createdUsers) {
     console.log("[seed] Standart foydalanuvchilar yaratildi \u2014 admin / admin123");
   }
-  if (telegramEnabled) {
+  if (telegramEnabled && telegramUsesWebhook) {
     app.post("/api/telegram/webhook", telegramWebhook());
     console.log("[telegram] webhook yo'li: POST /api/telegram/webhook");
-  } else {
+  } else if (!telegramEnabled) {
     console.log("[telegram] TELEGRAM_BOT_TOKEN yo'q \u2014 bot o'chirilgan");
   }
   app.get(
@@ -2061,26 +3696,91 @@ async function registerRoutes(app) {
   );
   app.get(
     "/api/telegram/phone",
-    requireAuth,
+    requirePermission("patients.create", "patients.update"),
     handle(async (req, res) => {
       const phone = typeof req.query.phone === "string" ? req.query.phone : "";
       res.json(await telegramPhoneStatus(phone));
     })
   );
-  app.post("/api/login", (req, res, next) => {
+  app.post("/api/login", loginRateLimit, (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: fromZodError(parsed.error).toString() });
     }
-    passport2.authenticate("local", (err, user, info) => {
-      if (err) return next(err);
-      if (!user) return res.status(401).json({ message: info?.message ?? "Login yoki parol noto'g'ri" });
-      req.logIn(user, (loginErr) => {
-        if (loginErr) return next(loginErr);
-        res.json(user);
-      });
+    handle(async (request, response) => {
+      const account = await storage.getUserByUsername(parsed.data.username);
+      if (account) {
+        const remaining = lockRemainingMs(account.lockedUntil);
+        if (remaining > 0) {
+          return response.status(423).json({
+            message: lockMessage(remaining, isFinalLock(account)),
+            lockedUntil: account.lockedUntil
+          });
+        }
+      }
+      passport2.authenticate(
+        "local",
+        async (err, user, info) => {
+          if (err) return next(err);
+          if (!user) {
+            recordFailedLogin(request);
+            if (!account) {
+              return response.status(401).json({ message: info?.message ?? "Login yoki parol noto'g'ri" });
+            }
+            if (!account.isActive) {
+              return response.status(401).json({ message: info?.message ?? "Login yoki parol noto'g'ri" });
+            }
+            const decision = registerFailure(account);
+            await storage.setLockState(account.id, decision);
+            if (decision.justLocked) {
+              await audit(
+                request,
+                "login",
+                "auth",
+                account.id,
+                `${account.fullName} hisobi qulflandi (${formatLockRemaining(decision.lockedForMs ?? 0)})`
+              );
+              return response.status(423).json({
+                message: lockMessage(decision.lockedForMs ?? 0, isFinalLock(decision)),
+                lockedUntil: decision.lockedUntil
+              });
+            }
+            const left = decision.lockLevel > 0 ? 1 : ATTEMPTS_BEFORE_LOCK - decision.failedAttempts;
+            return response.status(401).json({
+              message: info?.message ?? "Login yoki parol noto'g'ri",
+              warning: attemptsLeftMessage(left, decision.lockLevel),
+              attemptsLeft: left
+            });
+          }
+          request.logIn(user, async (loginErr) => {
+            if (loginErr) return next(loginErr);
+            clearFailedLogins(request);
+            if (account && (account.failedAttempts > 0 || account.lockLevel > 0)) {
+              await storage.setLockState(account.id, registerSuccess());
+            }
+            void audit(request, "login", "auth", user.id, `${user.fullName} tizimga kirdi`);
+            response.json(user);
+          });
+        }
+      )(request, response, next);
     })(req, res, next);
   });
+  app.post(
+    "/api/user/password",
+    requireAuth,
+    handle(async (req, res) => {
+      const input = changePasswordSchema.parse(req.body);
+      const me = req.user;
+      const full = await storage.getUser(me.id);
+      if (!full) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (!await verifyPassword(input.currentPassword, full.password)) {
+        return res.status(400).json({ message: "Joriy parol noto'g'ri" });
+      }
+      await storage.updateUser(me.id, { password: input.newPassword });
+      await audit(req, "update", "user", me.id, `${me.fullName} parolini o'zgartirdi`);
+      res.sendStatus(204);
+    })
+  );
   app.post("/api/logout", (req, res, next) => {
     req.logout((err) => {
       if (err) return next(err);
@@ -2093,7 +3793,7 @@ async function registerRoutes(app) {
   });
   app.get(
     "/api/patients",
-    requireAuth,
+    requirePermission("patients.read"),
     handle(async (req, res) => {
       const result = await storage.listPatients({
         search: typeof req.query.search === "string" ? req.query.search : void 0,
@@ -2105,7 +3805,7 @@ async function registerRoutes(app) {
   );
   app.get(
     "/api/patients/:id",
-    requireAuth,
+    requirePermission("patients.read"),
     handle(async (req, res) => {
       const patient = await storage.getPatient(req.params.id);
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
@@ -2114,7 +3814,7 @@ async function registerRoutes(app) {
   );
   app.get(
     "/api/patients/:id/orders",
-    requireAuth,
+    requirePermission("orders.read"),
     handle(async (req, res) => {
       const result = await storage.listOrders({ patientId: req.params.id });
       res.json(result);
@@ -2122,29 +3822,33 @@ async function registerRoutes(app) {
   );
   app.post(
     "/api/patients",
-    requireRole("registrator"),
+    requirePermission("patients.create"),
     handle(async (req, res) => {
       const input = insertPatientSchema.parse(req.body);
       const patient = await storage.createPatient(input);
+      await audit(req, "create", "patient", patient.id, `\u2116${patient.patientNumber} ${patient.fullName}`);
       res.status(201).json(await claimPendingContact(patient));
     })
   );
   app.patch(
     "/api/patients/:id",
-    requireRole("registrator"),
+    requirePermission("patients.update"),
     handle(async (req, res) => {
       const input = insertPatientSchema.partial().parse(req.body);
       const patient = await storage.updatePatient(req.params.id, input);
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
+      await audit(req, "update", "patient", patient.id, `\u2116${patient.patientNumber} ${patient.fullName} tahrirlandi`);
       res.json(await claimPendingContact(patient));
     })
   );
   app.delete(
     "/api/patients/:id",
-    requireRole("admin"),
+    requirePermission("patients.delete"),
     handle(async (req, res) => {
+      const before = await storage.getPatient(req.params.id);
       const ok = await storage.deletePatient(req.params.id);
       if (!ok) return res.status(404).json({ message: "Bemor topilmadi" });
+      await audit(req, "delete", "patient", req.params.id, `${before?.fullName ?? "Bemor"} o'chirildi`);
       res.sendStatus(204);
     })
   );
@@ -2157,32 +3861,46 @@ async function registerRoutes(app) {
   );
   app.post(
     "/api/tests",
-    requireRole("admin"),
+    requirePermission("tests.manage"),
     handle(async (req, res) => {
-      res.status(201).json(await storage.createTest(insertTestSchema.parse(req.body)));
+      const test = await storage.createTest(insertTestSchema.parse(req.body));
+      await audit(req, "create", "test", test.id, `"${test.name}" qo'shildi \u2014 ${test.price} so'm`);
+      res.status(201).json(test);
     })
   );
   app.patch(
     "/api/tests/:id",
-    requireRole("admin"),
+    requirePermission("tests.manage"),
     handle(async (req, res) => {
-      const test = await storage.updateTest(req.params.id, insertTestSchema.partial().parse(req.body));
+      const input = insertTestSchema.partial().parse(req.body);
+      const before = await storage.getTest(req.params.id);
+      const test = await storage.updateTest(req.params.id, input);
       if (!test) return res.status(404).json({ message: "Tahlil topilmadi" });
+      const priceMoved = before && before.price !== test.price;
+      await audit(
+        req,
+        "update",
+        "test",
+        test.id,
+        priceMoved ? `"${test.name}" narxi ${before.price} \u2192 ${test.price} so'm` : `"${test.name}" tahrirlandi`
+      );
       res.json(test);
     })
   );
   app.delete(
     "/api/tests/:id",
-    requireRole("admin"),
+    requirePermission("tests.manage"),
     handle(async (req, res) => {
+      const before = await storage.getTest(req.params.id);
       const ok = await storage.deleteTest(req.params.id);
       if (!ok) return res.status(404).json({ message: "Tahlil topilmadi" });
+      await audit(req, "delete", "test", req.params.id, `"${before?.name ?? "Tahlil"}" o'chirildi`);
       res.sendStatus(204);
     })
   );
   app.get(
     "/api/orders",
-    requireAuth,
+    requirePermission("orders.read"),
     handle(async (req, res) => {
       const statusParam = req.query.status;
       const status = ORDER_STATUSES.find((s) => s === statusParam);
@@ -2203,7 +3921,7 @@ async function registerRoutes(app) {
   );
   app.get(
     "/api/orders/:id",
-    requireAuth,
+    requirePermission("orders.read"),
     handle(async (req, res) => {
       const order = await storage.getOrder(req.params.id);
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
@@ -2212,37 +3930,78 @@ async function registerRoutes(app) {
   );
   app.post(
     "/api/orders",
-    requireRole("registrator"),
+    requirePermission("orders.create"),
     handle(async (req, res) => {
       const input = createOrderSchema.parse(req.body);
       const order = await storage.createOrder({ ...input, createdBy: req.user?.id ?? null });
+      await audit(
+        req,
+        "create",
+        "order",
+        order.id,
+        `#${order.orderNumber} buyurtma yaratildi \u2014 ${order.items.length} ta tahlil`
+      );
       res.status(201).json(order);
     })
   );
   app.patch(
     "/api/orders/:id",
-    requireRole("registrator", "laborant"),
+    requirePermission("orders.update", "orders.cancel"),
     handle(async (req, res) => {
-      const order = await storage.updateOrder(req.params.id, updateOrderSchema.parse(req.body));
+      const input = updateOrderSchema.parse(req.body);
+      const before = await storage.getOrder(req.params.id);
+      if (!before) return res.status(404).json({ message: "Buyurtma topilmadi" });
+      const touchesCancel = input.status !== void 0 && input.status !== before.status && (input.status === "cancelled" || before.status === "cancelled");
+      const editsOther = input.status !== void 0 && !touchesCancel && input.status !== before.status || input.testIds !== void 0 || input.discount !== void 0 || input.paidAmount !== void 0 || input.notes !== void 0 || input.referrer !== void 0;
+      if (touchesCancel && !hasPermission(req, "orders.cancel")) {
+        return res.status(403).json({ message: "Buyurtmani bekor qilish uchun ruxsatingiz yo'q" });
+      }
+      if (editsOther && !hasPermission(req, "orders.update")) {
+        return res.status(403).json({ message: "Buyurtmani tahrirlash uchun ruxsatingiz yo'q" });
+      }
+      const order = await storage.updateOrder(req.params.id, input);
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
+      const changes = [];
+      if (input.testIds && before.items.length !== order.items.length) {
+        changes.push(`tahlillar ${before.items.length} \u2192 ${order.items.length} ta`);
+      }
+      if (input.discount !== void 0 && before.discount !== order.discount) {
+        changes.push(`chegirma ${before.discount} \u2192 ${order.discount}`);
+      }
+      if (input.status && before.status !== order.status) {
+        changes.push(`holat ${before.status} \u2192 ${order.status}`);
+      }
+      if (input.referrer !== void 0 && (before.referrer ?? "") !== (order.referrer ?? "")) {
+        changes.push(`yo'naltirgan: ${order.referrer || "\u2014"}`);
+      }
+      if (changes.length) {
+        await audit(req, "update", "order", order.id, `#${order.orderNumber}: ${changes.join(", ")}`);
+      }
       if (order.status === "completed") await notifyIfReady(order);
       res.json(order);
     })
   );
   app.post(
     "/api/orders/:id/results",
-    requireRole("laborant"),
+    requirePermission("results.enter"),
     handle(async (req, res) => {
       const { results } = saveResultsSchema.parse(req.body);
-      const order = await storage.saveResults(req.params.id, results);
+      const order = await storage.saveResults(req.params.id, results, actorOf(req));
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
+      await audit(
+        req,
+        "results",
+        "order",
+        order.id,
+        `#${order.orderNumber}: ${results.length} ta natija saqlandi`
+      );
       const delivery = await notifyIfReady(order);
       res.json({ ...order, telegram: delivery });
     })
   );
   app.post(
     "/api/orders/:id/telegram",
-    requireRole("registrator", "laborant"),
+    requirePermission("results.send"),
     handle(async (req, res) => {
       const order = await storage.getOrder(req.params.id);
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
@@ -2251,25 +4010,264 @@ async function registerRoutes(app) {
       res.json({ ...await storage.getOrder(req.params.id), telegram: result });
     })
   );
+  app.patch(
+    "/api/orders/:id/sample",
+    requirePermission("samples.manage"),
+    handle(async (req, res) => {
+      const input = updateSampleSchema.parse(req.body);
+      const result = await storage.updateSampleStatus(req.params.id, input, actorOf(req));
+      if (!result) return res.status(404).json({ message: "Namuna topilmadi" });
+      if ("error" in result) return res.status(409).json({ message: result.error });
+      const { sample, order } = result;
+      const detail = input.status === "rad_etildi" ? `rad etildi \u2014 ${sample.rejectReason}` : SAMPLE_STATUS_LABELS[sample.status];
+      await audit(req, "sample", "order", order.id, `#${order.orderNumber} namuna: ${detail}`);
+      res.json(order);
+    })
+  );
+  app.get(
+    "/api/samples/scan",
+    requirePermission("samples.manage"),
+    handle(async (req, res) => {
+      const code = String(req.query.code ?? "");
+      const order = await storage.getOrderByBarcode(code);
+      if (!order) return res.status(404).json({ message: "Bunday barcode topilmadi" });
+      res.json(order);
+    })
+  );
   app.delete(
     "/api/orders/:id",
-    requireRole("admin"),
+    requirePermission("orders.delete"),
     handle(async (req, res) => {
+      const before = await storage.getOrder(req.params.id);
       const ok = await storage.deleteOrder(req.params.id);
       if (!ok) return res.status(404).json({ message: "Buyurtma topilmadi" });
+      await audit(
+        req,
+        "delete",
+        "order",
+        req.params.id,
+        `#${before?.orderNumber ?? "?"} buyurtma o'chirildi (${before?.patient?.fullName ?? "\u2014"})`
+      );
       res.sendStatus(204);
+    })
+  );
+  app.post(
+    "/api/orders/:id/payments",
+    requirePermission("payments.create", "payments.refund"),
+    handle(async (req, res) => {
+      const input = createPaymentSchema.parse(req.body);
+      const needed = input.amount < 0 ? "payments.refund" : "payments.create";
+      if (!hasPermission(req, needed)) {
+        return res.status(403).json({
+          message: needed === "payments.refund" ? "To'lovni qaytarish uchun ruxsatingiz yo'q" : "To'lov qabul qilish uchun ruxsatingiz yo'q"
+        });
+      }
+      const order = await storage.addPayment(req.params.id, input, actorOf(req));
+      if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
+      const latest = order.payments?.[0];
+      await audit(
+        req,
+        latest && latest.amount < 0 ? "refund" : "payment",
+        "order",
+        order.id,
+        `#${order.orderNumber}: ${latest?.amount ?? input.amount} so'm (${input.method})`
+      );
+      res.status(201).json(order);
+    })
+  );
+  app.delete(
+    "/api/payments/:id",
+    requirePermission("payments.delete"),
+    handle(async (req, res) => {
+      const ok = await storage.deletePayment(req.params.id);
+      if (!ok) return res.status(404).json({ message: "To'lov topilmadi" });
+      await audit(req, "delete", "payment", req.params.id, "To'lov yozuvi o'chirildi");
+      res.sendStatus(204);
+    })
+  );
+  app.get(
+    "/api/expenses",
+    requirePermission("expenses.read"),
+    handle(async (req, res) => {
+      res.json(
+        await storage.listExpenses({
+          from: stringParam(req.query.from),
+          to: stringParam(req.query.to),
+          limit: numberParam(req.query.limit),
+          offset: numberParam(req.query.offset, 0)
+        })
+      );
+    })
+  );
+  app.post(
+    "/api/expenses",
+    requirePermission("expenses.manage"),
+    handle(async (req, res) => {
+      const input = insertExpenseSchema.parse(req.body);
+      const row = await storage.createExpense(input, actorOf(req));
+      await audit(req, "create", "expense", row.id, `${row.category}: ${row.amount} so'm`);
+      res.status(201).json(row);
+    })
+  );
+  app.delete(
+    "/api/expenses/:id",
+    requirePermission("expenses.manage"),
+    handle(async (req, res) => {
+      const ok = await storage.deleteExpense(req.params.id);
+      if (!ok) return res.status(404).json({ message: "Xarajat topilmadi" });
+      await audit(req, "delete", "expense", req.params.id, "Xarajat o'chirildi");
+      res.sendStatus(204);
+    })
+  );
+  app.get(
+    "/api/audit",
+    requirePermission("audit.read"),
+    handle(async (req, res) => {
+      res.json(
+        await storage.listAudit({
+          entity: stringParam(req.query.entity),
+          limit: numberParam(req.query.limit, 50),
+          offset: numberParam(req.query.offset, 0)
+        })
+      );
+    })
+  );
+  app.get(
+    "/api/export/patients.csv",
+    requirePermission("data.export"),
+    handle(async (req, res) => {
+      const { items } = await storage.listPatients({ search: stringParam(req.query.search) });
+      csvHeaders(res, `bemorlar-${stamp()}.csv`);
+      res.send(
+        toCsv(
+          ["\u2116", "F.I.Sh", "Telefon", "Yosh", "Jinsi", "Manzil", "Telegram", "Ro'yxatdan o'tgan"],
+          items.map((p) => [
+            p.patientNumber,
+            p.fullName,
+            p.phone,
+            p.age ?? "",
+            p.gender ?? "",
+            p.address ?? "",
+            p.telegramChatId ? "ha" : "yo'q",
+            localDay(p.createdAt)
+          ])
+        )
+      );
+    })
+  );
+  app.get(
+    "/api/export/orders.csv",
+    requirePermission("data.export"),
+    handle(async (req, res) => {
+      const { items } = await storage.listOrders({
+        from: stringParam(req.query.from),
+        to: stringParam(req.query.to),
+        search: stringParam(req.query.search)
+      });
+      csvHeaders(res, `buyurtmalar-${stamp()}.csv`);
+      res.send(
+        toCsv(
+          [
+            "Buyurtma \u2116",
+            "Sana",
+            "Bemor \u2116",
+            "Bemor",
+            "Telefon",
+            "Tahlillar",
+            "Tahlil soni",
+            "Jami",
+            "Chegirma",
+            "To'langan",
+            "Qarz",
+            "Holat",
+            "Yo'naltirgan"
+          ],
+          items.map((o) => [
+            o.orderNumber,
+            localDay(o.createdAt),
+            o.patient?.patientNumber ?? "",
+            o.patient?.fullName ?? "",
+            o.patient?.phone ?? "",
+            o.items.map((i) => i.testName).join("; "),
+            o.items.length,
+            o.totalAmount,
+            o.discount,
+            o.paidAmount,
+            Math.max(0, o.totalAmount - o.paidAmount),
+            ORDER_STATUS_LABELS[o.status],
+            o.referrer ?? ""
+          ])
+        )
+      );
+    })
+  );
+  app.get(
+    "/api/export/expenses.csv",
+    requirePermission("data.export"),
+    handle(async (req, res) => {
+      const { items } = await storage.listExpenses({
+        from: stringParam(req.query.from),
+        to: stringParam(req.query.to)
+      });
+      csvHeaders(res, `xarajatlar-${stamp()}.csv`);
+      res.send(
+        toCsv(
+          ["Sana", "Kategoriya", "Summa", "Izoh", "Kim kiritdi"],
+          items.map((e) => [e.spentOn, e.category, e.amount, e.note ?? "", e.createdByName ?? ""])
+        )
+      );
+    })
+  );
+  app.get(
+    "/api/backup",
+    requirePermission("backup.download"),
+    handle(async (req, res) => {
+      const [patientsAll, ordersAll, testsAll, usersAll, expensesAll, settings] = await Promise.all([
+        storage.listPatients(),
+        storage.listOrders(),
+        storage.listTests(),
+        storage.listUsers(),
+        storage.listExpenses(),
+        storage.getSettings()
+      ]);
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="medlab-backup-${stamp()}.json"`);
+      res.setHeader("Cache-Control", "no-store");
+      await audit(req, "export", "backup", null, "To'liq zaxira nusxa yuklandi");
+      res.send(
+        JSON.stringify(
+          {
+            version: 2,
+            exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            settings,
+            // Passwords are hashes, but they are still credentials — a backup
+            // file gets emailed around, so they do not travel with it.
+            users: usersAll.map(({ ...u }) => u),
+            tests: testsAll,
+            patients: patientsAll.items,
+            orders: ordersAll.items,
+            expenses: expensesAll.items
+          },
+          null,
+          2
+        )
+      );
     })
   );
   app.get(
     "/api/stats",
     requireAuth,
-    handle(async (_req, res) => {
-      res.json(await storage.getDashboardStats());
+    handle(async (req, res) => {
+      const stats = await storage.getDashboardStats();
+      if (!hasPermission(req, "finance.view")) {
+        return res.json({ ...stats, todayRevenue: null, unpaidAmount: null });
+      }
+      res.json(stats);
     })
   );
   app.get(
     "/api/reports/revenue",
-    requireRole("admin"),
+    requirePermission("reports.view"),
     handle(async (req, res) => {
       const today = localDay(/* @__PURE__ */ new Date());
       const defaultFrom = /* @__PURE__ */ new Date();
@@ -2288,34 +4286,92 @@ async function registerRoutes(app) {
   );
   app.put(
     "/api/settings",
-    requireRole("admin"),
+    requirePermission("settings.manage"),
     handle(async (req, res) => {
-      res.json(await storage.updateSettings(labSettingsSchema.parse(req.body)));
+      const saved = await storage.updateSettings(labSettingsSchema.parse(req.body));
+      await audit(req, "update", "settings", "default", "Laboratoriya ma'lumotlari yangilandi");
+      res.json(saved);
     })
   );
+  const denied = (res, message) => res.status(403).json({ message });
+  const isSuperRole = (role) => role === SUPER_ADMIN || role === LEGACY_ADMIN;
+  async function checkAssignableRole(req, res, requested) {
+    const roleKey = requested === LEGACY_ADMIN ? SUPER_ADMIN : requested;
+    const role = await storage.getRole(roleKey).catch(() => void 0);
+    if (!role && !SYSTEM_ROLE_KEYS.includes(roleKey)) {
+      res.status(400).json({ message: "Bunday rol mavjud emas" });
+      return false;
+    }
+    if (roleKey === SUPER_ADMIN) {
+      if (!isSuperAdmin(req)) {
+        denied(res, "Super administrator rolini faqat super administrator bera oladi");
+        return false;
+      }
+      return true;
+    }
+    const granted = (await toSessionUser({ ...req.user, role: roleKey })).permissions;
+    const missing = granted.filter((p) => !hasPermission(req, p));
+    if (missing.length) {
+      denied(
+        res,
+        `Bu rolda sizda yo'q ruxsatlar bor (${missing.map((p) => PERMISSIONS[p].label).join(", ")}). Uni faqat yuqoriroq vakolatli xodim bera oladi.`
+      );
+      return false;
+    }
+    return true;
+  }
+  async function activeSuperAdminCount() {
+    return (await storage.listUsers()).filter((u) => u.isActive && isSuperRole(u.role)).length;
+  }
   app.get(
     "/api/users",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (_req, res) => {
       res.json(await storage.listUsers());
     })
   );
   app.post(
     "/api/users",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (req, res) => {
       const input = insertUserSchema.parse(req.body);
+      if (!await checkAssignableRole(req, res, input.role)) return;
       if (await storage.getUserByUsername(input.username)) {
         return res.status(409).json({ message: "Bu login allaqachon band" });
       }
-      res.status(201).json(await storage.createUser(input));
+      const user = await storage.createUser(input);
+      const { roleName } = await toSessionUser(user);
+      await audit(req, "create", "user", user.id, `${user.fullName} (${roleName}) qo'shildi`);
+      res.status(201).json(user);
     })
   );
   app.patch(
     "/api/users/:id",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (req, res) => {
       const input = updateUserSchema.parse(req.body);
+      const target = await storage.getUser(req.params.id);
+      if (!target) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (isSuperRole(target.role) && !isSuperAdmin(req)) {
+        return denied(res, "Super administrator hisobini faqat super administrator o'zgartira oladi");
+      }
+      const nextRole = input.role;
+      const roleChanges = nextRole !== void 0 && nextRole !== target.role;
+      const deactivates = input.isActive === false && target.isActive;
+      const isSelf = target.id === req.user?.id;
+      if (isSelf && roleChanges) {
+        return res.status(400).json({ message: "O'z rolingizni o'zgartira olmaysiz" });
+      }
+      if (isSelf && deactivates) {
+        return res.status(400).json({ message: "O'z hisobingizni bloklay olmaysiz" });
+      }
+      if (roleChanges && !await checkAssignableRole(req, res, nextRole)) return;
+      const losesSuper = deactivates || roleChanges && !isSuperRole(nextRole);
+      if (isSuperRole(target.role) && target.isActive && losesSuper && await activeSuperAdminCount() <= 1) {
+        return res.status(400).json({
+          message: "Tizimda kamida bitta faol super administrator qolishi kerak"
+        });
+      }
       if (input.username) {
         const existing = await storage.getUserByUsername(input.username);
         if (existing && existing.id !== req.params.id) {
@@ -2323,19 +4379,162 @@ async function registerRoutes(app) {
         }
       }
       const user = await storage.updateUser(req.params.id, input);
+      forgetSessionUser(req.params.id);
       if (!user) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      const changes = [];
+      if (roleChanges) {
+        const [from, to] = await Promise.all([
+          toSessionUser({ ...user, role: target.role }),
+          toSessionUser(user)
+        ]);
+        changes.push(`rol: ${from.roleName} \u2192 ${to.roleName}`);
+      }
+      if (input.isActive !== void 0 && input.isActive !== target.isActive) {
+        changes.push(input.isActive ? "faollashtirildi" : "bloklandi");
+      }
+      if (input.password) changes.push("paroli almashtirildi");
+      if (input.fullName && input.fullName !== target.fullName) changes.push("F.I.Sh o'zgardi");
+      if (input.username && input.username !== target.username) changes.push(`login: @${input.username}`);
+      await audit(
+        req,
+        "update",
+        "user",
+        user.id,
+        `${user.fullName} \u2014 ${changes.length ? changes.join(", ") : "ma'lumotlari yangilandi"}`
+      );
       res.json(user);
+    })
+  );
+  app.post(
+    "/api/users/:id/unlock",
+    requirePermission("users.manage"),
+    handle(async (req, res) => {
+      const user = await storage.getUser(req.params.id);
+      if (!user) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      await storage.setLockState(user.id, registerSuccess());
+      await audit(req, "update", "user", user.id, `${user.fullName} \u2014 hisob qulfi ochildi`);
+      const { password: _password, ...pub } = user;
+      res.json({ ...pub, failedAttempts: 0, lockedUntil: null, lockLevel: 0 });
     })
   );
   app.delete(
     "/api/users/:id",
-    requireRole("admin"),
+    requirePermission("users.manage"),
     handle(async (req, res) => {
       if (req.params.id === req.user?.id) {
         return res.status(400).json({ message: "O'z hisobingizni o'chira olmaysiz" });
       }
+      const before = await storage.getUser(req.params.id);
+      if (!before) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (isSuperRole(before.role)) {
+        if (!isSuperAdmin(req)) {
+          return denied(res, "Super administrator hisobini faqat super administrator o'chira oladi");
+        }
+        if (before.isActive && await activeSuperAdminCount() <= 1) {
+          return res.status(400).json({
+            message: "Tizimda kamida bitta faol super administrator qolishi kerak"
+          });
+        }
+      }
       const ok = await storage.deleteUser(req.params.id);
+      forgetSessionUser(req.params.id);
       if (!ok) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      await audit(req, "delete", "user", req.params.id, `${before.fullName} o'chirildi`);
+      res.sendStatus(204);
+    })
+  );
+  async function newRoleKey(name) {
+    const base = name.toLowerCase().replace(/[‘’ʻʼ']/g, "").normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "rol";
+    const taken = /* @__PURE__ */ new Set([
+      ...(await storage.listRoles()).map((r) => r.key),
+      ...SYSTEM_ROLE_KEYS,
+      LEGACY_ADMIN
+    ]);
+    let key = base;
+    for (let i = 2; taken.has(key); i++) key = `${base}_${i}`;
+    return key;
+  }
+  const beyondOwn = (req, next, prev = []) => isSuperAdmin(req) ? [] : next.filter((p) => !prev.includes(p) && !hasPermission(req, p));
+  const labelList = (list) => list.map((p) => `${PERMISSION_GROUP_LABEL[PERMISSIONS[p].group]}: ${PERMISSIONS[p].label}`).join(", ");
+  app.get(
+    "/api/roles",
+    requirePermission("users.manage", "roles.manage"),
+    handle(async (_req, res) => {
+      res.json(await storage.listRoles());
+    })
+  );
+  app.post(
+    "/api/roles",
+    requirePermission("roles.manage"),
+    handle(async (req, res) => {
+      const input = insertRoleSchema.parse(req.body);
+      const over = beyondOwn(req, input.permissions);
+      if (over.length) {
+        return denied(res, `O'zingizda yo'q ruxsatlarni bera olmaysiz: ${labelList(over)}`);
+      }
+      const role = await storage.createRole({ ...input, key: await newRoleKey(input.name) }, actorOf(req));
+      invalidateRoles();
+      await audit(
+        req,
+        "create",
+        "role",
+        role.key,
+        `"${role.name}" roli yaratildi (${role.permissions.length} ta ruxsat)`
+      );
+      res.status(201).json({ ...role, userCount: 0 });
+    })
+  );
+  app.patch(
+    "/api/roles/:key",
+    requirePermission("roles.manage"),
+    handle(async (req, res) => {
+      if (req.params.key === SUPER_ADMIN) {
+        return res.status(400).json({ message: "Super administrator rolini o'zgartirib bo'lmaydi" });
+      }
+      const input = updateRoleSchema.parse(req.body);
+      const before = await storage.getRole(req.params.key);
+      if (!before) return res.status(404).json({ message: "Rol topilmadi" });
+      if (input.permissions) {
+        const over = beyondOwn(req, input.permissions, before.permissions);
+        if (over.length) {
+          return denied(res, `O'zingizda yo'q ruxsatlarni bera olmaysiz: ${labelList(over)}`);
+        }
+      }
+      const role = await storage.updateRole(req.params.key, input, actorOf(req));
+      if (!role) return res.status(404).json({ message: "Rol topilmadi" });
+      invalidateRoles();
+      const changes = [];
+      if (input.name !== void 0 && input.name !== before.name) changes.push(`nomi "${input.name}"`);
+      if (input.permissions) {
+        const added = role.permissions.filter((p) => !before.permissions.includes(p));
+        const removed = before.permissions.filter((p) => !role.permissions.includes(p));
+        if (added.length) changes.push(`qo'shildi: ${labelList(added)}`);
+        if (removed.length) changes.push(`olib tashlandi: ${labelList(removed)}`);
+      }
+      if (changes.length) {
+        await audit(req, "update", "role", role.key, `"${role.name}" roli \u2014 ${changes.join("; ")}`);
+      }
+      const userCount = (await storage.listRoles()).find((r) => r.key === role.key)?.userCount ?? 0;
+      res.json({ ...role, userCount });
+    })
+  );
+  app.delete(
+    "/api/roles/:key",
+    requirePermission("roles.manage"),
+    handle(async (req, res) => {
+      const role = (await storage.listRoles()).find((r) => r.key === req.params.key);
+      if (!role) return res.status(404).json({ message: "Rol topilmadi" });
+      if (role.isSystem) {
+        return res.status(400).json({ message: "TZ'dagi tizim rollarini o'chirib bo'lmaydi" });
+      }
+      if (role.userCount > 0) {
+        return res.status(409).json({
+          message: `Bu rolda ${role.userCount} ta xodim bor. Avval ularga boshqa rol bering.`
+        });
+      }
+      await storage.deleteRole(role.key);
+      invalidateRoles();
+      await audit(req, "delete", "role", role.key, `"${role.name}" roli o'chirildi`);
       res.sendStatus(204);
     })
   );

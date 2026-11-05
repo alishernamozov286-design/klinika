@@ -131,7 +131,7 @@ export default function Patients() {
         description="Qidiruv raqam, ism, telefon va manzil bo'yicha — server tomonda bajariladi"
         actions={
           <div className="flex items-center gap-2">
-            {can("admin") && (
+            {can("data.export") && (
               <ExportButtons
                 testIdPrefix="export-patients"
                 disabled={isLoading}
@@ -148,7 +148,7 @@ export default function Patients() {
             )}
             {/* Server-side, so the file holds every match rather than the
                 25 rows on screen — the form an accountant actually wants. */}
-            {can("admin") && (
+            {can("data.export") && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="outline" size="icon" asChild aria-label="Butun bazani CSV yuklab olish">
@@ -163,7 +163,7 @@ export default function Patients() {
                 <TooltipContent>Butun baza (CSV)</TooltipContent>
               </Tooltip>
             )}
-            {can("registrator") && (
+            {can("patients.create") && (
               <Button onClick={openCreate} data-testid="button-add-patient" className="shadow-brand">
                 <UserPlus className="mr-2 h-4 w-4" />
                 Yangi bemor
@@ -205,7 +205,7 @@ export default function Patients() {
                 : "Birinchi bemorni ro'yxatdan o'tkazing — keyin unga tahlil buyurtma qilasiz."
             }
             action={
-              !debouncedSearch && can("registrator") ? (
+              !debouncedSearch && can("patients.create") ? (
                 <Button onClick={openCreate}>
                   <UserPlus className="mr-2 h-4 w-4" />
                   Bemor qo'shish
@@ -276,12 +276,14 @@ export default function Patients() {
                             <History className="mr-2 h-4 w-4" />
                             Tahlillar tarixi
                           </DropdownMenuItem>
-                          {can("registrator") && (
+                          {can("orders.create") && (
+                            <DropdownMenuItem onClick={() => setOrderFor(p)}>
+                              <FlaskConical className="mr-2 h-4 w-4" />
+                              Tahlil buyurtma qilish
+                            </DropdownMenuItem>
+                          )}
+                          {can("patients.update") && (
                             <>
-                              <DropdownMenuItem onClick={() => setOrderFor(p)}>
-                                <FlaskConical className="mr-2 h-4 w-4" />
-                                Tahlil buyurtma qilish
-                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => {
                                   setDialogPatient(p);
@@ -293,7 +295,7 @@ export default function Patients() {
                               </DropdownMenuItem>
                             </>
                           )}
-                          {can("admin") && (
+                          {can("patients.delete") && (
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
                               onClick={() => setDeleting(p)}

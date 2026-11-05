@@ -9,6 +9,7 @@ import {
   FileCheck2,
   FlaskConical,
   Inbox,
+  ShieldCheck,
   Sparkles,
   TrendingUp,
   UserPlus,
@@ -40,6 +41,7 @@ import { OrderDetailDialog } from "@/components/order-detail-dialog";
 import { ResultsDialog } from "@/components/results-dialog";
 import { PrintDialog } from "@/components/print-dialog";
 import { useAuth } from "@/hooks/use-auth";
+import { cn } from "@/lib/utils";
 import { formatDate, formatPhone, formatTime, formatWeekdayDate, money, timeAgo } from "@/lib/format";
 
 /** The recent-orders feed, as it is shown — see lib/export.ts. */
@@ -68,8 +70,14 @@ export default function Home() {
     queryKey: ["/api/stats"],
   });
 
+  const seesOrders = can("orders.read");
+  // The server withholds the money figures from roles without finance.view;
+  // the cards follow the same rule rather than showing a misleading 0.
+  const seesFinance = can("finance.view");
+
   const { data: recent, isLoading: ordersLoading } = useQuery<OrderListResponse>({
     queryKey: ["/api/orders?limit=6"],
+    enabled: seesOrders,
   });
 
   const orders = recent?.items ?? [];
@@ -117,7 +125,7 @@ export default function Home() {
       sheetName: "Kunlik hisobot",
       columns: EXPORT_COLUMNS,
       rows: orders,
-      sections: [summary, finance],
+      sections: seesFinance ? [summary, finance] : [summary],
     };
   };
 
@@ -135,218 +143,239 @@ export default function Home() {
               Salom, {firstName}
             </h1>
             <p className="mt-2 max-w-xl text-[15px] text-foreground/85">
-              Bugun laboratoriyada {stats?.todayPatients ?? 0} ta bemor qabul qilindi va{" "}
-              {money(collected)} tushum yig'ildi.
+              Bugun laboratoriyada {stats?.todayPatients ?? 0} ta bemor qabul qilindi
+              {seesFinance ? <> va {money(collected)} tushum yig'ildi.</> : "."}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
             {/* On the hero band the outline buttons need light-on-dark styling. */}
-            <ExportButtons
-              testIdPrefix="export-dashboard"
-              disabled={statsLoading || ordersLoading}
-              build={buildExport}
-            />
-            {can("registrator") && (
-              <>
-                <Button
-                  variant="secondary"
-                  onClick={() => setPatientOpen(true)}
-                  data-testid="button-new-patient"
-                >
-                  <UserPlus className="mr-2 h-4 w-4" />
-                  Yangi bemor
-                </Button>
-                <Button
-                  onClick={() => setOrderOpen(true)}
-                  data-testid="button-new-order"
-                >
-                  <FlaskConical className="mr-2 h-4 w-4" />
-                  Yangi buyurtma
-                </Button>
-              </>
+            {seesOrders && (
+              <ExportButtons
+                testIdPrefix="export-dashboard"
+                disabled={statsLoading || ordersLoading}
+                build={buildExport}
+              />
+            )}
+            {can("patients.create") && (
+              <Button
+                variant="secondary"
+                onClick={() => setPatientOpen(true)}
+                data-testid="button-new-patient"
+              >
+                <UserPlus className="mr-2 h-4 w-4" />
+                Yangi bemor
+              </Button>
+            )}
+            {can("orders.create") && (
+              <Button
+                onClick={() => setOrderOpen(true)}
+                data-testid="button-new-order"
+              >
+                <FlaskConical className="mr-2 h-4 w-4" />
+                Yangi buyurtma
+              </Button>
             )}
           </div>
         </div>
       </section>
 
       {/* ----------------------------------------------------------- stats */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          index={0}
-          label="Bugungi bemorlar"
-          value={stats?.todayPatients ?? 0}
-          hint={`Bazada jami ${stats?.totalPatients ?? 0} ta bemor`}
-          icon={Users}
-          isLoading={statsLoading}
-          onClick={() => setLocation("/patients")}
-        />
-        <StatCard
-          index={1}
-          label="Kutilayotgan tahlillar"
-          value={stats?.pendingTests ?? 0}
-          hint="Natijasi kiritilmagan"
-          icon={Clock}
-          tone="amber"
-          isLoading={statsLoading}
-          onClick={() => setLocation("/results")}
-        />
-        <StatCard
-          index={2}
-          label="Tayyor tahlillar"
-          value={stats?.readyTests ?? 0}
-          hint="Blanka chop etishga tayyor"
-          icon={FileCheck2}
-          tone="emerald"
-          isLoading={statsLoading}
-          onClick={() => setLocation("/results")}
-        />
-        <StatCard
-          index={3}
-          label="Bugungi tushum"
-          value={money(collected, false)}
-          suffix="so'm"
-          hint={
-            debt > 0 ? (
-              <span className="text-rose-600 dark:text-rose-400">
-                Qarzdorlik: {money(debt)}
-              </span>
-            ) : (
-              "Qarzdorlik yo'q"
-            )
-          }
-          icon={Wallet}
-          tone="violet"
-          isLoading={statsLoading}
-        />
-      </div>
+      {/* Lab counters only mean something to roles that work with orders. */}
+      {seesOrders && (
+        <div className={cn("grid gap-4 sm:grid-cols-2", seesFinance ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
+          <StatCard
+            index={0}
+            label="Bugungi bemorlar"
+            value={stats?.todayPatients ?? 0}
+            hint={`Bazada jami ${stats?.totalPatients ?? 0} ta bemor`}
+            icon={Users}
+            isLoading={statsLoading}
+            onClick={() => setLocation("/patients")}
+          />
+          <StatCard
+            index={1}
+            label="Kutilayotgan tahlillar"
+            value={stats?.pendingTests ?? 0}
+            hint="Natijasi kiritilmagan"
+            icon={Clock}
+            tone="amber"
+            isLoading={statsLoading}
+            onClick={() => setLocation("/results")}
+          />
+          <StatCard
+            index={2}
+            label="Tayyor tahlillar"
+            value={stats?.readyTests ?? 0}
+            hint="Blanka chop etishga tayyor"
+            icon={FileCheck2}
+            tone="emerald"
+            isLoading={statsLoading}
+            onClick={() => setLocation("/results")}
+          />
+          {seesFinance && (
+            <StatCard
+              index={3}
+              label="Bugungi tushum"
+              value={money(collected, false)}
+              suffix="so'm"
+              hint={
+                debt > 0 ? (
+                  <span className="text-rose-600 dark:text-rose-400">
+                    Qarzdorlik: {money(debt)}
+                  </span>
+                ) : (
+                  "Qarzdorlik yo'q"
+                )
+              }
+              icon={Wallet}
+              tone="violet"
+              isLoading={statsLoading}
+            />
+          )}
+        </div>
+      )}
 
       {/* ------------------------------------------------- recent + actions */}
       <div className="grid gap-5 xl:grid-cols-3">
-        <SectionCard
-          className="xl:col-span-2"
-          icon={TrendingUp}
-          title="So'nggi buyurtmalar"
-          description="Oxirgi qabul qilingan tahlillar"
-          flush
-          action={
-            <Button variant="ghost" size="sm" onClick={() => setLocation("/orders")} data-testid="link-all-orders">
-              Barchasi
-              <ArrowRight className="ml-1.5 h-4 w-4" />
-            </Button>
-          }
-        >
-          {ordersLoading ? (
-            <div className="space-y-2 p-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full skeleton-shimmer" />
-              ))}
-            </div>
-          ) : orders.length === 0 ? (
+        {!seesOrders ? (
+          <SectionCard className="xl:col-span-3" icon={ShieldCheck} title="Sizning ish maydoningiz">
             <EmptyState
-              icon={Inbox}
-              title="Hali buyurtma yo'q"
-              description="Birinchi bemorni ro'yxatdan o'tkazing va unga tahlil buyurtma qiling."
-              action={
-                can("registrator") ? (
-                  <Button onClick={() => setOrderOpen(true)}>
-                    <FlaskConical className="mr-2 h-4 w-4" />
-                    Birinchi buyurtma
-                  </Button>
-                ) : undefined
-              }
+              icon={ShieldCheck}
+              title={`${user?.roleName ?? "Rolingiz"} uchun bo'lim tayyorlanmoqda`}
+              description="Tizim bosqichma-bosqich kengaymoqda. Sizning vazifangizga tegishli bo'lim ishga tushishi bilan shu yerda paydo bo'ladi."
             />
-          ) : (
-            <div className="divide-y">
-              {orders.map((order) => (
-                <button
-                  key={order.id}
-                  type="button"
-                  onClick={() => setDetail(order)}
-                  className="flex w-full items-center gap-4 p-4 text-left transition-colors hover:bg-muted/50"
-                  data-testid={`row-order-${order.orderNumber}`}
-                >
-                  <Avatar name={order.patient?.fullName ?? "??"} />
+          </SectionCard>
+        ) : (
+          <SectionCard
+            className="xl:col-span-2"
+            icon={TrendingUp}
+            title="So'nggi buyurtmalar"
+            description="Oxirgi qabul qilingan tahlillar"
+            flush
+            action={
+              <Button variant="ghost" size="sm" onClick={() => setLocation("/orders")} data-testid="link-all-orders">
+                Barchasi
+                <ArrowRight className="ml-1.5 h-4 w-4" />
+              </Button>
+            }
+          >
+            {ordersLoading ? (
+              <div className="space-y-2 p-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-16 w-full skeleton-shimmer" />
+                ))}
+              </div>
+            ) : orders.length === 0 ? (
+              <EmptyState
+                icon={Inbox}
+                title="Hali buyurtma yo'q"
+                description="Birinchi bemorni ro'yxatdan o'tkazing va unga tahlil buyurtma qiling."
+                action={
+                  can("orders.create") ? (
+                    <Button onClick={() => setOrderOpen(true)}>
+                      <FlaskConical className="mr-2 h-4 w-4" />
+                      Birinchi buyurtma
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <div className="divide-y">
+                {orders.map((order) => (
+                  <button
+                    key={order.id}
+                    type="button"
+                    onClick={() => setDetail(order)}
+                    className="flex w-full items-center gap-4 p-4 text-left transition-colors hover:bg-muted/50"
+                    data-testid={`row-order-${order.orderNumber}`}
+                  >
+                    <Avatar name={order.patient?.fullName ?? "??"} />
 
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">
-                      {order.patient?.fullName ?? "Noma'lum bemor"}
-                    </p>
-                    <p className="mt-0.5 text-[13px] text-muted-foreground">
-                      <span className="tabular">#{order.orderNumber}</span> · {order.items.length} ta
-                      tahlil · {timeAgo(order.createdAt)}
-                    </p>
-                  </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">
+                        {order.patient?.fullName ?? "Noma'lum bemor"}
+                      </p>
+                      <p className="mt-0.5 text-[13px] text-muted-foreground">
+                        <span className="tabular">#{order.orderNumber}</span> · {order.items.length} ta
+                        tahlil · {timeAgo(order.createdAt)}
+                      </p>
+                    </div>
 
-                  <div className="hidden shrink-0 items-center gap-2 sm:flex">
-                    <PaymentBadge total={order.totalAmount} paid={order.paidAmount} />
-                    <StatusBadge status={order.status} />
-                  </div>
+                    <div className="hidden shrink-0 items-center gap-2 sm:flex">
+                      <PaymentBadge total={order.totalAmount} paid={order.paidAmount} />
+                      <StatusBadge status={order.status} />
+                    </div>
 
-                  <Money
-                    value={order.totalAmount}
-                    className="hidden shrink-0 font-semibold md:block"
-                  />
-                </button>
-              ))}
-            </div>
-          )}
-        </SectionCard>
+                    <Money
+                      value={order.totalAmount}
+                      className="hidden shrink-0 font-semibold md:block"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+          </SectionCard>
+        )}
 
         <div className="space-y-5">
-          <SectionCard icon={Sparkles} title="Tezkor amallar" bodyClassName="space-y-2">
-            {can("registrator") && (
-              <>
+          {can("patients.create", "orders.create", "results.enter", "reports.view") && (
+            <SectionCard icon={Sparkles} title="Tezkor amallar" bodyClassName="space-y-2">
+              {can("patients.create") && (
                 <QuickAction
                   icon={UserPlus}
                   label="Bemorni ro'yxatga olish"
                   hint="F.I.Sh va telefon yetarli"
                   onClick={() => setPatientOpen(true)}
                 />
+              )}
+              {can("orders.create") && (
                 <QuickAction
                   icon={FlaskConical}
                   label="Tahlil buyurtma qilish"
                   hint="Summa avtomatik hisoblanadi"
                   onClick={() => setOrderOpen(true)}
                 />
-              </>
-            )}
-            {can("laborant") && (
-              <QuickAction
-                icon={ClipboardCheck}
-                label="Natija kiritish"
-                hint={`${stats?.pendingTests ?? 0} ta tahlil navbatda`}
-                onClick={() => setLocation("/results")}
-              />
-            )}
-            {can("admin") && (
-              <QuickAction
-                icon={BarChart3}
-                label="Hisobotni ko'rish"
-                hint="Tushum va statistika"
-                onClick={() => setLocation("/reports")}
-              />
-            )}
-          </SectionCard>
-
-          <SectionCard icon={Wallet} title="Moliya holati" bodyClassName="space-y-3.5">
-            <SummaryRow label="Bugungi tushum" value={<Money value={collected} className="font-semibold" />} />
-            <div className="rule-soft" />
-            <SummaryRow
-              label="Umumiy qarzdorlik"
-              value={
-                <Money
-                  value={debt}
-                  className={debt > 0 ? "font-semibold text-rose-600 dark:text-rose-400" : "font-semibold"}
+              )}
+              {can("results.enter") && (
+                <QuickAction
+                  icon={ClipboardCheck}
+                  label="Natija kiritish"
+                  hint={`${stats?.pendingTests ?? 0} ta tahlil navbatda`}
+                  onClick={() => setLocation("/results")}
                 />
-              }
-            />
-            <div className="rule-soft" />
-            <SummaryRow
-              label="Navbatdagi tahlillar"
-              value={<span className="font-semibold tabular">{stats?.pendingTests ?? 0} ta</span>}
-            />
-          </SectionCard>
+              )}
+              {can("reports.view") && (
+                <QuickAction
+                  icon={BarChart3}
+                  label="Hisobotni ko'rish"
+                  hint="Tushum va statistika"
+                  onClick={() => setLocation("/reports")}
+                />
+              )}
+            </SectionCard>
+          )}
+
+          {seesFinance && (
+            <SectionCard icon={Wallet} title="Moliya holati" bodyClassName="space-y-3.5">
+              <SummaryRow label="Bugungi tushum" value={<Money value={collected} className="font-semibold" />} />
+              <div className="rule-soft" />
+              <SummaryRow
+                label="Umumiy qarzdorlik"
+                value={
+                  <Money
+                    value={debt}
+                    className={debt > 0 ? "font-semibold text-rose-600 dark:text-rose-400" : "font-semibold"}
+                  />
+                }
+              />
+              <div className="rule-soft" />
+              <SummaryRow
+                label="Navbatdagi tahlillar"
+                value={<span className="font-semibold tabular">{stats?.pendingTests ?? 0} ta</span>}
+              />
+            </SectionCard>
+          )}
         </div>
       </div>
 

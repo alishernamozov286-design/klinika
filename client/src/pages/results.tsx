@@ -239,7 +239,7 @@ export default function Results() {
                 </div>
 
                 <div className="mt-auto flex gap-2">
-                  {can("laborant") && (
+                  {can("results.enter") && (
                     <Button
                       variant={queue === "waiting" ? "default" : "outline"}
                       className="flex-1"
@@ -251,8 +251,8 @@ export default function Results() {
                     </Button>
                   )}
                   <Button
-                    variant={queue === "ready" && can("laborant") ? "default" : "outline"}
-                    className={can("laborant") ? "" : "flex-1"}
+                    variant={queue === "ready" && can("results.enter") ? "default" : "outline"}
+                    className={can("results.enter") ? "" : "flex-1"}
                     onClick={() => setPrinting(order)}
                     data-testid={`button-print-${order.orderNumber}`}
                   >

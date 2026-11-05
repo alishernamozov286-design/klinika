@@ -19,6 +19,7 @@ import type { OrderListResponse, Patient } from "@shared/schema";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Avatar } from "@/components/ui-kit";
 import { useAuth } from "@/hooks/use-auth";
+import { ROUTE_ACCESS } from "@/lib/access";
 import { useDebounced } from "@/hooks/use-debounced";
 import { formatDate, formatPhone } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -72,12 +73,12 @@ export function CommandPalette({
 
   const { data: patientData, isFetching: loadingPatients } = useQuery<{ items: Patient[] }>({
     queryKey: [`/api/patients?search=${encodeURIComponent(search)}&limit=5`],
-    enabled: open && searching,
+    enabled: open && searching && can("patients.read"),
   });
 
   const { data: orderData, isFetching: loadingOrders } = useQuery<OrderListResponse>({
     queryKey: [`/api/orders?search=${encodeURIComponent(search)}&limit=5`],
-    enabled: open && searching,
+    enabled: open && searching && can("orders.read"),
   });
 
   const close = () => onOpenChange(false);
@@ -97,44 +98,47 @@ export function CommandPalette({
     // Nothing typed yet: offer the destinations and the two things a
     // registrator starts most often.
     const actions: Item[] = [];
-    if (can("registrator")) {
-      actions.push(
-        {
-          kind: "action",
-          id: "new-patient",
-          label: "Yangi bemor",
-          hint: "Ro'yxatga olish",
-          icon: UserPlus,
-          run: () => {
-            close();
-            onNewPatient();
-          },
+    if (can("patients.create")) {
+      actions.push({
+        kind: "action",
+        id: "new-patient",
+        label: "Yangi bemor",
+        hint: "Ro'yxatga olish",
+        icon: UserPlus,
+        run: () => {
+          close();
+          onNewPatient();
         },
-        {
-          kind: "action",
-          id: "new-order",
-          label: "Yangi buyurtma",
-          hint: "Tahlil buyurtma qilish",
-          icon: FlaskConical,
-          run: () => {
-            close();
-            onNewOrder();
-          },
-        },
-      );
+      });
     }
-    actions.push(
+    if (can("orders.create")) {
+      actions.push({
+        kind: "action",
+        id: "new-order",
+        label: "Yangi buyurtma",
+        hint: "Tahlil buyurtma qilish",
+        icon: FlaskConical,
+        run: () => {
+          close();
+          onNewOrder();
+        },
+      });
+    }
+    // Destinations follow the same permissions as the sidebar (lib/access.ts).
+    const destinations: Item[] = [
       { kind: "action", id: "go-patients", label: "Bemorlar", hint: "Bo'limga o'tish", icon: Users, run: () => go("/patients") },
       { kind: "action", id: "go-orders", label: "Buyurtmalar", hint: "Bo'limga o'tish", icon: Receipt, run: () => go("/orders") },
       { kind: "action", id: "go-results", label: "Natijalar", hint: "Bo'limga o'tish", icon: ClipboardCheck, run: () => go("/results") },
+      { kind: "action", id: "go-reports", label: "Hisobotlar", hint: "Bo'limga o'tish", icon: BarChart3, run: () => go("/reports") },
+      { kind: "action", id: "go-expenses", label: "Xarajatlar", hint: "Bo'limga o'tish", icon: Wallet, run: () => go("/expenses") },
+      { kind: "action", id: "go-settings", label: "Sozlamalar", hint: "Bo'limga o'tish", icon: Settings, run: () => go("/settings") },
+    ];
+    actions.push(
+      ...destinations.filter((d) => {
+        const rule = ROUTE_ACCESS[d.id.replace("go-", "/")];
+        return !rule || can(...rule);
+      }),
     );
-    if (can("admin")) {
-      actions.push(
-        { kind: "action", id: "go-reports", label: "Hisobotlar", hint: "Bo'limga o'tish", icon: BarChart3, run: () => go("/reports") },
-        { kind: "action", id: "go-expenses", label: "Xarajatlar", hint: "Bo'limga o'tish", icon: Wallet, run: () => go("/expenses") },
-        { kind: "action", id: "go-settings", label: "Sozlamalar", hint: "Bo'limga o'tish", icon: Settings, run: () => go("/settings") },
-      );
-    }
     return actions;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searching, patientData, orderData, can]);

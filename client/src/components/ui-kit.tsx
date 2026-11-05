@@ -7,17 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ORDER_STATUS_LABELS,
-  ROLE_LABELS,
   SAMPLE_STATUS_LABELS,
   type OrderStatus,
   type ResultFlag,
   type Role,
   type SampleStatus,
 } from "@shared/schema";
+import { SYSTEM_ROLES } from "@shared/permissions";
 import {
   FLAG_LABELS,
   FLAG_STYLES,
-  ROLE_STYLES,
+  roleStyle,
   SAMPLE_STATUS_DOTS,
   SAMPLE_STATUS_STYLES,
   STATUS_DOTS,
@@ -213,10 +213,14 @@ export function FlagBadge({ flag, className }: { flag: ResultFlag; className?: s
   );
 }
 
-export function RoleBadge({ role, className }: { role: Role; className?: string }) {
+/**
+ * A role's name in its colour. `name` comes from the server (roles can be
+ * renamed and created by the clinic); without it the built-in name is used.
+ */
+export function RoleBadge({ role, name, className }: { role: Role; name?: string; className?: string }) {
   return (
-    <Badge variant="outline" className={cn("font-medium", ROLE_STYLES[role], className)}>
-      {ROLE_LABELS[role]}
+    <Badge variant="outline" className={cn("font-medium", roleStyle(role), className)}>
+      {name ?? SYSTEM_ROLES.find((r) => r.key === role)?.name ?? role}
     </Badge>
   );
 }

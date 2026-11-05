@@ -270,7 +270,7 @@ export function PasswordPanel() {
 /** Download-only. Restoring runs from the CLI — see scripts/restore-backup.mjs. */
 export function BackupPanel() {
   const { can } = useAuth();
-  if (!can("admin")) return null;
+  if (!can("backup.download")) return null;
 
   return (
     <SectionCard

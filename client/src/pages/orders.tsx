@@ -143,7 +143,7 @@ export default function Orders() {
         description="Barcha tahlil buyurtmalari, bajarilish holati va to'lovlari"
         actions={
           <div className="flex items-center gap-2">
-            {can("admin") && (
+            {can("data.export") && (
               <ExportButtons
                 testIdPrefix="export-orders"
                 disabled={isLoading}
@@ -164,7 +164,7 @@ export default function Orders() {
             )}
             {/* Server-side, so the file holds every match rather than the
                 25 rows on screen — the form an accountant actually wants. */}
-            {can("admin") && (
+            {can("data.export") && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="outline" size="icon" asChild aria-label="Butun bazani CSV yuklab olish">
@@ -179,7 +179,7 @@ export default function Orders() {
                 <TooltipContent>Butun baza (CSV)</TooltipContent>
               </Tooltip>
             )}
-            {can("registrator") && (
+            {can("orders.create") && (
               <Button onClick={() => setCreateOpen(true)} data-testid="button-new-order" className="shadow-brand">
                 <FlaskConical className="mr-2 h-4 w-4" />
                 Yangi buyurtma
@@ -216,7 +216,7 @@ export default function Orders() {
         <div className="flex flex-col gap-3 sm:flex-row lg:items-center">
           {/* Opens the order the tube belongs to, which is where its status
               buttons live — so a scan goes straight to the action. */}
-          {can("registrator", "laborant") && (
+          {can("samples.manage") && (
             <SampleScan onFound={setDetail} className="sm:w-52" />
           )}
           <SearchInput
@@ -243,7 +243,7 @@ export default function Orders() {
                 : "Filtrni yoki qidiruv so'zini o'zgartiring."
             }
             action={
-              counts.all === 0 && can("registrator") ? (
+              counts.all === 0 && can("orders.create") ? (
                 <Button onClick={() => setCreateOpen(true)}>
                   <FlaskConical className="mr-2 h-4 w-4" />
                   Birinchi buyurtma
@@ -343,13 +343,13 @@ export default function Orders() {
                               <Receipt className="mr-2 h-4 w-4" />
                               Batafsil
                             </DropdownMenuItem>
-                            {can("laborant") && order.status !== "cancelled" && (
+                            {can("results.enter") && order.status !== "cancelled" && (
                               <DropdownMenuItem onClick={() => setResults(order)}>
                                 <ClipboardCheck className="mr-2 h-4 w-4" />
                                 Natija kiritish
                               </DropdownMenuItem>
                             )}
-                            {can("registrator") && order.status !== "cancelled" && (
+                            {can("orders.update") && order.status !== "cancelled" && (
                               <DropdownMenuItem onClick={() => setEditing(order)}>
                                 <Pencil className="mr-2 h-4 w-4" />
                                 Tahlillarni tahrirlash
@@ -359,7 +359,7 @@ export default function Orders() {
                               <Printer className="mr-2 h-4 w-4" />
                               Blankani chop etish
                             </DropdownMenuItem>
-                            {can("admin") && (
+                            {can("orders.delete") && (
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
                                 onClick={() => setDeleting(order)}

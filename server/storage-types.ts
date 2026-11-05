@@ -1,5 +1,6 @@
 import { computeFlag } from "@shared/reference-range";
 import type { LockState } from "@shared/lockout";
+import { SUPER_ADMIN, SYSTEM_ROLE_KEYS } from "@shared/permissions";
 import type {
   AuditEntry,
   CreatePaymentInput,
@@ -8,6 +9,7 @@ import type {
   InsertExpense,
   InsertPatient,
   InsertTest,
+  InsertRole,
   InsertUser,
   LabSettings,
   LabSettingsInput,
@@ -19,11 +21,14 @@ import type {
   PublicUser,
   ResultFlag,
   RevenueReportData,
+  RoleRecord,
+  RoleWithUsage,
   Sample,
   TelegramContact,
   Test,
   UpdateOrderInput,
   UpdateSampleInput,
+  UpdateRoleInput,
   UpdateUserInput,
   User,
 } from "@shared/schema";
@@ -117,19 +122,53 @@ export const DEFAULT_SETTINGS: LabSettings = {
 };
 
 /**
- * Only the administrator is seeded. Registrator and laborant accounts are
- * created by the admin from Sozlamalar → Foydalanuvchilar; the roles
- * themselves stay fully supported.
+ * Only the administrator is seeded. Every other account is created by the
+ * admin from Sozlamalar → Xodimlar, with one of the roles from SYSTEM_ROLES
+ * or one the clinic defined itself.
  */
 export const SEED_USERS: { username: string; password: string; fullName: string; role: User["role"] }[] = [
   // A single word on purpose: the dashboard greets people by their given name,
   // which it takes to be the second word of "Familiya Ism Otasining-ismi".
   // A two-word job title would come out as "Salom, administratori".
-  { username: "admin", password: "admin123", fullName: "Administrator", role: "admin" },
+  { username: "admin", password: "admin123", fullName: "Administrator", role: SUPER_ADMIN },
 ];
 
+/** System roles in TZ §3 order, then the clinic's own roles by name. */
+export function sortRoles<T extends { key: string; name: string; isSystem: boolean }>(list: T[]): T[] {
+  const rank = (r: T) => {
+    const i = SYSTEM_ROLE_KEYS.indexOf(r.key);
+    return r.isSystem && i >= 0 ? i : SYSTEM_ROLE_KEYS.length;
+  };
+  return [...list].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+export type SeedResult = {
+  createdTests: number;
+  createdUsers: number;
+  /** System roles inserted because they were missing. */
+  createdRoles: number;
+  /** Accounts moved from the pre-RBAC "admin" key to "super_admin". */
+  migratedAdmins: number;
+};
+
+export type CreateRoleArgs = InsertRole & { key: string; isSystem?: boolean };
+
 export interface IStorage {
-  seed(): Promise<{ createdTests: number; createdUsers: number }>;
+  /**
+   * Idempotent boot-time setup: default tests and admin on an empty store,
+   * plus any SYSTEM_ROLES row that is missing. Existing role rows are never
+   * overwritten — once created, the clinic owns their permissions.
+   */
+  seed(): Promise<SeedResult>;
+
+  /** Every role, system ones first, each with its current head count. */
+  listRoles(): Promise<RoleWithUsage[]>;
+  getRole(key: string): Promise<RoleRecord | undefined>;
+  createRole(input: CreateRoleArgs, actor: Actor): Promise<RoleRecord>;
+  /** System roles keep their key and system flag; only name/description/permissions change. */
+  updateRole(key: string, input: UpdateRoleInput, actor: Actor): Promise<RoleRecord | undefined>;
+  /** Refuses (returns false) for system roles. The route checks for holders first. */
+  deleteRole(key: string): Promise<boolean>;
 
   listUsers(): Promise<PublicUser[]>;
   getUser(id: string): Promise<User | undefined>;

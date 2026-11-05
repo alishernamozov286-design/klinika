@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Building2,
   FlaskConical,
+  KeyRound,
   Loader2,
   Lock,
   LockOpen,
@@ -18,17 +19,16 @@ import {
 } from "lucide-react";
 import { formatLockRemaining, lockRemainingMs } from "@shared/lockout";
 import {
-  ROLES,
-  ROLE_LABELS,
   insertTestSchema,
   insertUserSchema,
   labSettingsSchema,
   type LabSettings,
   type LabSettingsInput,
   type PublicUser,
-  type Role,
+  type RoleWithUsage,
   type Test,
 } from "@shared/schema";
+import { SUPER_ADMIN, resolvePermissions } from "@shared/permissions";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,73 +59,102 @@ import { ExportButtons } from "@/components/export-buttons";
 import type { ExportColumn } from "@/lib/export-types";
 import { AuditPanel, BackupPanel, PasswordPanel } from "@/components/settings-security";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { RolesPanel, roleIcon } from "@/components/roles-panel";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { money } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+type SettingsTab = {
+  value: string;
+  label: string;
+  icon: typeof Building2;
+  /** Any one of these opens the tab; none means every signed-in user. */
+  needs: Parameters<ReturnType<typeof useAuth>["can"]>;
+  render: () => React.ReactNode;
+};
+
+const TABS: SettingsTab[] = [
+  {
+    value: "lab",
+    label: "Klinika",
+    icon: Building2,
+    needs: ["settings.manage"],
+    render: () => (
+      <>
+        <LabSettingsPanel />
+        <TelegramPanel />
+      </>
+    ),
+  },
+  { value: "tests", label: "Tahlillar", icon: FlaskConical, needs: ["tests.manage"], render: () => <TestsPanel /> },
+  { value: "users", label: "Xodimlar", icon: UserCog, needs: ["users.manage"], render: () => <UsersPanel /> },
+  {
+    value: "roles",
+    label: "Rollar",
+    icon: KeyRound,
+    needs: ["roles.manage", "users.manage"],
+    render: () => <RolesPanel />,
+  },
+  {
+    value: "security",
+    label: "Xavfsizlik",
+    icon: ShieldCheck,
+    // Everyone gets this tab: changing one's own password is not a privilege.
+    needs: [],
+    render: () => <SecurityTab />,
+  },
+];
+
+function SecurityTab() {
+  const { can } = useAuth();
+  return (
+    <>
+      <PasswordPanel />
+      <BackupPanel />
+      {can("audit.read") && <AuditPanel />}
+    </>
+  );
+}
+
+/**
+ * Each tab is gated on its own permission, so a laborant opening Sozlamalar
+ * sees only "Xavfsizlik" (their password) and a lab head also sees the test
+ * catalogue — rather than the whole page being admin-or-nothing.
+ */
 export default function Settings() {
   const { can } = useAuth();
-
-  if (!can("admin")) {
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Sozlamalar" description="Tizim sozlamalari" />
-        <div className="card-premium">
-          <EmptyState
-            icon={UserCog}
-            title="Ruxsat yo'q"
-            description="Sozlamalarni faqat administrator o'zgartira oladi."
-          />
-        </div>
-      </div>
-    );
-  }
+  const tabs = TABS.filter((t) => t.needs.length === 0 || can(...t.needs));
+  const onlySecurity = tabs.length === 1;
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Tizim"
         title="Sozlamalar"
-        description="Laboratoriya ma'lumotlari, narxlar ro'yxati va xodimlar"
+        description={
+          onlySecurity
+            ? "Hisobingiz xavfsizligi va parol"
+            : "Klinika ma'lumotlari, tahlillar, xodimlar va ularning ruxsatlari"
+        }
       />
 
-      <Tabs defaultValue="lab">
-        <TabsList>
-          <TabsTrigger value="lab" data-testid="tab-lab">
-            <Building2 className="mr-2 h-4 w-4" />
-            Laboratoriya
-          </TabsTrigger>
-          <TabsTrigger value="tests" data-testid="tab-tests">
-            <FlaskConical className="mr-2 h-4 w-4" />
-            Tahlillar
-          </TabsTrigger>
-          <TabsTrigger value="users" data-testid="tab-users">
-            <UserCog className="mr-2 h-4 w-4" />
-            Xodimlar
-          </TabsTrigger>
-          <TabsTrigger value="security" data-testid="tab-security">
-            <ShieldCheck className="mr-2 h-4 w-4" />
-            Xavfsizlik
-          </TabsTrigger>
+      <Tabs defaultValue={tabs[0].value}>
+        <TabsList className="h-auto flex-wrap justify-start">
+          {tabs.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} data-testid={`tab-${t.value}`}>
+              <t.icon className="mr-2 h-4 w-4" />
+              {t.label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
-        <TabsContent value="lab" className="mt-6 space-y-6">
-          <LabSettingsPanel />
-          <TelegramPanel />
-        </TabsContent>
-        <TabsContent value="tests" className="mt-6">
-          <TestsPanel />
-        </TabsContent>
-        <TabsContent value="users" className="mt-6">
-          <UsersPanel />
-        </TabsContent>
-        <TabsContent value="security" className="mt-6 space-y-6">
-          <PasswordPanel />
-          <BackupPanel />
-          {can("admin") && <AuditPanel />}
-        </TabsContent>
+        {tabs.map((t) => (
+          <TabsContent key={t.value} value={t.value} className="mt-6 space-y-6">
+            {t.render()}
+          </TabsContent>
+        ))}
       </Tabs>
     </div>
   );
@@ -680,21 +709,50 @@ const userFormSchema = insertUserSchema.extend({
 type UserFormValues = z.input<typeof userFormSchema>;
 
 /** Staff list — see lib/export.ts. Passwords are, of course, not in it. */
-const USER_EXPORT_COLUMNS: ExportColumn<PublicUser>[] = [
+const userExportColumns = (roleName: (key: string) => string): ExportColumn<PublicUser>[] => [
   { header: "F.I.Sh", value: (u) => u.fullName, width: 30 },
   { header: "Login", value: (u) => u.username, width: 20 },
-  { header: "Rol", value: (u) => ROLE_LABELS[u.role as Role], width: 18 },
+  { header: "Rol", value: (u) => roleName(u.role), width: 22 },
   { header: "Holat", value: (u) => (u.isActive ? "Faol" : "Bloklangan"), width: 14 },
 ];
 
 function UsersPanel() {
   const { toast } = useToast();
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, isSuperAdmin } = useAuth();
   const [editing, setEditing] = useState<PublicUser | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<PublicUser | null>(null);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
 
   const { data: users = [], isLoading } = useQuery<PublicUser[]>({ queryKey: ["/api/users"] });
+  const { data: roles = [] } = useQuery<RoleWithUsage[]>({ queryKey: ["/api/roles"] });
+
+  const roleByKey = useMemo(() => new Map(roles.map((r) => [r.key, r])), [roles]);
+  const roleName = (key: string) => roleByKey.get(key)?.name ?? key;
+
+  /**
+   * A role can be handed out only if every permission in it is one the
+   * current user holds — the server's rule, shown here so the option is
+   * greyed out instead of failing on save.
+   */
+  const mine = useMemo(() => new Set(currentUser?.permissions ?? []), [currentUser]);
+  const assignable = (role: RoleWithUsage) => {
+    if (role.key === SUPER_ADMIN) return isSuperAdmin;
+    if (isSuperAdmin) return true;
+    return resolvePermissions(role.key, role.permissions).every((p) => mine.has(p));
+  };
+
+  const isSelf = Boolean(editing && editing.id === currentUser?.id);
+
+  const visibleUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return users.filter(
+      (u) =>
+        (roleFilter === "all" || u.role === roleFilter) &&
+        (!q || u.fullName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q)),
+    );
+  }, [users, search, roleFilter]);
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
@@ -707,7 +765,7 @@ function UsersPanel() {
       username: editing?.username ?? "",
       password: "",
       fullName: editing?.fullName ?? "",
-      role: (editing?.role as Role) ?? "registrator",
+      role: editing?.role ?? "registrator",
       isActive: editing?.isActive ?? true,
     });
   }, [dialogOpen, editing, form]);
@@ -768,11 +826,31 @@ function UsersPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="card-premium flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          Administrator to'liq huquqqa ega, registrator bemor va buyurtma bilan, laborant esa
-          natijalar bilan ishlaydi.
-        </p>
+      <div className="card-premium flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-1 flex-col gap-2 sm:flex-row">
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Ism yoki login bo'yicha qidirish"
+            className="sm:max-w-xs"
+            data-testid="input-search-users"
+          />
+          <Select value={roleFilter} onValueChange={setRoleFilter}>
+            <SelectTrigger className="sm:w-56" data-testid="select-filter-role">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Barcha rollar ({users.length})</SelectItem>
+              {roles
+                .filter((r) => r.userCount > 0)
+                .map((r) => (
+                  <SelectItem key={r.key} value={r.key}>
+                    {r.name} ({r.userCount})
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="flex shrink-0 items-center gap-3">
           <ExportButtons
             testIdPrefix="export-users"
@@ -780,10 +858,10 @@ function UsersPanel() {
             build={() => ({
               filename: "xodimlar",
               title: "Xodimlar ro'yxati",
-              subtitle: `${users.length} ta xodim`,
+              subtitle: `${visibleUsers.length} ta xodim`,
               sheetName: "Xodimlar",
-              columns: USER_EXPORT_COLUMNS,
-              rows: users,
+              columns: userExportColumns(roleName),
+              rows: visibleUsers,
             })}
           />
           <Button
@@ -814,7 +892,14 @@ function UsersPanel() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {users.map((u) => (
+              {visibleUsers.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                    Hech kim topilmadi
+                  </TableCell>
+                </TableRow>
+              )}
+              {visibleUsers.map((u) => (
                 <TableRow key={u.id} data-testid={`row-user-${u.username}`}>
                   <TableCell>
                     <div className="flex items-center gap-3">
@@ -827,7 +912,7 @@ function UsersPanel() {
                   </TableCell>
                   <TableCell className="text-muted-foreground">@{u.username}</TableCell>
                   <TableCell>
-                    <RoleBadge role={u.role as Role} />
+                    <RoleBadge role={u.role} name={roleName(u.role)} />
                   </TableCell>
                   <TableCell className="text-center">
                     {/* A lock outranks the active flag: an enabled account
@@ -968,26 +1053,46 @@ function UsersPanel() {
               <FormField
                 control={form.control}
                 name="role"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Rol</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger data-testid="select-user-role">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {ROLES.map((r) => (
-                          <SelectItem key={r} value={r}>
-                            {ROLE_LABELS[r]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                render={({ field }) => {
+                  const chosen = roleByKey.get(field.value);
+                  return (
+                    <FormItem>
+                      <FormLabel>Rol</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value} disabled={isSelf}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-user-role">
+                            <SelectValue placeholder="Rolni tanlang" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="max-h-80">
+                          {roles.map((r) => {
+                            const Icon = roleIcon(r.key);
+                            const ok = assignable(r) || r.key === editing?.role;
+                            return (
+                              <SelectItem key={r.key} value={r.key} disabled={!ok}>
+                                <span className="flex items-center gap-2">
+                                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                                  {r.name}
+                                  {!ok && <span className="text-[10px] text-muted-foreground">· vakolat yetmaydi</span>}
+                                </span>
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {isSelf
+                          ? "O'z rolingizni o'zgartira olmaysiz."
+                          : chosen
+                            ? `${chosen.description ?? ""} · ${
+                                chosen.key === SUPER_ADMIN ? "barcha" : chosen.permissions.length
+                              } ta ruxsat`
+                            : null}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
 
               <FormField
@@ -1002,7 +1107,7 @@ function UsersPanel() {
                       </p>
                     </div>
                     <FormControl>
-                      <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isSelf} />
                     </FormControl>
                   </FormItem>
                 )}

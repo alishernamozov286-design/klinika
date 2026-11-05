@@ -20,10 +20,13 @@ import type {
   Patient,
   PublicUser,
   RevenueReportData,
+  RoleRecord,
+  RoleWithUsage,
   Sample,
   TelegramContact,
   Test,
   UpdateOrderInput,
+  UpdateRoleInput,
   UpdateSampleInput,
   UpdateUserInput,
   User,
@@ -32,8 +35,12 @@ import { nationalPhoneDigits } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { type DbShape, readDbSync, writeDb } from "./db";
 import { hashPassword } from "./password";
+import { LEGACY_ADMIN, SUPER_ADMIN, SYSTEM_ROLES } from "@shared/permissions";
 import {
   SEED_USERS,
+  sortRoles,
+  type CreateRoleArgs,
+  type SeedResult,
   localDay,
   todayKey,
   type Actor,
@@ -85,6 +92,8 @@ function isReady(order: OrderWithDetails): boolean {
 }
 
 /** Zero-setup fallback used when DATABASE_URL is not configured. */
+const copyRole = (r: RoleRecord): RoleRecord => ({ ...r, permissions: [...r.permissions] });
+
 export class FileStorage implements IStorage {
   private db: DbShape;
 
@@ -96,7 +105,7 @@ export class FileStorage implements IStorage {
     return writeDb(this.db);
   }
 
-  async seed(): Promise<{ createdTests: number; createdUsers: number }> {
+  async seed(): Promise<SeedResult> {
     let createdTests = 0;
     if (this.db.tests.length === 0) {
       this.db.tests = defaultTests.map((t) => {
@@ -136,8 +145,90 @@ export class FileStorage implements IStorage {
 
     const numbered = this.backfillPatientNumbers();
 
-    if (createdTests || createdUsers || numbered) await this.persist();
-    return { createdTests, createdUsers };
+    let createdRoles = 0;
+    const now = new Date().toISOString();
+    for (const def of SYSTEM_ROLES) {
+      if (this.db.roles.some((r) => r.key === def.key)) continue;
+      this.db.roles.push({
+        key: def.key,
+        name: def.name,
+        description: def.description,
+        permissions: [...def.permissions],
+        isSystem: true,
+        createdAt: now,
+        updatedAt: null,
+        updatedBy: null,
+      });
+      createdRoles++;
+    }
+
+    let migratedAdmins = 0;
+    for (const u of this.db.users) {
+      if (u.role === LEGACY_ADMIN) {
+        u.role = SUPER_ADMIN;
+        migratedAdmins++;
+      }
+    }
+
+    if (createdTests || createdUsers || numbered || createdRoles || migratedAdmins) await this.persist();
+    return { createdTests, createdUsers, createdRoles, migratedAdmins };
+  }
+
+  // ---------------------------------------------------------------- roles
+
+  async listRoles(): Promise<RoleWithUsage[]> {
+    const counts = new Map<string, number>();
+    for (const u of this.db.users) counts.set(u.role, (counts.get(u.role) ?? 0) + 1);
+    return sortRoles(this.db.roles).map((r) => ({ ...copyRole(r), userCount: counts.get(r.key) ?? 0 }));
+  }
+
+  /**
+   * Roles are handed out as copies. The routes read a role, update it, then
+   * diff the two for the audit log; returning the stored object itself made
+   * "before" change along with the update and the diff come out empty.
+   */
+  async getRole(key: string): Promise<RoleRecord | undefined> {
+    const role = this.db.roles.find((r) => r.key === key);
+    return role && copyRole(role);
+  }
+
+  async createRole(input: CreateRoleArgs, actor: Actor): Promise<RoleRecord> {
+    if (this.db.roles.some((r) => r.key === input.key)) {
+      throw new Error("Bu kalitli rol allaqachon mavjud");
+    }
+    const role: RoleRecord = {
+      key: input.key,
+      name: input.name,
+      description: input.description ?? null,
+      permissions: [...input.permissions],
+      isSystem: input.isSystem ?? false,
+      createdAt: new Date().toISOString(),
+      updatedAt: null,
+      updatedBy: actor.id,
+    };
+    this.db.roles.push(role);
+    await this.persist();
+    return copyRole(role);
+  }
+
+  async updateRole(key: string, input: UpdateRoleInput, actor: Actor): Promise<RoleRecord | undefined> {
+    const role = this.db.roles.find((r) => r.key === key);
+    if (!role) return undefined;
+    if (input.name !== undefined) role.name = input.name;
+    if (input.description !== undefined) role.description = input.description ?? null;
+    if (input.permissions !== undefined) role.permissions = [...input.permissions];
+    role.updatedAt = new Date().toISOString();
+    role.updatedBy = actor.id;
+    await this.persist();
+    return copyRole(role);
+  }
+
+  async deleteRole(key: string): Promise<boolean> {
+    const role = this.db.roles.find((r) => r.key === key);
+    if (!role || role.isSystem) return false;
+    this.db.roles = this.db.roles.filter((r) => r.key !== key);
+    await this.persist();
+    return true;
   }
 
   /**

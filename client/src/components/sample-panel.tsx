@@ -68,7 +68,7 @@ export function SamplePanel({ order }: { order: OrderWithDetails }) {
 
   if (!sample) return null;
 
-  const editable = can("registrator", "laborant");
+  const editable = can("samples.manage");
   // Rejection gets its own dialog, so it is filtered out of the inline row.
   const steps = nextStatuses(sample.status).filter((s) => s !== "rad_etildi");
   const canReject = editable && nextStatuses(sample.status).includes("rad_etildi");

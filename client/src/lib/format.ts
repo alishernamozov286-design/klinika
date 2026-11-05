@@ -1,5 +1,5 @@
 import { nationalPhoneDigits } from "@shared/schema";
-import type { OrderStatus, ResultFlag, Role, SampleStatus } from "@shared/schema";
+import type { OrderStatus, ResultFlag, SampleStatus } from "@shared/schema";
 
 /** Non-breaking space, so a so'm amount or a phone number never wraps mid-value. */
 const NBSP = " ";
@@ -268,11 +268,32 @@ export const FLAG_STYLES: Record<ResultFlag, string> = {
   high: "bg-rose-500/10 text-rose-700 border-rose-500/25 dark:text-rose-300 dark:border-rose-400/25",
 };
 
-export const ROLE_STYLES: Record<Role, string> = {
-  admin: "bg-violet-500/10 text-violet-700 border-violet-500/25 dark:text-violet-300 dark:border-violet-400/25",
+/**
+ * One colour per built-in role, so a role reads at a glance across every
+ * list. Written out in full because Tailwind only ships classes it can find
+ * as literal strings in the source.
+ */
+const ROLE_STYLES: Record<string, string> = {
+  super_admin: "bg-violet-500/10 text-violet-700 border-violet-500/25 dark:text-violet-300 dark:border-violet-400/25",
+  rahbar: "bg-indigo-500/10 text-indigo-700 border-indigo-500/25 dark:text-indigo-300 dark:border-indigo-400/25",
   registrator: "bg-sky-500/10 text-sky-700 border-sky-500/25 dark:text-sky-300 dark:border-sky-400/25",
+  shifokor: "bg-blue-500/10 text-blue-700 border-blue-500/25 dark:text-blue-300 dark:border-blue-400/25",
   laborant: "bg-emerald-500/10 text-emerald-700 border-emerald-500/25 dark:text-emerald-300 dark:border-emerald-400/25",
+  lab_mudiri: "bg-teal-500/10 text-teal-700 border-teal-500/25 dark:text-teal-300 dark:border-teal-400/25",
+  omborchi: "bg-amber-500/10 text-amber-700 border-amber-500/25 dark:text-amber-300 dark:border-amber-400/25",
+  hamshira: "bg-pink-500/10 text-pink-700 border-pink-500/25 dark:text-pink-300 dark:border-pink-400/25",
+  kassir: "bg-lime-500/10 text-lime-700 border-lime-500/25 dark:text-lime-300 dark:border-lime-400/25",
+  buxgalter: "bg-orange-500/10 text-orange-700 border-orange-500/25 dark:text-orange-300 dark:border-orange-400/25",
+  auditor: "bg-slate-500/10 text-slate-700 border-slate-500/25 dark:text-slate-300 dark:border-slate-400/25",
 };
+
+const CUSTOM_ROLE_STYLE =
+  "bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/25 dark:text-fuchsia-300 dark:border-fuchsia-400/25";
+
+/** Badge classes for a role key; roles the clinic created share one colour. */
+export function roleStyle(role: string): string {
+  return ROLE_STYLES[role === "admin" ? "super_admin" : role] ?? CUSTOM_ROLE_STYLE;
+}
 
 /** Payment state derived from total vs paid — drives the badge on order rows. */
 export function paymentState(

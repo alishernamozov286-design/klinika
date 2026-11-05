@@ -15,6 +15,7 @@
     "db:patient-numbers": "node scripts/add-patient-numbers.mjs",
     "db:migrate": "node scripts/migrate-v2.mjs",
     "db:samples": "node scripts/migrate-samples.mjs",
+    "db:roles": "node scripts/migrate-roles.mjs",
     "db:drop-result-links": "node scripts/migrate-drop-result-links.mjs",
     "db:restore": "node scripts/restore-backup.mjs",
     "tg:webhook": "node scripts/telegram-webhook.mjs",
