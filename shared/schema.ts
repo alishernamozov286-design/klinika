@@ -403,6 +403,19 @@ export const sessions = pgTable(
   (t) => ({ expireIdx: index("IDX_session_expire").on(t.expire) }),
 );
 
+/**
+ * System-wide settings that are not the lab's letterhead: one JSON value per
+ * key ("security", and later e.g. 2FA policy). A key-value table rather than
+ * more columns on lab_settings, so a new setting never needs an ALTER on a
+ * table every screen reads — a missing row simply means "use the default".
+ */
+export const appSettings = pgTable("app_settings", {
+  key: varchar("key").primaryKey(),
+  value: json("value").notNull(),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
+});
+
 export const labSettings = pgTable("lab_settings", {
   id: varchar("id").primaryKey().default("default"),
   labName: text("lab_name").notNull().default("MedLab"),
@@ -789,6 +802,37 @@ export type InsertDepartment = z.infer<typeof insertDepartmentSchema>;
 export type UpdateDepartmentInput = z.infer<typeof updateDepartmentSchema>;
 export type InsertDoctor = z.infer<typeof insertDoctorSchema>;
 export type UpdateDoctorInput = z.infer<typeof updateDoctorSchema>;
+
+/**
+ * Session policy (TZ §12: "faol bo'lmagan seanslarni yopish").
+ *
+ * - idle: no activity for this long ends the session. 30 minutes by default:
+ *   long enough not to bite a registrar between patients, short enough that a
+ *   screen left open in a corridor does not stay signed in all afternoon.
+ * - max: a session ends this long after sign-in however active it was — one
+ *   shift — so a stolen cookie cannot live for weeks.
+ */
+export const securitySettingsSchema = z.object({
+  sessionIdleMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(480, "Ko'pi bilan 8 soat"),
+  sessionMaxHours: z.coerce.number().int().min(1, "Kamida 1 soat").max(168, "Ko'pi bilan 7 kun"),
+});
+export type SecuritySettings = z.infer<typeof securitySettingsSchema>;
+export const DEFAULT_SECURITY_SETTINGS: SecuritySettings = { sessionIdleMinutes: 30, sessionMaxHours: 12 };
+
+/** Why a session was ended — sent with the 401 so the login screen can say so. */
+export const SESSION_END_CODES = ["SESSION_IDLE", "SESSION_MAX", "SESSION_REVOKED"] as const;
+export type SessionEndCode = (typeof SESSION_END_CODES)[number];
+
+/** One signed-in device, as the "Faol seanslar" panel lists it. */
+export type ActiveSession = {
+  /** A hash of the session id — the id itself never leaves the server. */
+  id: string;
+  current: boolean;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string | null;
+  lastSeen: string | null;
+};
 
 export const loginSchema = z.object({
   username: z.string().trim().min(1, "Loginni kiriting"),

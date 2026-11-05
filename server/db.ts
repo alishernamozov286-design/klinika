@@ -12,6 +12,7 @@ import type {
   Patient,
   Payment,
   RoleRecord,
+  SecuritySettings,
   Sample,
   TelegramContact,
   Test,
@@ -23,6 +24,7 @@ export type DbShape = {
   roles: RoleRecord[];
   departments: Department[];
   doctors: Doctor[];
+  security: SecuritySettings | null;
   patients: Patient[];
   tests: Test[];
   orders: Order[];
@@ -53,6 +55,7 @@ export const emptyDb = (): DbShape => ({
   roles: [],
   departments: [],
   doctors: [],
+  security: null,
   patients: [],
   tests: [],
   orders: [],

@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { defaultTests, testReferences } from "@shared/tests-data";
 import {
+  appSettings,
   auditLog,
   departments,
   doctors,
@@ -43,6 +44,9 @@ import {
   type ResultFlag,
   type RoleRecord,
   type RoleWithUsage,
+  type SecuritySettings,
+  DEFAULT_SECURITY_SETTINGS,
+  securitySettingsSchema,
   type Sample,
   type SampleStatus,
   type TelegramContact,
@@ -1493,6 +1497,30 @@ export class PgStorage implements IStorage {
   }
 
   // ------------------------------------------------------------- settings
+
+  // ------------------------------------------------------------- security
+
+  async getSecuritySettings(): Promise<SecuritySettings> {
+    try {
+      const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "security")).limit(1);
+      // Parsed rather than trusted: a hand-edited row with a nonsense value
+      // must not switch session expiry off.
+      const parsed = securitySettingsSchema.safeParse({ ...DEFAULT_SECURITY_SETTINGS, ...(row?.value ?? {}) });
+      return parsed.success ? parsed.data : { ...DEFAULT_SECURITY_SETTINGS };
+    } catch (err) {
+      if (isMissingTable(err)) return { ...DEFAULT_SECURITY_SETTINGS };
+      throw err;
+    }
+  }
+
+  async updateSecuritySettings(input: SecuritySettings, actor: Actor): Promise<SecuritySettings> {
+    const now = new Date().toISOString();
+    await db
+      .insert(appSettings)
+      .values({ key: "security", value: input, updatedAt: now, updatedBy: actor.id })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: input, updatedAt: now, updatedBy: actor.id } });
+    return { ...input };
+  }
 
   async getSettings(): Promise<LabSettings> {
     const [row] = await db.select().from(labSettings).limit(1);

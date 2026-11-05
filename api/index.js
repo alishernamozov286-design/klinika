@@ -310,6 +310,7 @@ var init_permissions = __esm({
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
+  DEFAULT_SECURITY_SETTINGS: () => DEFAULT_SECURITY_SETTINGS,
   DEPARTMENT_KINDS: () => DEPARTMENT_KINDS,
   DEPARTMENT_KIND_LABELS: () => DEPARTMENT_KIND_LABELS,
   EXPENSE_CATEGORIES: () => EXPENSE_CATEGORIES,
@@ -320,9 +321,11 @@ __export(schema_exports, {
   SAMPLE_REJECT_REASONS: () => SAMPLE_REJECT_REASONS,
   SAMPLE_STATUSES: () => SAMPLE_STATUSES,
   SAMPLE_STATUS_LABELS: () => SAMPLE_STATUS_LABELS,
+  SESSION_END_CODES: () => SESSION_END_CODES,
   WEEKDAYS: () => WEEKDAYS,
   WEEKDAY_LABELS: () => WEEKDAY_LABELS,
   WEEKDAY_SHORT: () => WEEKDAY_SHORT,
+  appSettings: () => appSettings,
   auditLog: () => auditLog,
   changePasswordSchema: () => changePasswordSchema,
   createOrderSchema: () => createOrderSchema,
@@ -351,6 +354,7 @@ __export(schema_exports, {
   samples: () => samples,
   saveResultsSchema: () => saveResultsSchema,
   scheduleSchema: () => scheduleSchema,
+  securitySettingsSchema: () => securitySettingsSchema,
   sessions: () => sessions,
   telegramContacts: () => telegramContacts,
   tests: () => tests,
@@ -384,7 +388,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, labSettings, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -657,6 +661,12 @@ var init_schema = __esm({
       },
       (t) => ({ expireIdx: index("IDX_session_expire").on(t.expire) })
     );
+    appSettings = pgTable("app_settings", {
+      key: varchar("key").primaryKey(),
+      value: json("value").notNull(),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
+    });
     labSettings = pgTable("lab_settings", {
       id: varchar("id").primaryKey().default("default"),
       labName: text("lab_name").notNull().default("MedLab"),
@@ -808,6 +818,12 @@ var init_schema = __esm({
       isActive: z.boolean().default(true)
     });
     updateDoctorSchema = insertDoctorSchema.omit({ userId: true }).partial();
+    securitySettingsSchema = z.object({
+      sessionIdleMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(480, "Ko'pi bilan 8 soat"),
+      sessionMaxHours: z.coerce.number().int().min(1, "Kamida 1 soat").max(168, "Ko'pi bilan 7 kun")
+    });
+    DEFAULT_SECURITY_SETTINGS = { sessionIdleMinutes: 30, sessionMaxHours: 12 };
+    SESSION_END_CODES = ["SESSION_IDLE", "SESSION_MAX", "SESSION_REVOKED"];
     loginSchema = z.object({
       username: z.string().trim().min(1, "Loginni kiriting"),
       password: z.string().min(1, "Parolni kiriting")
@@ -2298,6 +2314,22 @@ var init_storage_pg = __esm({
         };
       }
       // ------------------------------------------------------------- settings
+      // ------------------------------------------------------------- security
+      async getSecuritySettings() {
+        try {
+          const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "security")).limit(1);
+          const parsed = securitySettingsSchema.safeParse({ ...DEFAULT_SECURITY_SETTINGS, ...row?.value ?? {} });
+          return parsed.success ? parsed.data : { ...DEFAULT_SECURITY_SETTINGS };
+        } catch (err) {
+          if (isMissingTable(err)) return { ...DEFAULT_SECURITY_SETTINGS };
+          throw err;
+        }
+      }
+      async updateSecuritySettings(input, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        await db.insert(appSettings).values({ key: "security", value: input, updatedAt: now, updatedBy: actor.id }).onConflictDoUpdate({ target: appSettings.key, set: { value: input, updatedAt: now, updatedBy: actor.id } });
+        return { ...input };
+      }
       async getSettings() {
         const [row] = await db.select().from(labSettings).limit(1);
         return row ?? DEFAULT_SETTINGS;
@@ -2353,6 +2385,7 @@ var init_db = __esm({
       roles: [],
       departments: [],
       doctors: [],
+      security: null,
       patients: [],
       tests: [],
       orders: [],
@@ -3355,6 +3388,15 @@ var init_storage_file = __esm({
           byReferrer: Array.from(refAgg.entries()).map(([referrer, v]) => ({ referrer, patients: v.patients.size, revenue: v.revenue })).sort((a, b) => b.revenue - a.revenue).slice(0, 10)
         };
       }
+      // ------------------------------------------------------------- security
+      async getSecuritySettings() {
+        return { ...DEFAULT_SECURITY_SETTINGS, ...this.db.security ?? {} };
+      }
+      async updateSecuritySettings(input, _actor) {
+        this.db.security = { ...input };
+        await this.persist();
+        return { ...input };
+      }
       // ------------------------------------------------------------- settings
       async getSettings() {
         return this.db.settings;
@@ -3564,6 +3606,112 @@ function requirePermission(...permissions) {
   };
 }
 
+// server/session-policy.ts
+init_schema();
+import { createHash } from "crypto";
+var TOUCH_EVERY_MS = 3e4;
+var POLICY_TTL_MS = 6e4;
+var policy = null;
+async function getSessionPolicy() {
+  if (policy && Date.now() - policy.loadedAt < POLICY_TTL_MS) return policy.value;
+  const value = await storage.getSecuritySettings().catch(() => ({ ...DEFAULT_SECURITY_SETTINGS }));
+  policy = { value, loadedAt: Date.now() };
+  return value;
+}
+function invalidateSessionPolicy() {
+  policy = null;
+}
+var clientIp = (req) => req.ip ?? req.socket.remoteAddress ?? null;
+var clientAgent = (req) => (req.get("user-agent") ?? "").slice(0, 300) || null;
+function stampSession(req) {
+  const now = Date.now();
+  req.session.meta = { createdAt: now, lastSeen: now, ip: clientIp(req), userAgent: clientAgent(req) };
+}
+var END_MESSAGES = {
+  SESSION_IDLE: "Uzoq vaqt faollik bo'lmagani uchun seans yopildi. Qaytadan kiring.",
+  SESSION_MAX: "Seans muddati tugadi. Xavfsizlik uchun qaytadan kiring.",
+  SESSION_REVOKED: "Seans boshqa qurilmadan yopildi."
+};
+function endSession(req, res, code) {
+  req.logout(() => {
+    req.session.destroy(() => {
+      res.clearCookie("connect.sid");
+      res.status(401).json({ message: END_MESSAGES[code], code });
+    });
+  });
+}
+function enforceSessionPolicy() {
+  return async (req, res, next) => {
+    if (!req.isAuthenticated?.() || !req.session) return next();
+    try {
+      const { sessionIdleMinutes, sessionMaxHours } = await getSessionPolicy();
+      const now = Date.now();
+      const meta = req.session.meta;
+      if (!meta) {
+        stampSession(req);
+        return next();
+      }
+      if (now - meta.lastSeen > sessionIdleMinutes * 6e4) return endSession(req, res, "SESSION_IDLE");
+      if (now - meta.createdAt > sessionMaxHours * 36e5) return endSession(req, res, "SESSION_MAX");
+      if (now - meta.lastSeen > TOUCH_EVERY_MS) {
+        meta.lastSeen = now;
+        meta.ip = clientIp(req);
+      }
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+var publicSessionId = (sid) => createHash("sha256").update(sid).digest("hex").slice(0, 16);
+async function rawSessionsOf(store, pool3, userId) {
+  if (pool3) {
+    const { rows } = await pool3.query(
+      `SELECT sid, sess FROM "session" WHERE sess->'passport'->>'user' = $1 AND expire > now()`,
+      [userId]
+    );
+    return rows;
+  }
+  const all = await new Promise((resolve, reject) => {
+    if (!store.all) return resolve({});
+    store.all((err, obj) => err ? reject(err) : resolve(obj ?? {}));
+  });
+  return Object.entries(all).filter(([, sess]) => sess?.passport?.user === userId).map(([sid, sess]) => ({ sid, sess }));
+}
+var destroy = (store, sid) => new Promise((resolve) => store.destroy(sid, () => resolve()));
+async function listUserSessions(store, pool3, userId, currentSid) {
+  const { sessionIdleMinutes, sessionMaxHours } = await getSessionPolicy();
+  const now = Date.now();
+  const live = [];
+  for (const { sid, sess } of await rawSessionsOf(store, pool3, userId)) {
+    const m = sess.meta;
+    const stale = m && (now - m.lastSeen > sessionIdleMinutes * 6e4 || now - m.createdAt > sessionMaxHours * 36e5);
+    if (stale && sid !== currentSid) {
+      await destroy(store, sid);
+      continue;
+    }
+    live.push({
+      id: publicSessionId(sid),
+      current: sid === currentSid,
+      ip: m?.ip ?? null,
+      userAgent: m?.userAgent ?? null,
+      createdAt: m ? new Date(m.createdAt).toISOString() : null,
+      lastSeen: m ? new Date(m.lastSeen).toISOString() : null
+    });
+  }
+  return live.sort((a, b) => Number(b.current) - Number(a.current) || (b.lastSeen ?? "").localeCompare(a.lastSeen ?? ""));
+}
+async function revokeUserSessions(store, pool3, userId, opts = {}) {
+  let n = 0;
+  for (const { sid } of await rawSessionsOf(store, pool3, userId)) {
+    if (opts.keepSid && sid === opts.keepSid) continue;
+    if (opts.onlyId && publicSessionId(sid) !== opts.onlyId) continue;
+    await destroy(store, sid);
+    n++;
+  }
+  return n;
+}
+
 // server/auth.ts
 var pool2 = process.env.DATABASE_URL ? (await Promise.resolve().then(() => (init_db_pg(), db_pg_exports))).pool : null;
 var MemoryStore = createMemoryStore(session);
@@ -3581,6 +3729,8 @@ function createSessionStore() {
     // seconds
   });
 }
+var sessionStore = createSessionStore();
+var sessionPool = pool2;
 var SESSION_USER_TTL_MS = 3e4;
 var sessionUsers = /* @__PURE__ */ new Map();
 function forgetSessionUser(id) {
@@ -3593,13 +3743,15 @@ function setupAuth(app) {
       secret: process.env.SESSION_SECRET ?? "medlab-dev-secret-change-in-production",
       resave: false,
       saveUninitialized: false,
-      store: createSessionStore(),
-      // The session is only ended by an explicit logout, so the cookie is given
-      // a year and `rolling` pushes that expiry forward on every request.
+      store: sessionStore,
+      // The real limits — idle and absolute — are the session policy, checked
+      // on every request by enforceSessionPolicy(). The cookie only has to
+      // outlive the longest allowed session (7 days), so it is set just past
+      // that and `rolling` keeps it there.
       rolling: true,
       cookie: {
         httpOnly: true,
-        maxAge: 365 * 24 * 60 * 60 * 1e3,
+        maxAge: 8 * 24 * 60 * 60 * 1e3,
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production"
       }
@@ -3641,6 +3793,7 @@ function setupAuth(app) {
   });
   app.use(passport.initialize());
   app.use(passport.session());
+  app.use("/api", enforceSessionPolicy());
 }
 var MAX_ATTEMPTS = 8;
 var WINDOW_MS = 15 * 60 * 1e3;
@@ -4091,6 +4244,7 @@ async function registerRoutes(app) {
           }
           request.logIn(user, async (loginErr) => {
             if (loginErr) return next(loginErr);
+            stampSession(request);
             clearFailedLogins(request);
             if (account && (account.failedAttempts > 0 || account.lockLevel > 0)) {
               await storage.setLockState(account.id, registerSuccess());
@@ -4114,8 +4268,15 @@ async function registerRoutes(app) {
         return res.status(400).json({ message: "Joriy parol noto'g'ri" });
       }
       await storage.updateUser(me.id, { password: input.newPassword });
-      await audit(req, "update", "user", me.id, `${me.fullName} parolini o'zgartirdi`);
-      res.sendStatus(204);
+      const ended = await revokeUserSessions(sessionStore, sessionPool, me.id, { keepSid: req.sessionID });
+      await audit(
+        req,
+        "update",
+        "user",
+        me.id,
+        `${me.fullName} parolini o'zgartirdi${ended ? ` (${ended} ta boshqa seans yopildi)` : ""}`
+      );
+      res.json({ endedSessions: ended });
     })
   );
   app.post("/api/logout", (req, res, next) => {
@@ -4718,6 +4879,9 @@ async function registerRoutes(app) {
       const user = await storage.updateUser(req.params.id, input);
       forgetSessionUser(req.params.id);
       if (!user) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (input.password || deactivates) {
+        await revokeUserSessions(sessionStore, sessionPool, user.id, isSelf ? { keepSid: req.sessionID } : {});
+      }
       const changes = [];
       if (roleChanges) {
         const [from, to] = await Promise.all([
@@ -4875,6 +5039,87 @@ async function registerRoutes(app) {
       invalidateRoles();
       await audit(req, "delete", "role", role.key, `"${role.name}" roli o'chirildi`);
       res.sendStatus(204);
+    })
+  );
+  app.get(
+    "/api/session/policy",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.json(await getSessionPolicy());
+    })
+  );
+  app.post("/api/session/ping", requireAuth, (_req, res) => res.sendStatus(204));
+  app.get(
+    "/api/sessions",
+    requireAuth,
+    handle(async (req, res) => {
+      res.json(await listUserSessions(sessionStore, sessionPool, req.user.id, req.sessionID));
+    })
+  );
+  app.delete(
+    "/api/sessions/:id",
+    requireAuth,
+    handle(async (req, res) => {
+      const mine = await listUserSessions(sessionStore, sessionPool, req.user.id, req.sessionID);
+      const target = mine.find((s) => s.id === req.params.id);
+      if (!target) return res.status(404).json({ message: "Seans topilmadi" });
+      if (target.current) {
+        return res.status(400).json({ message: 'Joriy seansni yopish uchun "Chiqish" tugmasidan foydalaning' });
+      }
+      await revokeUserSessions(sessionStore, sessionPool, req.user.id, { onlyId: target.id });
+      await audit(req, "update", "session", req.user.id, `${req.user.fullName} \u2014 bitta seansni yopdi (${target.ip ?? "IP noma'lum"})`);
+      res.sendStatus(204);
+    })
+  );
+  app.post(
+    "/api/sessions/revoke-others",
+    requireAuth,
+    handle(async (req, res) => {
+      const ended = await revokeUserSessions(sessionStore, sessionPool, req.user.id, { keepSid: req.sessionID });
+      if (ended) {
+        await audit(req, "update", "session", req.user.id, `${req.user.fullName} \u2014 boshqa ${ended} ta seansni yopdi`);
+      }
+      res.json({ ended });
+    })
+  );
+  app.post(
+    "/api/users/:id/sessions/revoke",
+    requirePermission("users.manage"),
+    handle(async (req, res) => {
+      const target = await storage.getUser(req.params.id);
+      if (!target) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if ((target.role === SUPER_ADMIN || target.role === LEGACY_ADMIN) && !isSuperAdmin(req)) {
+        return res.status(403).json({ message: "Super administrator seanslarini faqat super administrator yopa oladi" });
+      }
+      const self = target.id === req.user.id;
+      const ended = await revokeUserSessions(sessionStore, sessionPool, target.id, self ? { keepSid: req.sessionID } : {});
+      await audit(req, "update", "session", target.id, `${target.fullName} \u2014 ${ended} ta seans majburan yopildi`);
+      res.json({ ended });
+    })
+  );
+  app.get(
+    "/api/settings/security",
+    requirePermission("settings.manage"),
+    handle(async (_req, res) => {
+      res.json(await storage.getSecuritySettings());
+    })
+  );
+  app.put(
+    "/api/settings/security",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const input = securitySettingsSchema.parse(req.body);
+      const before = await storage.getSecuritySettings();
+      const saved = await storage.updateSecuritySettings(input, actorOf(req));
+      invalidateSessionPolicy();
+      await audit(
+        req,
+        "update",
+        "settings",
+        "security",
+        `Seans siyosati: faolsizlik ${before.sessionIdleMinutes} \u2192 ${saved.sessionIdleMinutes} daq., maksimal ${before.sessionMaxHours} \u2192 ${saved.sessionMaxHours} soat`
+      );
+      res.json(saved);
     })
   );
   const emptyIfMissing = (err, empty) => {
@@ -5041,7 +5286,7 @@ async function registerRoutes(app) {
     }
     if (err?.code === "42P01") {
       return res.status(503).json({
-        message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyani ishga tushirishi kerak (npm run db:clinic)."
+        message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyalarni ishga tushirishi kerak (npm run db:upgrade)."
       });
     }
     if (err instanceof Error) {

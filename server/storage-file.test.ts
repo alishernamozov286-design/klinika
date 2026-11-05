@@ -546,3 +546,14 @@ describe("departments and doctors", () => {
     expect(await storage.listDoctors({ activeOnly: true })).toHaveLength(0);
   });
 });
+
+describe("security settings", () => {
+  it("falls back to the defaults until saved", async () => {
+    expect(await storage.getSecuritySettings()).toEqual({ sessionIdleMinutes: 30, sessionMaxHours: 12 });
+  });
+
+  it("keeps what was saved", async () => {
+    await storage.updateSecuritySettings({ sessionIdleMinutes: 15, sessionMaxHours: 8 }, ACTOR);
+    expect(await storage.getSecuritySettings()).toEqual({ sessionIdleMinutes: 15, sessionMaxHours: 8 });
+  });
+});

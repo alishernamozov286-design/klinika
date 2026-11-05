@@ -27,6 +27,7 @@ import {
   insertDoctorSchema,
   updateDepartmentSchema,
   updateDoctorSchema,
+  securitySettingsSchema,
   type PublicUser,
   type SessionUser,
 } from "@shared/schema";
@@ -55,9 +56,18 @@ import {
   requireAuth,
   setupAuth,
   forgetSessionUser,
+  sessionPool,
+  sessionStore,
 } from "./auth";
 import { csvHeaders, stamp, toCsv } from "./csv";
 import { hasPermission, invalidateRoles, isSuperAdmin, requirePermission, toSessionUser } from "./rbac";
+import {
+  getSessionPolicy,
+  invalidateSessionPolicy,
+  listUserSessions,
+  revokeUserSessions,
+  stampSession,
+} from "./session-policy";
 import { verifyPassword } from "./password";
 import { localDay, storage, usingPostgres } from "./storage";
 import type { Actor } from "./storage-types";
@@ -241,6 +251,7 @@ export async function registerRoutes(app: Express): Promise<void> {
 
           request.logIn(user, async (loginErr) => {
             if (loginErr) return next(loginErr);
+            stampSession(request);
             clearFailedLogins(request);
             // Getting in clears the escalation: the account is demonstrably
             // theirs, so a previous bad run should not shorten the next one.
@@ -275,8 +286,16 @@ export async function registerRoutes(app: Express): Promise<void> {
       }
 
       await storage.updateUser(me.id, { password: input.newPassword });
-      await audit(req, "update", "user", me.id, `${me.fullName} parolini o'zgartirdi`);
-      res.sendStatus(204);
+      // Whoever might have had the old password is signed out everywhere else.
+      const ended = await revokeUserSessions(sessionStore, sessionPool, me.id, { keepSid: req.sessionID });
+      await audit(
+        req,
+        "update",
+        "user",
+        me.id,
+        `${me.fullName} parolini o'zgartirdi${ended ? ` (${ended} ta boshqa seans yopildi)` : ""}`,
+      );
+      res.json({ endedSessions: ended });
     }),
   );
 
@@ -1039,6 +1058,12 @@ export async function registerRoutes(app: Express): Promise<void> {
       forgetSessionUser(req.params.id);
       if (!user) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
 
+      // A reset password or a blocked account must not leave the old
+      // sessions running — that is usually the very reason for the change.
+      if (input.password || deactivates) {
+        await revokeUserSessions(sessionStore, sessionPool, user.id, isSelf ? { keepSid: req.sessionID } : {});
+      }
+
       // Spelled out so the log answers "who gave this person that access".
       const changes: string[] = [];
       if (roleChanges) {
@@ -1239,6 +1264,106 @@ export async function registerRoutes(app: Express): Promise<void> {
       invalidateRoles();
       await audit(req, "delete", "role", role.key, `"${role.name}" roli o'chirildi`);
       res.sendStatus(204);
+    }),
+  );
+
+  // ------------------------------------------------------------- sessions
+
+  /** The limits the client needs for its idle warning. */
+  app.get(
+    "/api/session/policy",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.json(await getSessionPolicy());
+    }),
+  );
+
+  /**
+   * "Still here." The client sends it while the user is active but has not
+   * otherwise talked to the server — typing a long form, reading results — so
+   * the idle limit counts real inactivity, not quiet screens.
+   * enforceSessionPolicy() has already refreshed lastSeen by the time it lands.
+   */
+  app.post("/api/session/ping", requireAuth, (_req, res) => res.sendStatus(204));
+
+  app.get(
+    "/api/sessions",
+    requireAuth,
+    handle(async (req, res) => {
+      res.json(await listUserSessions(sessionStore, sessionPool, req.user!.id, req.sessionID));
+    }),
+  );
+
+  app.delete(
+    "/api/sessions/:id",
+    requireAuth,
+    handle(async (req, res) => {
+      const mine = await listUserSessions(sessionStore, sessionPool, req.user!.id, req.sessionID);
+      const target = mine.find((s) => s.id === req.params.id);
+      if (!target) return res.status(404).json({ message: "Seans topilmadi" });
+      if (target.current) {
+        return res.status(400).json({ message: "Joriy seansni yopish uchun \"Chiqish\" tugmasidan foydalaning" });
+      }
+      await revokeUserSessions(sessionStore, sessionPool, req.user!.id, { onlyId: target.id });
+      await audit(req, "update", "session", req.user!.id, `${req.user!.fullName} — bitta seansni yopdi (${target.ip ?? "IP noma'lum"})`);
+      res.sendStatus(204);
+    }),
+  );
+
+  app.post(
+    "/api/sessions/revoke-others",
+    requireAuth,
+    handle(async (req, res) => {
+      const ended = await revokeUserSessions(sessionStore, sessionPool, req.user!.id, { keepSid: req.sessionID });
+      if (ended) {
+        await audit(req, "update", "session", req.user!.id, `${req.user!.fullName} — boshqa ${ended} ta seansni yopdi`);
+      }
+      res.json({ ended });
+    }),
+  );
+
+  /** Signs a member of staff out everywhere — e.g. a lost phone, or a dismissal. */
+  app.post(
+    "/api/users/:id/sessions/revoke",
+    requirePermission("users.manage"),
+    handle(async (req, res) => {
+      const target = await storage.getUser(req.params.id);
+      if (!target) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if ((target.role === SUPER_ADMIN || target.role === LEGACY_ADMIN) && !isSuperAdmin(req)) {
+        return res.status(403).json({ message: "Super administrator seanslarini faqat super administrator yopa oladi" });
+      }
+      const self = target.id === req.user!.id;
+      const ended = await revokeUserSessions(sessionStore, sessionPool, target.id, self ? { keepSid: req.sessionID } : {});
+      await audit(req, "update", "session", target.id, `${target.fullName} — ${ended} ta seans majburan yopildi`);
+      res.json({ ended });
+    }),
+  );
+
+  app.get(
+    "/api/settings/security",
+    requirePermission("settings.manage"),
+    handle(async (_req, res) => {
+      res.json(await storage.getSecuritySettings());
+    }),
+  );
+
+  app.put(
+    "/api/settings/security",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const input = securitySettingsSchema.parse(req.body);
+      const before = await storage.getSecuritySettings();
+      const saved = await storage.updateSecuritySettings(input, actorOf(req));
+      invalidateSessionPolicy();
+      await audit(
+        req,
+        "update",
+        "settings",
+        "security",
+        `Seans siyosati: faolsizlik ${before.sessionIdleMinutes} → ${saved.sessionIdleMinutes} daq., ` +
+          `maksimal ${before.sessionMaxHours} → ${saved.sessionMaxHours} soat`,
+      );
+      res.json(saved);
     }),
   );
 
@@ -1448,7 +1573,7 @@ export async function registerRoutes(app: Express): Promise<void> {
     // A table from a newer release that this database has not been migrated to.
     if ((err as { code?: string } | null)?.code === "42P01") {
       return res.status(503).json({
-        message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyani ishga tushirishi kerak (npm run db:clinic).",
+        message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyalarni ishga tushirishi kerak (npm run db:upgrade).",
       });
     }
     if (err instanceof Error) {

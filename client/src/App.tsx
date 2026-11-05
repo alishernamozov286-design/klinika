@@ -21,6 +21,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, RoleBadge } from "@/components/ui-kit";
 import { CommandPalette } from "@/components/command-palette";
+import { SessionGuard } from "@/components/session-guard";
 import { OrderDialog } from "@/components/order-dialog";
 import { PatientDialog } from "@/components/patient-dialog";
 import { OrderDetailDialog } from "@/components/order-detail-dialog";
@@ -260,6 +261,8 @@ function Shell() {
         </div>
       </div>
 
+      {/* Idle sign-out (TZ §12) — only ever mounted for a signed-in user. */}
+      <SessionGuard />
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}

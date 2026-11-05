@@ -11,6 +11,7 @@ import { storage } from "./storage";
 // which used to take the no-database (JSON) mode down at import time.
 const pool = process.env.DATABASE_URL ? (await import("./db-pg")).pool : null;
 import { toSessionUser } from "./rbac";
+import { enforceSessionPolicy } from "./session-policy";
 
 declare global {
   namespace Express {
@@ -41,6 +42,10 @@ function createSessionStore() {
   });
 }
 
+/** Shared with the session-management routes, which list and end sessions. */
+export const sessionStore = createSessionStore();
+export const sessionPool = pool;
+
 /**
  * deserializeUser runs on every authenticated request, and with a remote
  * database each lookup costs 0.3–1.8 s. A page refresh fires several API calls
@@ -63,13 +68,15 @@ export function setupAuth(app: Express) {
       secret: process.env.SESSION_SECRET ?? "medlab-dev-secret-change-in-production",
       resave: false,
       saveUninitialized: false,
-      store: createSessionStore(),
-      // The session is only ended by an explicit logout, so the cookie is given
-      // a year and `rolling` pushes that expiry forward on every request.
+      store: sessionStore,
+      // The real limits — idle and absolute — are the session policy, checked
+      // on every request by enforceSessionPolicy(). The cookie only has to
+      // outlive the longest allowed session (7 days), so it is set just past
+      // that and `rolling` keeps it there.
       rolling: true,
       cookie: {
         httpOnly: true,
-        maxAge: 365 * 24 * 60 * 60 * 1000,
+        maxAge: 8 * 24 * 60 * 60 * 1000,
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
       },
@@ -115,6 +122,7 @@ export function setupAuth(app: Express) {
 
   app.use(passport.initialize());
   app.use(passport.session());
+  app.use("/api", enforceSessionPolicy());
 }
 
 // ------------------------------------------------------------ brute force

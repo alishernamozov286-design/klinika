@@ -29,6 +29,7 @@ import type {
   RoleRecord,
   RoleWithUsage,
   Sample,
+  SecuritySettings,
   TelegramContact,
   Test,
   UpdateDepartmentInput,
@@ -39,7 +40,7 @@ import type {
   UpdateUserInput,
   User,
 } from "@shared/schema";
-import { nationalPhoneDigits } from "@shared/schema";
+import { DEFAULT_SECURITY_SETTINGS, nationalPhoneDigits } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { type DbShape, readDbSync, writeDb } from "./db";
 import { hashPassword } from "./password";
@@ -1271,6 +1272,18 @@ export class FileStorage implements IStorage {
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, 10),
     };
+  }
+
+  // ------------------------------------------------------------- security
+
+  async getSecuritySettings(): Promise<SecuritySettings> {
+    return { ...DEFAULT_SECURITY_SETTINGS, ...(this.db.security ?? {}) };
+  }
+
+  async updateSecuritySettings(input: SecuritySettings, _actor: Actor): Promise<SecuritySettings> {
+    this.db.security = { ...input };
+    await this.persist();
+    return { ...input };
   }
 
   // ------------------------------------------------------------- settings

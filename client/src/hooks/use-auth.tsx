@@ -1,15 +1,16 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { LoginInput, SessionUser } from "@shared/schema";
 import { SUPER_ADMIN, type Permission } from "@shared/permissions";
-import { apiRequest, getQueryFn, queryClient } from "@/lib/queryClient";
+import { SESSION_EXPIRED_EVENT, apiRequest, getQueryFn, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type AuthContextValue = {
   user: SessionUser | null;
   isLoading: boolean;
   login: (input: LoginInput) => Promise<SessionUser>;
-  logout: () => Promise<void>;
+  /** `notice`, when given, is shown on the login screen afterwards. */
+  logout: (notice?: string) => Promise<void>;
   isLoggingIn: boolean;
   /**
    * True when the user holds at least one of the given permissions — the
@@ -44,6 +45,38 @@ function storeUser(user: SessionUser | null | undefined) {
   } catch {
     /* storage unavailable — the app just loads the slow way */
   }
+}
+
+const NOTICE_KEY = "medlab.logoutNotice";
+
+/**
+ * A one-line explanation for the login screen of why the user is there
+ * ("seans faolsizlik sababli yopildi"). sessionStorage, so it belongs to this
+ * tab and disappears with it.
+ */
+export function setLogoutNotice(message: string) {
+  try {
+    sessionStorage.setItem(NOTICE_KEY, message);
+  } catch {
+    /* storage unavailable — the login screen just says nothing */
+  }
+}
+
+export function takeLogoutNotice(): string | null {
+  try {
+    const value = sessionStorage.getItem(NOTICE_KEY);
+    sessionStorage.removeItem(NOTICE_KEY);
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+/** Drops every trace of the signed-in user from this tab. */
+function signOutLocally() {
+  storeUser(null);
+  queryClient.setQueryData(["/api/user"], null);
+  queryClient.clear();
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -87,20 +120,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     mutationFn: async () => {
       await apiRequest("POST", "/api/logout");
     },
-    onSuccess: () => {
+    // Signed out locally even if the request fails: the server may already
+    // have ended the session, and the user asked to leave either way.
+    onSettled: () => {
       // Wipe every cached response — the next user must not see the last one's data.
-      storeUser(null);
-      queryClient.setQueryData(["/api/user"], null);
-      queryClient.clear();
+      signOutLocally();
     },
   });
+
+  useEffect(() => {
+    /**
+     * The server ended this session (idle, too old, revoked from another
+     * device, account blocked). Any API call can be the one that finds out.
+     */
+    const onExpired = (e: Event) => {
+      if (!queryClient.getQueryData(["/api/user"])) return;
+      const message = (e as CustomEvent<{ message?: string }>).detail?.message;
+      setLogoutNotice(message || "Seans yopildi. Qaytadan kiring.");
+      signOutLocally();
+    };
+    /** Signing out in one tab signs out the others. */
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === USER_KEY && e.newValue === null && queryClient.getQueryData(["/api/user"])) {
+        queryClient.setQueryData(["/api/user"], null);
+        queryClient.clear();
+      }
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
 
   const value: AuthContextValue = {
     user: user ?? null,
     isLoading,
     login: loginMutation.mutateAsync,
-    logout: async () => {
-      await logoutMutation.mutateAsync();
+    logout: async (notice?: string) => {
+      if (notice) setLogoutNotice(notice);
+      await logoutMutation.mutateAsync().catch(() => undefined);
     },
     isLoggingIn: loginMutation.isPending,
     can: (...permissions) => {

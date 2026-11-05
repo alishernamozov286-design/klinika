@@ -17,6 +17,8 @@
     "db:samples": "node scripts/migrate-samples.mjs",
     "db:roles": "node scripts/migrate-roles.mjs",
     "db:clinic": "node scripts/migrate-clinic.mjs",
+    "db:security": "node scripts/migrate-security.mjs",
+    "db:upgrade": "node scripts/migrate-roles.mjs && node scripts/migrate-clinic.mjs && node scripts/migrate-security.mjs",
     "db:drop-result-links": "node scripts/migrate-drop-result-links.mjs",
     "db:restore": "node scripts/restore-backup.mjs",
     "tg:webhook": "node scripts/telegram-webhook.mjs",

@@ -11,6 +11,7 @@ import {
   Loader2,
   Lock,
   LockOpen,
+  LogOut,
   MoreVertical,
   Pencil,
   Plus,
@@ -59,7 +60,13 @@ import { Avatar, EmptyState, PageHeader, RoleBadge, SectionCard, TableSkeleton }
 import { MoneyInput, PhoneInput, SearchInput } from "@/components/inputs";
 import { ExportButtons } from "@/components/export-buttons";
 import type { ExportColumn } from "@/lib/export-types";
-import { AuditPanel, BackupPanel, PasswordPanel } from "@/components/settings-security";
+import {
+  AuditPanel,
+  BackupPanel,
+  PasswordPanel,
+  SessionPolicyPanel,
+  SessionsPanel,
+} from "@/components/settings-security";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RolesPanel, roleIcon } from "@/components/roles-panel";
 import { DepartmentsPanel, DoctorsPanel } from "@/components/clinic-panels";
@@ -129,6 +136,8 @@ function SecurityTab() {
   return (
     <>
       <PasswordPanel />
+      <SessionsPanel />
+      <SessionPolicyPanel />
       <BackupPanel />
       {can("audit.read") && <AuditPanel />}
     </>
@@ -824,6 +833,20 @@ function UsersPanel() {
     onError: (err: Error) => toast({ variant: "destructive", title: "O'chirilmadi", description: err.message }),
   });
 
+  /** Signs a member of staff out on every device — a lost phone, a dismissal. */
+  const revokeMutation = useMutation({
+    mutationFn: async (user: PublicUser) => {
+      const res = await apiRequest("POST", `/api/users/${user.id}/sessions/revoke`);
+      return { user, ...((await res.json()) as { ended: number }) };
+    },
+    onSuccess: ({ user, ended }) =>
+      toast({
+        title: ended ? `${ended} ta seans yopildi` : "Ochiq seans yo'q",
+        description: user.fullName,
+      }),
+    onError: (err: Error) => toast({ variant: "destructive", title: "Yopilmadi", description: err.message }),
+  });
+
   /** The escape hatch from the escalating login lockout — see shared/lockout.ts. */
   const unlockMutation = useMutation({
     mutationFn: async (user: PublicUser) => {
@@ -988,6 +1011,14 @@ function UsersPanel() {
                         >
                           <Pencil className="h-4 w-4 mr-2" />
                           Tahrirlash
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => revokeMutation.mutate(u)}
+                          disabled={revokeMutation.isPending}
+                          data-testid={`button-revoke-sessions-${u.username}`}
+                        >
+                          <LogOut className="mr-2 h-4 w-4" />
+                          {u.id === currentUser?.id ? "Boshqa seanslarimni yopish" : "Seanslarini yopish"}
                         </DropdownMenuItem>
                         {u.id !== currentUser?.id && (
                           <DropdownMenuItem className="text-destructive" onClick={() => setDeleting(u)}>

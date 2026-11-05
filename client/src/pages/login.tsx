@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Timer,
   TriangleAlert,
+  Clock,
   User,
   Wallet,
 } from "lucide-react";
@@ -23,7 +24,8 @@ import { lockRemainingMs } from "@shared/lockout";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/hooks/use-auth";
+import { takeLogoutNotice, useAuth } from "@/hooks/use-auth";
+import { ApiError } from "@/lib/queryClient";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const FEATURES = [
@@ -68,23 +70,14 @@ function formatCountdown(ms: number): string {
   return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 }
 
-/** Pulls the JSON body back out of apiRequest's "<status>: {json}" message. */
-function parseErrorBody(raw: string): {
+/** The server's JSON body of a failed login: message, plus lock details when relevant. */
+function parseErrorBody(err: unknown): {
   message?: string;
   warning?: string | null;
   lockedUntil?: string | null;
 } {
-  const start = raw.indexOf("{");
-  if (start !== -1) {
-    try {
-      return JSON.parse(raw.slice(start));
-    } catch {
-      // Fall through to the regex below — a truncated body is still worth
-      // showing the human part of.
-    }
-  }
-  const match = raw.match(/"message"\s*:\s*"([^"]+)"/);
-  return { message: match?.[1] };
+  if (err instanceof ApiError) return (err.body ?? { message: err.message }) as ReturnType<typeof parseErrorBody>;
+  return { message: err instanceof Error ? err.message : undefined };
 }
 
 export default function Login() {
@@ -93,6 +86,9 @@ export default function Login() {
   const [warning, setWarning] = useState<string | null>(null);
   const [lockedUntil, setLockedUntil] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  // Why the last session ended (idle, expired, revoked) — read once, so a
+  // reload of the login page does not keep repeating it.
+  const [notice] = useState(() => takeLogoutNotice());
   const [capsLock, setCapsLock] = useState(false);
 
   // Ticks once a second while a lock is live, so the countdown on screen is
@@ -128,10 +124,8 @@ export default function Login() {
       await login(values);
       setLockedUntil(null);
     } catch (err) {
-      const raw = err instanceof Error ? err.message : "Kirishda xatolik";
-      // apiRequest throws "<status>: {json}" — pull the JSON back out so the
-      // lock deadline and the "attempts left" hint survive the round trip.
-      const body = parseErrorBody(raw);
+      // The lock deadline and the "attempts left" hint travel in the body.
+      const body = parseErrorBody(err);
       setError(body.message ?? "Login yoki parol noto'g'ri");
       setWarning(body.warning ?? null);
       setLockedUntil(body.lockedUntil ?? null);
@@ -238,6 +232,16 @@ export default function Login() {
                 Xodim hisobingiz ma'lumotlarini kiriting
               </p>
             </div>
+
+            {notice && !error && (
+              <div
+                className="mb-5 flex items-start gap-2.5 rounded-xl border border-sky-500/25 bg-sky-500/[0.07] p-3.5 text-sm text-sky-800 dark:text-sky-200"
+                data-testid="alert-login-notice"
+              >
+                <Clock className="mt-0.5 h-4 w-4 shrink-0" />
+                <p className="min-w-0">{notice}</p>
+              </div>
+            )}
 
             {locked ? (
               <motion.div

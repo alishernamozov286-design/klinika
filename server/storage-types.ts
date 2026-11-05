@@ -28,6 +28,7 @@ import type {
   RevenueReportData,
   RoleRecord,
   RoleWithUsage,
+  SecuritySettings,
   Sample,
   TelegramContact,
   Test,
@@ -293,6 +294,10 @@ export interface IStorage {
 
   getDashboardStats(): Promise<DashboardStatsData>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
+
+  /** Session policy; the defaults when nothing was ever saved. */
+  getSecuritySettings(): Promise<SecuritySettings>;
+  updateSecuritySettings(input: SecuritySettings, actor: Actor): Promise<SecuritySettings>;
 
   getSettings(): Promise<LabSettings>;
   updateSettings(input: LabSettingsInput): Promise<LabSettings>;

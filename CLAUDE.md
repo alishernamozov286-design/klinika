@@ -88,7 +88,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 > Holat 05.11.2026 dagi kod tahlili asosida. Umumiy moslik: **≈20–25%**.
 
-### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) ≈60%
+### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) ≈75%
 
 - [x] **B1.1** Ma'lumotlar bazasi: PostgreSQL + Drizzle, fayl ombori zaxira varianti.
 - [x] **B1.2** Login va parol: scrypt xesh, brute-force blokirovka (username+IP), eskalatsiyali bloklash.
@@ -109,7 +109,12 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Migratsiya: `npm run db:clinic`. Jadvallar yo'q bo'lsa ro'yxatlar bo'sh qaytadi, yozish 503 va tushunarli xabar beradi.
   - **B2.7 uchun eslatma:** qabullar shifokorga bog'langach `DELETE /api/doctors/:id` ni bloklash kerak (routes.ts dagi TODO).
 - [~] **B1.6** Audit jurnali (`§12`): yozish amallari bor. **Qoldi:** tibbiy ma'lumotlarni *ko‘rish* jurnali (kim, qachon, qaysi bemor kartasini ochdi), auditor uchun filtrli ko‘rish sahifasi.
-- [ ] **B1.7** Sessiya xavfsizligi (`§12`): faol bo‘lmagan seansni yopish (sozlanadigan, masalan 30 daqiqa; hozir 1 yillik `rolling` cookie). Xodim uchun aktiv seanslar ro‘yxati.
+- [x] **B1.7** Seans xavfsizligi (`§12`).
+  - Server (`server/session-policy.ts`): har bir API so'rovida faolsizlik (standart 30 daq) va umumiy muddat (standart 12 soat) tekshiriladi; oshsa seans yopiladi va 401 `{code: SESSION_IDLE | SESSION_MAX}`. Eski seanslarga yangi soat beriladi (deploy paytida hech kim chiqarib yuborilmaydi).
+  - Mijoz (`SessionGuard`): yopilishdan 1 daqiqa oldin teskari sanoqli ogohlantirish; faollik oynalar orasida `localStorage` orqali bo'lishiladi; faol ishlayotganda `/api/session/ping`. Har qanday 401 → tabdan chiqish va login sahifasida sabab.
+  - Faol seanslar: Sozlamalar → Xavfsizlik (qurilma, IP, vaqt; bittasini yoki boshqalarini yopish). Admin xodimning barcha seanslarini yopa oladi. Parol almashganda / xodim bloklanganda seanslar avtomatik yopiladi.
+  - Siyosat `app_settings` jadvalida (`security` kaliti), `settings.manage` bilan o'zgartiriladi. Migratsiya: `npm run db:security`; jadvalsiz standart siyosat ishlaydi.
+  - Yo'l-yo'lakay: `ApiError` (toast'larda xom JSON o'rniga toza xabar), `npm run db:upgrade` (barcha migratsiyalar ketma-ket).
 - [ ] **B1.8** Ikki bosqichli autentifikatsiya (`§12`): TOTP (Google Authenticator), ixtiyoriy, rol bo‘yicha majburiy qilish imkoni bilan.
 - [~] **B1.9** Bemor ID (`§4.2`): `patientNumber` bor. **Qoldi:** barcha yangi modullarda faqat shu ID orqali bog‘lanish (qabul mezoni 16.1).
 - [ ] **B1.10** Umumiy ustunlar (`§10`): mavjud jadvallarga `updatedAt` / `updatedBy` qo‘shish.
@@ -231,3 +236,4 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · D-1 · Stack qarori: Django o‘rniga joriy Node/Express/TS stack qoladi.
 - 2026-11-05 · B1.4 · RBAC: 11 rol, 26 ruxsat, rollar ekrani, server himoyasi. Yo‘l-yo‘lakay: bazasiz (JSON) rejimni buzayotgan `db-pg` importi tuzatildi; registrator API orqali buyurtmani bekor qila olishi va pul qaytara olishi yopildi.
 - 2026-11-05 · B1.5 · Bo'limlar va shifokorlar: jadvallar, API, Sozlamalar tablari, ish jadvali muharriri.
+- 2026-11-05 · B1.7 · Seans xavfsizligi: faolsizlik/umumiy muddat, ogohlantirish oynasi, faol seanslar ro'yxati, parol almashganda seanslarni yopish.

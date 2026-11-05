@@ -12,9 +12,20 @@ import {
   History,
   KeyRound,
   Loader2,
+  LogOut,
+  Monitor,
+  MonitorSmartphone,
   ShieldCheck,
+  Smartphone,
+  TimerReset,
 } from "lucide-react";
-import { changePasswordSchema, type AuditEntry } from "@shared/schema";
+import {
+  changePasswordSchema,
+  type ActiveSession,
+  type AuditEntry,
+  type SecuritySettings,
+} from "@shared/schema";
+import { describeUserAgent } from "@shared/user-agent";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -30,7 +41,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { EmptyState, Pagination, SectionCard, TableSkeleton } from "@/components/ui-kit";
 import { ExportButtons } from "@/components/export-buttons";
 import type { ExportColumn } from "@/lib/export-types";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDateTime } from "@/lib/format";
@@ -66,6 +77,11 @@ const ENTITIES = [
   { value: "patient", label: "Bemorlar" },
   { value: "test", label: "Tahlillar" },
   { value: "user", label: "Xodimlar" },
+  { value: "role", label: "Rollar" },
+  { value: "department", label: "Bo'limlar" },
+  { value: "doctor", label: "Shifokorlar" },
+  { value: "session", label: "Seanslar" },
+  { value: "settings", label: "Sozlamalar" },
   { value: "expense", label: "Xarajatlar" },
   { value: "auth", label: "Kirishlar" },
 ];
@@ -199,10 +215,15 @@ export function PasswordPanel() {
       // Same schema the server enforces, so the two can never disagree.
       const parsed = changePasswordSchema.safeParse({ currentPassword, newPassword, confirmPassword });
       if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Ma'lumot noto'g'ri");
-      await apiRequest("POST", "/api/user/password", parsed.data);
+      const res = await apiRequest("POST", "/api/user/password", parsed.data);
+      return (await res.json().catch(() => ({}))) as { endedSessions?: number };
     },
-    onSuccess: () => {
-      toast({ title: "Parol o'zgartirildi" });
+    onSuccess: ({ endedSessions }) => {
+      invalidateApi("/api/sessions");
+      toast({
+        title: "Parol o'zgartirildi",
+        description: endedSessions ? `Boshqa qurilmalardagi ${endedSessions} ta seans yopildi` : undefined,
+      });
       setCurrent("");
       setNew("");
       setConfirm("");
@@ -291,6 +312,209 @@ export function BackupPanel() {
           {" — "}butun bazani almashtiradigan tugma tasodifiy bosishga juda yaqin turadi.
         </p>
       </div>
+    </SectionCard>
+  );
+}
+
+// ----------------------------------------------------------------- sessions
+
+/** "Chrome · Windows" with a phone or desktop glyph. */
+function DeviceIcon({ ua }: { ua: string | null }) {
+  const { mobile } = describeUserAgent(ua);
+  const Icon = mobile ? Smartphone : Monitor;
+  return (
+    <div className="icon-tile h-10 w-10 shrink-0 bg-primary/10 text-primary">
+      <Icon className="h-[18px] w-[18px]" />
+    </div>
+  );
+}
+
+/**
+ * Every device this user is signed in on (TZ §12). Lets someone who left a
+ * session open at the reception desk end it from wherever they are now.
+ */
+export function SessionsPanel() {
+  const { toast } = useToast();
+  const { data: sessions = [], isLoading } = useQuery<ActiveSession[]>({
+    queryKey: ["/api/sessions"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const others = sessions.filter((s) => !s.current).length;
+
+  const endOne = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/sessions/${id}`);
+    },
+    onSuccess: () => {
+      invalidateApi("/api/sessions");
+      toast({ title: "Seans yopildi" });
+    },
+    onError: (err: Error) => toast({ variant: "destructive", title: "Yopilmadi", description: err.message }),
+  });
+
+  const endOthers = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/sessions/revoke-others");
+      return (await res.json()) as { ended: number };
+    },
+    onSuccess: ({ ended }) => {
+      invalidateApi("/api/sessions");
+      toast({ title: ended ? `${ended} ta seans yopildi` : "Boshqa seans yo'q" });
+    },
+    onError: (err: Error) => toast({ variant: "destructive", title: "Yopilmadi", description: err.message }),
+  });
+
+  return (
+    <SectionCard
+      icon={MonitorSmartphone}
+      title="Faol seanslar"
+      description="Hisobingiz ochiq turgan qurilmalar"
+      flush
+      action={
+        others > 0 ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => endOthers.mutate()}
+            disabled={endOthers.isPending}
+            data-testid="button-revoke-other-sessions"
+          >
+            {endOthers.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <LogOut className="mr-2 h-3.5 w-3.5" />}
+            Boshqalarini yopish
+          </Button>
+        ) : undefined
+      }
+    >
+      {isLoading ? (
+        <TableSkeleton rows={2} />
+      ) : (
+        <div className="divide-y">
+          {sessions.map((s) => {
+            const d = describeUserAgent(s.userAgent);
+            return (
+              <div key={s.id} className="flex items-center gap-3 px-5 py-3.5" data-testid={`row-session-${s.id}`}>
+                <DeviceIcon ua={s.userAgent} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-medium">
+                      {d.browser} · {d.os}
+                    </p>
+                    {s.current && (
+                      <Badge
+                        variant="outline"
+                        className="h-5 gap-1 border-emerald-500/25 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-700 dark:text-emerald-300"
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        Shu qurilma
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {s.ip ?? "IP noma'lum"}
+                    {s.createdAt && ` · kirgan: ${formatDateTime(s.createdAt)}`}
+                    {s.lastSeen && !s.current && ` · oxirgi faollik: ${formatDateTime(s.lastSeen)}`}
+                  </p>
+                </div>
+                {!s.current && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => endOne.mutate(s.id)}
+                    disabled={endOne.isPending}
+                  >
+                    Yopish
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+const IDLE_OPTIONS = [5, 10, 15, 30, 60, 120, 240, 480];
+const MAX_OPTIONS = [4, 8, 12, 24, 72, 168];
+const hoursLabel = (h: number) => (h % 24 === 0 && h >= 24 ? `${h / 24} kun` : `${h} soat`);
+const minutesLabel = (m: number) => (m >= 60 ? `${m / 60} soat` : `${m} daqiqa`);
+
+/** The clinic-wide limits behind SessionGuard and enforceSessionPolicy. */
+export function SessionPolicyPanel() {
+  const { can } = useAuth();
+  const { toast } = useToast();
+  const allowed = can("settings.manage");
+  const { data } = useQuery<SecuritySettings>({ queryKey: ["/api/settings/security"], enabled: allowed });
+  const [idle, setIdle] = useState<number | null>(null);
+  const [max, setMax] = useState<number | null>(null);
+
+  const current = { idle: idle ?? data?.sessionIdleMinutes ?? 30, max: max ?? data?.sessionMaxHours ?? 12 };
+  const dirty = Boolean(data) && (current.idle !== data!.sessionIdleMinutes || current.max !== data!.sessionMaxHours);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PUT", "/api/settings/security", {
+        sessionIdleMinutes: current.idle,
+        sessionMaxHours: current.max,
+      });
+    },
+    onSuccess: () => {
+      invalidateApi("/api/settings/security", "/api/session/policy");
+      setIdle(null);
+      setMax(null);
+      toast({ title: "Seans siyosati saqlandi", description: "Bir daqiqa ichida barcha xodimlarga qo'llanadi" });
+    },
+    onError: (err: Error) => toast({ variant: "destructive", title: "Saqlanmadi", description: err.message }),
+  });
+
+  if (!allowed) return null;
+
+  return (
+    <SectionCard
+      icon={TimerReset}
+      title="Seans siyosati"
+      description="Faol bo'lmagan seanslar avtomatik yopiladi (TZ §12)"
+    >
+      <div className="grid max-w-2xl gap-5 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label>Faolsizlikdan keyin yopish</Label>
+          <Select value={String(current.idle)} onValueChange={(v) => setIdle(Number(v))}>
+            <SelectTrigger data-testid="select-session-idle">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {IDLE_OPTIONS.map((m) => (
+                <SelectItem key={m} value={String(m)}>
+                  {minutesLabel(m)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Yopilishdan 1 daqiqa oldin ogohlantirish chiqadi.</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Seansning eng uzoq muddati</Label>
+          <Select value={String(current.max)} onValueChange={(v) => setMax(Number(v))}>
+            <SelectTrigger data-testid="select-session-max">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MAX_OPTIONS.map((h) => (
+                <SelectItem key={h} value={String(h)}>
+                  {hoursLabel(h)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Faol ishlansa ham shundan keyin qayta kirish so'raladi.</p>
+        </div>
+      </div>
+      <Button className="mt-5" onClick={() => save.mutate()} disabled={!dirty || save.isPending} data-testid="button-save-session-policy">
+        {save.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+        Saqlash
+      </Button>
     </SectionCard>
   );
 }

@@ -1,10 +1,45 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-async function throwIfResNotOk(res: Response) {
-  if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+/**
+ * A failed API call. `message` is the server's own Uzbek sentence, ready for
+ * a toast; `status` and `body` are there for callers that need more (the login
+ * screen reads lock details from the body).
+ */
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+    public body: Record<string, unknown> | null,
+  ) {
+    super(message);
+    this.name = "ApiError";
   }
+}
+
+/** Fired on any 401 from an authenticated call; AuthProvider signs the tab out. */
+export const SESSION_EXPIRED_EVENT = "medlab:session-expired";
+
+/** Paths whose 401 means "wrong password" or "not signed in yet", not "session ended". */
+const AUTH_PATHS = ["/api/login", "/api/user"];
+
+async function throwIfResNotOk(res: Response) {
+  if (res.ok) return;
+  const text = await res.text();
+  let body: Record<string, unknown> | null = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+  const message =
+    typeof body?.message === "string" ? body.message : text || res.statusText || `Xatolik (${res.status})`;
+
+  if (res.status === 401 && !AUTH_PATHS.some((p) => new URL(res.url, location.origin).pathname === p)) {
+    window.dispatchEvent(
+      new CustomEvent(SESSION_EXPIRED_EVENT, { detail: { code: body?.code ?? null, message } }),
+    );
+  }
+  throw new ApiError(res.status, message, body);
 }
 
 export async function apiRequest(
