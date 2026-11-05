@@ -32,6 +32,14 @@ import {
   updateDepartmentSchema,
   updateDoctorSchema,
   securitySettingsSchema,
+  mfaCodeSchema,
+  mfaDisableSchema,
+  mfaPasswordSchema,
+  type MfaChallenge,
+  type MfaSetup,
+  type MfaStatus,
+  type User,
+  type UserMfa,
   type DuplicateCandidate,
   type InsertPatient,
   type Patient,
@@ -77,6 +85,16 @@ import {
   stampSession,
 } from "./session-policy";
 import { verifyPassword } from "./password";
+import QRCode from "qrcode";
+import {
+  checkMfaCode,
+  decryptSecret,
+  encryptSecret,
+  generateRecoveryCodes,
+  generateTotpSecret,
+  otpauthUrl,
+  verifyTotp,
+} from "./mfa";
 import { localDay, storage, usingPostgres } from "./storage";
 import type { Actor, ExpenseQuery } from "./storage-types";
 import {
@@ -176,6 +194,83 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   // ------------------------------------------------------------------ auth
 
+  // ------------------------------------------------------ sign-in helpers
+
+  const MFA_PENDING_TTL_MS = 5 * 60_000;
+  const MFA_SETUP_TTL_MS = 10 * 60_000;
+  /** Misses allowed on one pending sign-in before the password is asked again. */
+  const MFA_MAX_ATTEMPTS = 5;
+  const MFA_NOT_MIGRATED =
+    "Ikki bosqichli kirish uchun ma'lumotlar bazasi yangilanmagan. Administrator npm run db:mfa ni bajarishi kerak";
+
+  /** The role must use 2FA — and 2FA can actually be stored, or the user would be stuck. */
+  const mfaRequiredFor = async (role: string) =>
+    (await getSessionPolicy()).mfaRequiredRoles.includes(role) && (await storage.mfaAvailable());
+
+  const mfaStatusOf = async (userId: string, role: string): Promise<MfaStatus> => {
+    const [record, available, policy] = await Promise.all([
+      storage.getUserMfa(userId),
+      storage.mfaAvailable(),
+      getSessionPolicy(),
+    ]);
+    return {
+      enabled: Boolean(record),
+      enabledAt: record?.enabledAt ?? null,
+      recoveryCodesLeft: record?.recoveryCodes.length ?? 0,
+      required: policy.mfaRequiredRoles.includes(role),
+      available,
+    };
+  };
+
+  /**
+   * Checks a code and spends it in the same breath. The spending is an atomic
+   * conditional update in storage, so two requests racing with one code
+   * cannot both get through.
+   */
+  const verifyAndConsume = async (
+    record: UserMfa,
+    code: string,
+  ): Promise<"totp" | "recovery" | "invalid" | "unreadable"> => {
+    const check = checkMfaCode(record, code);
+    if (!check.ok) return check.reason;
+    const spent =
+      check.kind === "totp"
+        ? await storage.consumeMfaStep(record.userId, check.step)
+        : await storage.consumeRecoveryCode(record.userId, check.hash);
+    return spent ? check.kind : "invalid";
+  };
+
+  const codeAccepted = (r: Awaited<ReturnType<typeof verifyAndConsume>>) => r === "totp" || r === "recovery";
+
+  /** The last step of every sign-in, with or without a second factor. */
+  const completeLogin = (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+    user: SessionUser,
+    account: User | undefined,
+    opts: { mustEnrol: boolean; how: string },
+  ) => {
+    // logIn() regenerates the session: a pending 2FA state cannot leak into it.
+    req.logIn(user, async (loginErr) => {
+      if (loginErr) return next(loginErr);
+      try {
+        stampSession(req);
+        if (opts.mustEnrol) req.session.mfaSetupRequired = true;
+        // Getting in clears the escalation: the account is demonstrably
+        // theirs, so a previous bad run should not shorten the next one.
+        if (account && (account.failedAttempts > 0 || account.lockLevel > 0)) {
+          await storage.setLockState(account.id, registerSuccess());
+        }
+        void audit(req, "login", "auth", user.id, `${user.fullName} tizimga kirdi${opts.how}`);
+        const body: SessionUser = { ...user, mfaSetupRequired: opts.mustEnrol || undefined };
+        res.json(body);
+      } catch (err) {
+        next(err);
+      }
+    });
+  };
+
   /**
    * Signing in, with the escalating account lockout in front of it.
    *
@@ -257,20 +352,118 @@ export async function registerRoutes(app: Express): Promise<void> {
             });
           }
 
-          request.logIn(user, async (loginErr) => {
-            if (loginErr) return next(loginErr);
-            stampSession(request);
+          try {
+            // The password was right; the in-memory per-IP counter has done its job.
             clearFailedLogins(request);
-            // Getting in clears the escalation: the account is demonstrably
-            // theirs, so a previous bad run should not shorten the next one.
-            if (account && (account.failedAttempts > 0 || account.lockLevel > 0)) {
-              await storage.setLockState(account.id, registerSuccess());
+
+            // Second factor (B1.8): the password alone does not sign in. The
+            // lock escalation is left as it is until the code is right too.
+            if (await storage.getUserMfa(user.id)) {
+              request.session.mfaPending = { userId: user.id, at: Date.now(), attempts: 0 };
+              const challenge: MfaChallenge = { mfaRequired: true, fullName: user.fullName };
+              return request.session.save((saveErr) => (saveErr ? next(saveErr) : response.json(challenge)));
             }
-            void audit(request, "login", "auth", user.id, `${user.fullName} tizimga kirdi`);
-            response.json(user);
-          });
+
+            completeLogin(request, response, next, user, account, {
+              mustEnrol: await mfaRequiredFor(user.role),
+              how: "",
+            });
+          } catch (e) {
+            next(e);
+          }
         },
       )(request, response, next);
+    })(req, res, next);
+  });
+
+  /**
+   * Second step of a 2FA sign-in: the six digits from the authenticator app,
+   * or one of the recovery codes.
+   *
+   * Wrong codes count against the same escalating lock as wrong passwords —
+   * whoever is here already knows the password, so the code is the last thing
+   * standing and must not be guessable at leisure. The pending state also
+   * dies after a few minutes or a few misses, sending them back to the
+   * password.
+   */
+  app.post("/api/login/mfa", (req, res, next) => {
+    handle(async (request, response) => {
+      const { code } = mfaCodeSchema.parse(request.body);
+      const pending = request.session.mfaPending;
+      const restart = (message: string) => {
+        delete request.session.mfaPending;
+        return response.status(401).json({ message, code: "MFA_EXPIRED" });
+      };
+
+      if (!pending || Date.now() - pending.at > MFA_PENDING_TTL_MS) {
+        return restart("Kirish muddati tugadi. Login va parolni qaytadan kiriting");
+      }
+
+      const account = await storage.getUser(pending.userId);
+      if (!account || !account.isActive) return restart("Login yoki parol noto'g'ri");
+
+      const remaining = lockRemainingMs(account.lockedUntil);
+      if (remaining > 0) {
+        delete request.session.mfaPending;
+        return response.status(423).json({
+          message: lockMessage(remaining, isFinalLock(account)),
+          lockedUntil: account.lockedUntil,
+        });
+      }
+
+      // Reset by an administrator while this sign-in was half-way through.
+      const record = await storage.getUserMfa(account.id);
+      if (!record) return restart("Kirish muddati tugadi. Login va parolni qaytadan kiriting");
+
+      const result = await verifyAndConsume(record, code);
+      if (result === "unreadable") {
+        console.error(
+          `[mfa] ${account.username}: secret cannot be decrypted (MFA_ENCRYPTION_KEY / SESSION_SECRET changed?)`,
+        );
+        delete request.session.mfaPending;
+        return response.status(500).json({
+          message: "Ikki bosqichli kirish kalitini o'qib bo'lmadi. Administrator 2FA ni qayta o'rnatishi kerak",
+        });
+      }
+
+      if (result === "invalid") {
+        const decision = registerFailure(account);
+        await storage.setLockState(account.id, decision);
+
+        if (decision.justLocked) {
+          delete request.session.mfaPending;
+          await audit(
+            request,
+            "login",
+            "auth",
+            account.id,
+            `${account.fullName} hisobi qulflandi — noto'g'ri 2FA kodi (${formatLockRemaining(decision.lockedForMs ?? 0)})`,
+          );
+          return response.status(423).json({
+            message: lockMessage(decision.lockedForMs ?? 0, isFinalLock(decision)),
+            lockedUntil: decision.lockedUntil,
+          });
+        }
+
+        pending.attempts += 1;
+        if (pending.attempts >= MFA_MAX_ATTEMPTS) {
+          return restart("Juda ko'p noto'g'ri kod. Login va parolni qaytadan kiriting");
+        }
+        const left = decision.lockLevel > 0 ? 1 : ATTEMPTS_BEFORE_LOCK - decision.failedAttempts;
+        return response.status(401).json({
+          message: "Kod noto'g'ri yoki eskirgan",
+          warning: attemptsLeftMessage(left, decision.lockLevel),
+          attemptsLeft: left,
+        });
+      }
+
+      const { password: _password, ...pub } = account;
+      const user = await toSessionUser(pub);
+      const how =
+        result === "recovery"
+          ? ` (zaxira kod bilan; ${Math.max(0, record.recoveryCodes.length - 1)} ta qoldi)`
+          : " (2FA)";
+      completeLogin(request, response, next, user, account, { mustEnrol: false, how });
     })(req, res, next);
   });
 
@@ -316,8 +509,147 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated?.()) return res.status(401).json({ message: "Avval tizimga kiring" });
-    res.json(req.user);
+    const me: SessionUser = { ...req.user!, mfaSetupRequired: req.session.mfaSetupRequired || undefined };
+    res.json(me);
   });
+
+  // ---------------------------------------------------- two-factor (B1.8)
+
+  app.get(
+    "/api/user/mfa",
+    requireAuth,
+    handle(async (req, res) => {
+      res.json(await mfaStatusOf(req.user!.id, req.user!.role));
+    }),
+  );
+
+  /**
+   * Step 1 of enrolment: a fresh secret and its QR code. The current password
+   * is asked for, so someone at an unlocked screen cannot tie the account to
+   * their own phone and lock the owner out. Nothing is stored until the user
+   * proves the app works (/enable); until then the secret waits, encrypted,
+   * on the session.
+   */
+  app.post(
+    "/api/user/mfa/setup",
+    requireAuth,
+    handle(async (req, res) => {
+      const { password } = mfaPasswordSchema.parse(req.body);
+      const me = req.user!;
+      const full = await storage.getUser(me.id);
+      if (!full) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (!(await verifyPassword(password, full.password))) {
+        return res.status(400).json({ message: "Joriy parol noto'g'ri" });
+      }
+      if (!(await storage.mfaAvailable())) return res.status(503).json({ message: MFA_NOT_MIGRATED });
+      if (await storage.getUserMfa(me.id)) {
+        return res.status(409).json({ message: "Ikki bosqichli kirish allaqachon yoqilgan" });
+      }
+
+      const secret = generateTotpSecret();
+      const url = otpauthUrl(me.username, secret);
+      req.session.mfaSetup = { secret: encryptSecret(secret), at: Date.now() };
+      const setup: MfaSetup = {
+        secret,
+        otpauthUrl: url,
+        qrDataUrl: await QRCode.toDataURL(url, { margin: 1, width: 240, errorCorrectionLevel: "M" }),
+      };
+      res.json(setup);
+    }),
+  );
+
+  /** Step 2: the first code from the app. Returns the recovery codes — once. */
+  app.post(
+    "/api/user/mfa/enable",
+    requireAuth,
+    handle(async (req, res) => {
+      const { code } = mfaCodeSchema.parse(req.body);
+      const me = req.user!;
+      const setup = req.session.mfaSetup;
+      if (!setup || Date.now() - setup.at > MFA_SETUP_TTL_MS) {
+        delete req.session.mfaSetup;
+        return res.status(400).json({ message: "Sozlash muddati tugadi. Qaytadan boshlang" });
+      }
+      const secret = decryptSecret(setup.secret);
+      const step = secret ? verifyTotp(secret, code) : null;
+      if (step === null) {
+        return res.status(400).json({
+          message: "Kod noto'g'ri. Ilovadagi joriy kodni kiriting va telefon vaqti to'g'riligini tekshiring",
+        });
+      }
+      if (await storage.getUserMfa(me.id)) {
+        delete req.session.mfaSetup;
+        return res.status(409).json({ message: "Ikki bosqichli kirish allaqachon yoqilgan" });
+      }
+
+      const { codes, hashes } = generateRecoveryCodes();
+      await storage.saveUserMfa(
+        { userId: me.id, secret: setup.secret, recoveryCodes: hashes, lastUsedStep: step },
+        actorOf(req),
+      );
+      delete req.session.mfaSetup;
+      delete req.session.mfaSetupRequired;
+
+      // Other devices signed in on the password alone; they do not get to
+      // skip the step everyone else now has to take.
+      const ended = await revokeUserSessions(sessionStore, sessionPool, me.id, { keepSid: req.sessionID });
+      await audit(
+        req,
+        "update",
+        "user",
+        me.id,
+        `${me.fullName} ikki bosqichli autentifikatsiyani yoqdi${ended ? ` (${ended} ta boshqa seans yopildi)` : ""}`,
+      );
+      res.json({ recoveryCodes: codes, endedSessions: ended });
+    }),
+  );
+
+  app.post(
+    "/api/user/mfa/disable",
+    requireAuth,
+    handle(async (req, res) => {
+      const { password, code } = mfaDisableSchema.parse(req.body);
+      const me = req.user!;
+      if ((await getSessionPolicy()).mfaRequiredRoles.includes(me.role)) {
+        return res.status(403).json({
+          message:
+            "Rolingiz uchun ikki bosqichli kirish majburiy. Telefon almashgan bo'lsa, administrator 2FA ni qayta o'rnatadi",
+        });
+      }
+      const full = await storage.getUser(me.id);
+      if (!full) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (!(await verifyPassword(password, full.password))) {
+        return res.status(400).json({ message: "Joriy parol noto'g'ri" });
+      }
+      const record = await storage.getUserMfa(me.id);
+      if (!record) return res.status(404).json({ message: "Ikki bosqichli kirish yoqilmagan" });
+      if (!codeAccepted(await verifyAndConsume(record, code))) {
+        return res.status(400).json({ message: "Kod noto'g'ri yoki eskirgan" });
+      }
+      await storage.deleteUserMfa(me.id);
+      await audit(req, "update", "user", me.id, `${me.fullName} ikki bosqichli autentifikatsiyani o'chirdi`);
+      res.sendStatus(204);
+    }),
+  );
+
+  /** New recovery codes; the old ones stop working. Needs a current code. */
+  app.post(
+    "/api/user/mfa/recovery-codes",
+    requireAuth,
+    handle(async (req, res) => {
+      const { code } = mfaCodeSchema.parse(req.body);
+      const me = req.user!;
+      const record = await storage.getUserMfa(me.id);
+      if (!record) return res.status(404).json({ message: "Ikki bosqichli kirish yoqilmagan" });
+      if (!codeAccepted(await verifyAndConsume(record, code))) {
+        return res.status(400).json({ message: "Kod noto'g'ri yoki eskirgan" });
+      }
+      const { codes, hashes } = generateRecoveryCodes();
+      await storage.replaceRecoveryCodes(me.id, hashes, actorOf(req));
+      await audit(req, "update", "user", me.id, `${me.fullName} yangi zaxira kodlar yaratdi`);
+      res.json({ recoveryCodes: codes });
+    }),
+  );
 
   // -------------------------------------------------------------- patients
 
@@ -1502,7 +1834,8 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.get(
     "/api/roles",
-    requirePermission("users.manage", "roles.manage"),
+    // settings.manage: the 2FA policy is set per role.
+    requirePermission("users.manage", "roles.manage", "settings.manage"),
     handle(async (_req, res) => {
       res.json(await storage.listRoles());
     }),
@@ -1644,6 +1977,48 @@ export async function registerRoutes(app: Express): Promise<void> {
     }),
   );
 
+  /** Who has 2FA — the staff list's column. Never the secrets. */
+  app.get(
+    "/api/users/mfa",
+    requirePermission("users.manage"),
+    handle(async (_req, res) => {
+      res.json(await storage.listMfaEnrollments());
+    }),
+  );
+
+  /**
+   * A lost or replaced phone: removes the member of staff's 2FA so they can
+   * sign in with the password and enrol again (straight away, if their role
+   * requires it). Their sessions are ended too — the phone may be in the
+   * wrong hands along with an open session.
+   */
+  app.post(
+    "/api/users/:id/mfa/reset",
+    requirePermission("users.manage"),
+    handle(async (req, res) => {
+      const target = await storage.getUser(req.params.id);
+      if (!target) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (target.id === req.user!.id) {
+        return res.status(400).json({ message: "O'z hisobingiz uchun Sozlamalar → Xavfsizlik bo'limidan foydalaning" });
+      }
+      if ((target.role === SUPER_ADMIN || target.role === LEGACY_ADMIN) && !isSuperAdmin(req)) {
+        return res.status(403).json({ message: "Super administrator 2FA sini faqat super administrator o'chira oladi" });
+      }
+      if (!(await storage.deleteUserMfa(target.id))) {
+        return res.status(404).json({ message: "Bu xodimda ikki bosqichli kirish yoqilmagan" });
+      }
+      const ended = await revokeUserSessions(sessionStore, sessionPool, target.id);
+      await audit(
+        req,
+        "update",
+        "user",
+        target.id,
+        `${target.fullName} — ikki bosqichli kirish administrator tomonidan o'chirildi${ended ? ` (${ended} ta seans yopildi)` : ""}`,
+      );
+      res.json({ ended });
+    }),
+  );
+
   /** Signs a member of staff out everywhere — e.g. a lost phone, or a dismissal. */
   app.post(
     "/api/users/:id/sessions/revoke",
@@ -1673,18 +2048,38 @@ export async function registerRoutes(app: Express): Promise<void> {
     "/api/settings/security",
     requirePermission("settings.manage"),
     handle(async (req, res) => {
-      const input = securitySettingsSchema.parse(req.body);
       const before = await storage.getSecuritySettings();
+      // A partial body changes only what it names: the session-limits panel
+      // and the 2FA panel each save their own half.
+      const input = securitySettingsSchema.parse({
+        ...before,
+        ...securitySettingsSchema.partial().parse(req.body),
+      });
+
+      const added = input.mfaRequiredRoles.filter((k) => !before.mfaRequiredRoles.includes(k));
+      const removed = before.mfaRequiredRoles.filter((k) => !input.mfaRequiredRoles.includes(k));
+      const roleList = await storage.listRoles();
+      const roleName = new Map(roleList.map((r) => [r.key, r.name]));
+      const unknown = added.filter((k) => !roleName.has(k));
+      if (unknown.length) return res.status(400).json({ message: `Noma'lum rol: ${unknown.join(", ")}` });
+      if (added.length && !(await storage.mfaAvailable())) return res.status(503).json({ message: MFA_NOT_MIGRATED });
+
       const saved = await storage.updateSecuritySettings(input, actorOf(req));
       invalidateSessionPolicy();
-      await audit(
-        req,
-        "update",
-        "settings",
-        "security",
-        `Seans siyosati: faolsizlik ${before.sessionIdleMinutes} → ${saved.sessionIdleMinutes} daq., ` +
-          `maksimal ${before.sessionMaxHours} → ${saved.sessionMaxHours} soat`,
-      );
+
+      const changes: string[] = [];
+      if (before.sessionIdleMinutes !== saved.sessionIdleMinutes) {
+        changes.push(`faolsizlik ${before.sessionIdleMinutes} → ${saved.sessionIdleMinutes} daq.`);
+      }
+      if (before.sessionMaxHours !== saved.sessionMaxHours) {
+        changes.push(`maksimal ${before.sessionMaxHours} → ${saved.sessionMaxHours} soat`);
+      }
+      const names = (keys: string[]) => keys.map((k) => roleName.get(k) ?? k).join(", ");
+      if (added.length) changes.push(`2FA majburiy: ${names(added)}`);
+      if (removed.length) changes.push(`2FA ixtiyoriy: ${names(removed)}`);
+      if (changes.length) {
+        await audit(req, "update", "settings", "security", `Xavfsizlik siyosati: ${changes.join("; ")}`);
+      }
       res.json(saved);
     }),
   );

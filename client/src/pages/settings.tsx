@@ -82,6 +82,7 @@ import {
   SessionPolicyPanel,
   SessionsPanel,
 } from "@/components/settings-security";
+import { MfaPanel, MfaPolicyPanel } from "@/components/mfa-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -127,8 +128,10 @@ function SecurityTab() {
   return (
     <>
       <PasswordPanel />
+      <MfaPanel />
       <SessionsPanel />
       <SessionPolicyPanel />
+      <MfaPolicyPanel />
       <BackupPanel />
       {can("audit.read") && <AuditPanel />}
     </>

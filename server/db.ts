@@ -18,11 +18,13 @@ import type {
   TelegramContact,
   Test,
   User,
+  UserMfa,
   Visit,
 } from "@shared/schema";
 
 export type DbShape = {
   users: User[];
+  userMfa: UserMfa[];
   roles: RoleRecord[];
   departments: Department[];
   doctors: Doctor[];
@@ -56,6 +58,7 @@ const TMP_FILE = path.join(DATA_DIR, "db.tmp.json");
 
 export const emptyDb = (): DbShape => ({
   users: [],
+  userMfa: [],
   roles: [],
   departments: [],
   doctors: [],

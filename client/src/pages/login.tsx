@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "framer-motion";
 import {
   Activity,
+  ArrowLeft,
   ArrowRight,
   Eye,
   EyeOff,
@@ -13,6 +14,7 @@ import {
   Lock,
   ShieldAlert,
   ShieldCheck,
+  Smartphone,
   Timer,
   TriangleAlert,
   Clock,
@@ -81,7 +83,10 @@ function parseErrorBody(err: unknown): {
 }
 
 export default function Login() {
-  const { login, isLoggingIn } = useAuth();
+  const { login, verifyMfa, isLoggingIn } = useAuth();
+  // Password accepted, authenticator code still due (B1.8).
+  const [challenge, setChallenge] = useState<{ fullName: string } | null>(null);
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [lockedUntil, setLockedUntil] = useState<string | null>(null);
@@ -121,14 +126,47 @@ export default function Login() {
     setError(null);
     setWarning(null);
     try {
-      await login(values);
+      const result = await login(values);
       setLockedUntil(null);
+      if ("mfaRequired" in result) {
+        setChallenge({ fullName: result.fullName });
+        setCode("");
+      }
     } catch (err) {
       // The lock deadline and the "attempts left" hint travel in the body.
       const body = parseErrorBody(err);
       setError(body.message ?? "Login yoki parol noto'g'ri");
       setWarning(body.warning ?? null);
       setLockedUntil(body.lockedUntil ?? null);
+    }
+  };
+
+  const backToPassword = () => {
+    setChallenge(null);
+    setCode("");
+    setError(null);
+    setWarning(null);
+    form.setValue("password", "");
+  };
+
+  const onSubmitCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!code.trim()) return;
+    setError(null);
+    setWarning(null);
+    try {
+      await verifyMfa(code.trim());
+    } catch (err) {
+      const body = parseErrorBody(err);
+      setError(body.message ?? "Kod noto'g'ri");
+      setWarning(body.warning ?? null);
+      setLockedUntil(body.lockedUntil ?? null);
+      setCode("");
+      // The server dropped the half-finished sign-in (too many misses, too
+      // slow, or locked): the code box has nothing left to talk to.
+      const status = err instanceof ApiError ? err.status : 0;
+      if (status === 401 && (err as ApiError).body?.code === "MFA_EXPIRED") setChallenge(null);
+      if (status === 423) setChallenge(null);
     }
   };
 
@@ -226,10 +264,12 @@ export default function Login() {
                 Xush kelibsiz
               </p>
               <h1 className="mt-2 text-[26px] font-bold leading-tight tracking-tight">
-                Tizimga kirish
+                {challenge ? "Tasdiqlash kodi" : "Tizimga kirish"}
               </h1>
               <p className="mt-1.5 text-[15px] text-muted-foreground">
-                Xodim hisobingiz ma'lumotlarini kiriting
+                {challenge
+                  ? `${challenge.fullName}, autentifikator ilovasidagi 6 xonali kodni kiriting`
+                  : "Xodim hisobingiz ma'lumotlarini kiriting"}
               </p>
             </div>
 
@@ -307,6 +347,62 @@ export default function Login() {
               )
             )}
 
+            {challenge ? (
+              <form onSubmit={onSubmitCode} className="space-y-5" data-testid="form-mfa">
+                <div className="space-y-2">
+                  <label htmlFor="mfa-code" className="text-sm font-medium leading-none">
+                    Kod
+                  </label>
+                  <div className="relative">
+                    <Smartphone className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="mfa-code"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      inputMode="text"
+                      autoComplete="one-time-code"
+                      autoFocus
+                      maxLength={16}
+                      placeholder="123 456"
+                      className="h-12 pl-10 font-mono text-lg tracking-widest"
+                      data-testid="input-mfa-code"
+                    />
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Telefon yo'q bo'lsa, zaxira kodlardan birini kiriting (masalan, ABCD-2345). Har bir zaxira kod
+                    bir marta ishlaydi.
+                  </p>
+                </div>
+
+                <Button
+                  type="submit"
+                  className="h-12 w-full text-[15px] shadow-brand"
+                  disabled={isLoggingIn || locked || !code.trim()}
+                  data-testid="button-mfa-verify"
+                >
+                  {isLoggingIn ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Tekshirilmoqda...
+                    </>
+                  ) : (
+                    <>
+                      Tasdiqlash
+                      <ShieldCheck className="ml-2 h-4 w-4" />
+                    </>
+                  )}
+                </Button>
+                <button
+                  type="button"
+                  onClick={backToPassword}
+                  className="flex w-full items-center justify-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  data-testid="button-mfa-back"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Boshqa hisob bilan kirish
+                </button>
+              </form>
+            ) : (
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
                 <FormField
@@ -403,6 +499,7 @@ export default function Login() {
                 </Button>
               </form>
             </Form>
+            )}
 
             <div className="mt-7 flex items-start gap-2.5 border-t pt-5 text-xs leading-relaxed text-muted-foreground">
               <ShieldCheck className="mt-px h-4 w-4 shrink-0 text-primary" />

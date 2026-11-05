@@ -549,12 +549,111 @@ describe("departments and doctors", () => {
 
 describe("security settings", () => {
   it("falls back to the defaults until saved", async () => {
-    expect(await storage.getSecuritySettings()).toEqual({ sessionIdleMinutes: 30, sessionMaxHours: 12 });
+    expect(await storage.getSecuritySettings()).toEqual({
+      sessionIdleMinutes: 30,
+      sessionMaxHours: 12,
+      mfaRequiredRoles: [],
+    });
   });
 
   it("keeps what was saved", async () => {
-    await storage.updateSecuritySettings({ sessionIdleMinutes: 15, sessionMaxHours: 8 }, ACTOR);
-    expect(await storage.getSecuritySettings()).toEqual({ sessionIdleMinutes: 15, sessionMaxHours: 8 });
+    await storage.updateSecuritySettings(
+      { sessionIdleMinutes: 15, sessionMaxHours: 8, mfaRequiredRoles: ["rahbar", "kassir"] },
+      ACTOR,
+    );
+    expect(await storage.getSecuritySettings()).toEqual({
+      sessionIdleMinutes: 15,
+      sessionMaxHours: 8,
+      mfaRequiredRoles: ["rahbar", "kassir"],
+    });
+  });
+
+  it("reads settings saved before 2FA existed as 'nobody is required'", async () => {
+    await storage.updateSecuritySettings({ sessionIdleMinutes: 15, sessionMaxHours: 8 } as never, ACTOR);
+    expect((await storage.getSecuritySettings()).mfaRequiredRoles).toEqual([]);
+  });
+});
+
+describe("two-factor enrolment (B1.8)", () => {
+  const enrol = (userId: string) =>
+    storage.saveUserMfa({ userId, secret: "v1.x.y.z", recoveryCodes: ["h1", "h2", "h3"], lastUsedStep: 100 }, ACTOR);
+  const firstUser = async () => (await storage.listUsers())[0];
+
+  it("is off for everyone until someone enrols", async () => {
+    const u = await firstUser();
+    expect(await storage.mfaAvailable()).toBe(true);
+    expect(await storage.getUserMfa(u.id)).toBeUndefined();
+    expect(await storage.listMfaEnrollments()).toEqual([]);
+  });
+
+  it("stores the enrolment and lists who has it — without the secret", async () => {
+    const u = await firstUser();
+    await enrol(u.id);
+    expect((await storage.getUserMfa(u.id))?.recoveryCodes).toEqual(["h1", "h2", "h3"]);
+    const list = await storage.listMfaEnrollments();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toEqual({ userId: u.id, enabledAt: expect.any(String) });
+  });
+
+  it("re-enrolling replaces the old secret and codes", async () => {
+    const u = await firstUser();
+    await enrol(u.id);
+    await storage.saveUserMfa({ userId: u.id, secret: "v1.new", recoveryCodes: ["n1"], lastUsedStep: 5 }, ACTOR);
+    const row = await storage.getUserMfa(u.id);
+    expect(row?.secret).toBe("v1.new");
+    expect(row?.recoveryCodes).toEqual(["n1"]);
+    expect(await storage.listMfaEnrollments()).toHaveLength(1);
+  });
+
+  it("accepts a code step once, and only a newer one after that (replay protection)", async () => {
+    const u = await firstUser();
+    await enrol(u.id);
+    expect(await storage.consumeMfaStep(u.id, 101)).toBe(true);
+    expect(await storage.consumeMfaStep(u.id, 101)).toBe(false);
+    expect(await storage.consumeMfaStep(u.id, 99)).toBe(false);
+    expect(await storage.consumeMfaStep(u.id, 102)).toBe(true);
+  });
+
+  it("of two parallel requests with the same code, only one is accepted", async () => {
+    const u = await firstUser();
+    await enrol(u.id);
+    const results = await Promise.all([storage.consumeMfaStep(u.id, 200), storage.consumeMfaStep(u.id, 200)]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("spends a recovery code exactly once", async () => {
+    const u = await firstUser();
+    await enrol(u.id);
+    expect(await storage.consumeRecoveryCode(u.id, "h2")).toBe(true);
+    expect(await storage.consumeRecoveryCode(u.id, "h2")).toBe(false);
+    expect((await storage.getUserMfa(u.id))?.recoveryCodes).toEqual(["h1", "h3"]);
+  });
+
+  it("replaces recovery codes, invalidating the old ones", async () => {
+    const u = await firstUser();
+    await enrol(u.id);
+    expect(await storage.replaceRecoveryCodes(u.id, ["z1", "z2"], ACTOR)).toBe(true);
+    expect(await storage.consumeRecoveryCode(u.id, "h1")).toBe(false);
+    expect(await storage.consumeRecoveryCode(u.id, "z1")).toBe(true);
+    expect(await storage.replaceRecoveryCodes("nobody", ["x"], ACTOR)).toBe(false);
+  });
+
+  it("deleting removes 2FA, and deleting the user takes the enrolment along", async () => {
+    const a = await firstUser();
+    const b = await storage.createUser({ username: "ikkinchi", password: "parol123", fullName: "Ikkinchi Xodim", role: "kassir", isActive: true });
+    await enrol(a.id);
+    await enrol(b.id);
+    expect(await storage.deleteUserMfa(a.id)).toBe(true);
+    expect(await storage.deleteUserMfa(a.id)).toBe(false);
+    await storage.deleteUser(b.id);
+    expect(await storage.listMfaEnrollments()).toEqual([]);
+  });
+
+  it("returns copies, so callers cannot edit stored codes in place", async () => {
+    const u = await firstUser();
+    await enrol(u.id);
+    (await storage.getUserMfa(u.id))!.recoveryCodes.push("hacked");
+    expect((await storage.getUserMfa(u.id))?.recoveryCodes).toEqual(["h1", "h2", "h3"]);
   });
 });
 

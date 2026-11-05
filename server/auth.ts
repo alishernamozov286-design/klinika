@@ -20,6 +20,21 @@ declare global {
   }
 }
 
+declare module "express-session" {
+  interface SessionData {
+    /**
+     * Password accepted, code still due (B1.8). Lives on the anonymous
+     * session; passport's logIn() regenerates the session once the code is
+     * right, so nothing of this survives into the signed-in one.
+     */
+    mfaPending?: { userId: string; at: number; attempts: number };
+    /** An authenticator secret shown to the user but not yet confirmed (encrypted). */
+    mfaSetup?: { secret: string; at: number };
+    /** Signed in, but the role requires 2FA and none is set up. */
+    mfaSetupRequired?: boolean;
+  }
+}
+
 const MemoryStore = createMemoryStore(session);
 const PgSession = connectPgSimple(session);
 
@@ -123,6 +138,27 @@ export function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
   app.use("/api", enforceSessionPolicy());
+  app.use("/api", requireMfaEnrollment);
+}
+
+/**
+ * What a session flagged mfaSetupRequired may still call: who am I, sign out,
+ * the session keep-alive, and the enrolment itself. Paths are relative to the
+ * /api mount.
+ */
+const ENROLMENT_PATHS = [/^\/user$/, /^\/logout$/, /^\/session\//, /^\/user\/mfa(\/|$)/];
+
+/**
+ * Enforced here, on the server, rather than by the client hiding the app: a
+ * user who must use 2FA gets no data at all until they have set it up.
+ */
+function requireMfaEnrollment(req: Request, res: Response, next: NextFunction) {
+  if (!req.isAuthenticated?.() || !req.session?.mfaSetupRequired) return next();
+  if (ENROLMENT_PATHS.some((re) => re.test(req.path))) return next();
+  res.status(403).json({
+    message: "Davom etish uchun ikki bosqichli autentifikatsiyani sozlang",
+    code: "MFA_SETUP_REQUIRED",
+  });
 }
 
 // ------------------------------------------------------------ brute force

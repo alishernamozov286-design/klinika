@@ -18,6 +18,8 @@ import {
   telegramContacts,
   tests,
   users,
+  userMfa,
+  type UserMfa,
   type AuditEntry,
   type CreatePaymentInput,
   type Department,
@@ -534,6 +536,101 @@ export class PgStorage implements IStorage {
         lastFailedAt: state.failedAttempts > 0 || state.lockedUntil ? new Date().toISOString() : null,
       })
       .where(eq(users.id, userId));
+  }
+
+  // ------------------------------------------------------------------ 2FA
+
+  async mfaAvailable(): Promise<boolean> {
+    try {
+      await db.select({ userId: userMfa.userId }).from(userMfa).limit(1);
+      return true;
+    } catch (err) {
+      if (isMissingTable(err)) return false;
+      throw err;
+    }
+  }
+
+  async getUserMfa(userId: string): Promise<UserMfa | undefined> {
+    try {
+      const [row] = await db.select().from(userMfa).where(eq(userMfa.userId, userId)).limit(1);
+      return row;
+    } catch (err) {
+      // Not migrated yet: nobody has 2FA, and sign-in must keep working.
+      if (isMissingTable(err)) return undefined;
+      throw err;
+    }
+  }
+
+  async listMfaEnrollments(): Promise<{ userId: string; enabledAt: string }[]> {
+    try {
+      return await db.select({ userId: userMfa.userId, enabledAt: userMfa.enabledAt }).from(userMfa);
+    } catch (err) {
+      if (isMissingTable(err)) return [];
+      throw err;
+    }
+  }
+
+  async saveUserMfa(
+    input: { userId: string; secret: string; recoveryCodes: string[]; lastUsedStep: number },
+    actor: Actor,
+  ): Promise<UserMfa> {
+    const now = new Date().toISOString();
+    const values = {
+      secret: input.secret,
+      recoveryCodes: input.recoveryCodes,
+      lastUsedStep: input.lastUsedStep,
+      enabledAt: now,
+      updatedAt: now,
+      updatedBy: actor.id,
+    };
+    const [row] = await db
+      .insert(userMfa)
+      .values({ userId: input.userId, ...values })
+      .onConflictDoUpdate({ target: userMfa.userId, set: values })
+      .returning();
+    return row;
+  }
+
+  async replaceRecoveryCodes(userId: string, hashes: string[], actor: Actor): Promise<boolean> {
+    const rows = await db
+      .update(userMfa)
+      .set({ recoveryCodes: hashes, updatedAt: new Date().toISOString(), updatedBy: actor.id })
+      .where(eq(userMfa.userId, userId))
+      .returning({ userId: userMfa.userId });
+    return rows.length > 0;
+  }
+
+  async consumeMfaStep(userId: string, step: number): Promise<boolean> {
+    // The comparison is in the WHERE, so of two requests carrying the same
+    // code only one row update happens — the other gets nothing back.
+    const rows = await db
+      .update(userMfa)
+      .set({ lastUsedStep: step })
+      .where(and(eq(userMfa.userId, userId), sql`${userMfa.lastUsedStep} < ${step}`))
+      .returning({ userId: userMfa.userId });
+    return rows.length > 0;
+  }
+
+  async consumeRecoveryCode(userId: string, hash: string): Promise<boolean> {
+    const rows = await db
+      .update(userMfa)
+      .set({
+        recoveryCodes: sql`array_remove(${userMfa.recoveryCodes}, ${hash})`,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(and(eq(userMfa.userId, userId), sql`${hash} = ANY(${userMfa.recoveryCodes})`))
+      .returning({ userId: userMfa.userId });
+    return rows.length > 0;
+  }
+
+  async deleteUserMfa(userId: string): Promise<boolean> {
+    try {
+      const rows = await db.delete(userMfa).where(eq(userMfa.userId, userId)).returning({ userId: userMfa.userId });
+      return rows.length > 0;
+    } catch (err) {
+      if (isMissingTable(err)) return false;
+      throw err;
+    }
   }
 
   // ------------------------------------------------------------- patients

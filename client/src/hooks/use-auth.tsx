@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { LoginInput, SessionUser } from "@shared/schema";
+import type { LoginInput, MfaChallenge, SessionUser } from "@shared/schema";
 import { SUPER_ADMIN, type Permission } from "@shared/permissions";
 import { SESSION_EXPIRED_EVENT, apiRequest, getQueryFn, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -8,7 +8,10 @@ import { useToast } from "@/hooks/use-toast";
 type AuthContextValue = {
   user: SessionUser | null;
   isLoading: boolean;
-  login: (input: LoginInput) => Promise<SessionUser>;
+  /** Resolves with a challenge instead of a user when a 2FA code is still due. */
+  login: (input: LoginInput) => Promise<SessionUser | MfaChallenge>;
+  /** Second step of a 2FA sign-in: an app code or a recovery code. */
+  verifyMfa: (code: string) => Promise<SessionUser>;
   /** `notice`, when given, is shown on the login screen afterwards. */
   logout: (notice?: string) => Promise<void>;
   isLoggingIn: boolean;
@@ -104,16 +107,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refetchOnMount: true,
   });
 
+  const onSignedIn = (loggedIn: SessionUser) => {
+    storeUser(loggedIn);
+    queryClient.setQueryData(["/api/user"], loggedIn);
+    toast({ title: `Xush kelibsiz, ${loggedIn.fullName}` });
+  };
+
   const loginMutation = useMutation({
     mutationFn: async (input: LoginInput) => {
       const res = await apiRequest("POST", "/api/login", input);
+      return (await res.json()) as SessionUser | MfaChallenge;
+    },
+    onSuccess: (result) => {
+      // A challenge is not a sign-in yet: nothing is stored until the code is right.
+      if (!("mfaRequired" in result)) onSignedIn(result);
+    },
+  });
+
+  const mfaMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const res = await apiRequest("POST", "/api/login/mfa", { code });
       return (await res.json()) as SessionUser;
     },
-    onSuccess: (loggedIn) => {
-      storeUser(loggedIn);
-      queryClient.setQueryData(["/api/user"], loggedIn);
-      toast({ title: `Xush kelibsiz, ${loggedIn.fullName}` });
-    },
+    onSuccess: onSignedIn,
   });
 
   const logoutMutation = useMutation({
@@ -158,11 +174,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: user ?? null,
     isLoading,
     login: loginMutation.mutateAsync,
+    verifyMfa: mfaMutation.mutateAsync,
     logout: async (notice?: string) => {
       if (notice) setLogoutNotice(notice);
       await logoutMutation.mutateAsync().catch(() => undefined);
     },
-    isLoggingIn: loginMutation.isPending,
+    isLoggingIn: loginMutation.isPending || mfaMutation.isPending,
     can: (...permissions) => {
       const held = user?.permissions;
       // A user cached before RBAC has no permission list; treat it as none

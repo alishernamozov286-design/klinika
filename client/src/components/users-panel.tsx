@@ -7,6 +7,8 @@ import {
   Lock,
   LockOpen,
   LogOut,
+  ShieldCheck,
+  ShieldOff,
   MoreVertical,
   Pencil,
   Plus,
@@ -96,6 +98,9 @@ export function UsersPanel() {
 
   const { data: users = [], isLoading } = useQuery<PublicUser[]>({ queryKey: ["/api/users"] });
   const { data: roles = [] } = useQuery<RoleWithUsage[]>({ queryKey: ["/api/roles"] });
+  const { data: mfaUsers = [] } = useQuery<{ userId: string; enabledAt: string }[]>({ queryKey: ["/api/users/mfa"] });
+  const hasMfa = useMemo(() => new Set(mfaUsers.map((m) => m.userId)), [mfaUsers]);
+  const [resettingMfa, setResettingMfa] = useState<PublicUser | null>(null);
 
   const roleByKey = useMemo(() => new Map(roles.map((r) => [r.key, r])), [roles]);
   const roleName = (key: string) => roleByKey.get(key)?.name ?? key;
@@ -188,6 +193,23 @@ export function UsersPanel() {
         description: user.fullName,
       }),
     onError: (err: Error) => toast({ variant: "destructive", title: "Yopilmadi", description: err.message }),
+  });
+
+  /** A lost or replaced phone: 2FA is removed and the staff member enrols again. */
+  const resetMfaMutation = useMutation({
+    mutationFn: async (user: PublicUser) => {
+      await apiRequest("POST", `/api/users/${user.id}/mfa/reset`);
+      return user;
+    },
+    onSuccess: (user) => {
+      invalidateApi("/api/users/mfa");
+      setResettingMfa(null);
+      toast({ title: "2FA o'chirildi", description: `${user.fullName} parol bilan kirib, qayta sozlaydi` });
+    },
+    onError: (err: Error) => {
+      setResettingMfa(null);
+      toast({ variant: "destructive", title: "O'chirilmadi", description: err.message });
+    },
   });
 
   /** The escape hatch from the escalating login lockout — see shared/lockout.ts. */
@@ -291,6 +313,16 @@ export function UsersPanel() {
                       {u.id === currentUser?.id && (
                         <Badge variant="secondary" className="text-[10px]">Siz</Badge>
                       )}
+                      {hasMfa.has(u.id) && (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 border-emerald-500/25 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-700 dark:text-emerald-300"
+                          data-testid={`badge-mfa-${u.username}`}
+                        >
+                          <ShieldCheck className="h-3 w-3" />
+                          2FA
+                        </Badge>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground">@{u.username}</TableCell>
@@ -363,6 +395,15 @@ export function UsersPanel() {
                           <LogOut className="mr-2 h-4 w-4" />
                           {u.id === currentUser?.id ? "Boshqa seanslarimni yopish" : "Seanslarini yopish"}
                         </DropdownMenuItem>
+                        {u.id !== currentUser?.id && hasMfa.has(u.id) && (
+                          <DropdownMenuItem
+                            onClick={() => setResettingMfa(u)}
+                            data-testid={`button-reset-mfa-${u.username}`}
+                          >
+                            <ShieldOff className="mr-2 h-4 w-4" />
+                            2FA ni o'chirish
+                          </DropdownMenuItem>
+                        )}
                         {u.id !== currentUser?.id && (
                           <DropdownMenuItem className="text-destructive" onClick={() => setDeleting(u)}>
                             <Trash2 className="h-4 w-4 mr-2" />
@@ -529,6 +570,21 @@ export function UsersPanel() {
         }
         onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
         isPending={deleteMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={Boolean(resettingMfa)}
+        onOpenChange={(o) => !o && setResettingMfa(null)}
+        title="Ikki bosqichli kirishni o'chirish"
+        confirmLabel="2FA ni o'chirish"
+        description={
+          <>
+            <strong>{resettingMfa?.fullName}</strong> ning 2FA si o'chiriladi va barcha seanslari yopiladi. U parol
+            bilan kirib, 2FA ni qaytadan sozlaydi. Faqat xodimning shaxsini tasdiqlagandan keyin bajaring.
+          </>
+        }
+        onConfirm={() => resettingMfa && resetMfaMutation.mutate(resettingMfa)}
+        isPending={resetMfaMutation.isPending}
       />
     </div>
   );

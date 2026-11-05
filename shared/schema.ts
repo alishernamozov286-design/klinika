@@ -178,6 +178,34 @@ export const roles = pgTable("roles", {
   updatedBy: varchar("updated_by"),
 });
 
+/**
+ * Two-factor sign-in (TZ §12 "ikki bosqichli autentifikatsiya"), one row per
+ * user who has switched it on.
+ *
+ * A table of its own rather than columns on `users`: every query that reads a
+ * user row would otherwise carry the secret along, one forgotten `omit` away
+ * from the client — and a database not yet migrated would fail every login,
+ * where a missing table here only means "nobody has 2FA yet".
+ *
+ * - secret: the TOTP key, AES-256-GCM encrypted (server/mfa.ts). A database
+ *   dump alone does not let anyone generate codes.
+ * - lastUsedStep: the 30-second step of the last accepted code, so a code
+ *   seen over a shoulder cannot be replayed in the same window.
+ * - recoveryCodes: SHA-256 hashes of the one-time recovery codes; each is
+ *   removed when used.
+ */
+export const userMfa = pgTable("user_mfa", {
+  userId: varchar("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  secret: text("secret").notNull(),
+  lastUsedStep: integer("last_used_step").notNull().default(0),
+  recoveryCodes: text("recovery_codes").array().notNull().default(sql`'{}'::text[]`),
+  enabledAt: isoTimestamp("enabled_at").defaultNow().notNull(),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
+});
+
 /** Clinic departments (TZ §10 `departments`). */
 export const departments = pgTable("departments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -509,6 +537,22 @@ export const labSettings = pgTable("lab_settings", {
 export type User = typeof users.$inferSelect;
 export type PublicUser = Omit<User, "password">;
 
+export type UserMfa = typeof userMfa.$inferSelect;
+
+/** What a user (or the staff list) may know about a 2FA enrolment — never the secret. */
+export type MfaStatus = {
+  enabled: boolean;
+  enabledAt: string | null;
+  recoveryCodesLeft: number;
+  /** The user's role is on the "must use 2FA" list. */
+  required: boolean;
+  /** False until `npm run db:mfa` has created the table. */
+  available: boolean;
+};
+
+/** Shown once, right after enrolment or regeneration. */
+export type MfaSetup = { secret: string; otpauthUrl: string; qrDataUrl: string };
+
 export type RoleRecord = Omit<typeof roles.$inferSelect, "permissions"> & { permissions: Permission[] };
 
 /** A role as the admin screens list it: with how many staff currently hold it. */
@@ -522,7 +566,16 @@ export type RoleWithUsage = RoleRecord & { userCount: number };
 export type SessionUser = PublicUser & {
   roleName: string;
   permissions: Permission[];
+  /**
+   * Signed in, but the role requires two-factor sign-in and the user has not
+   * set it up yet: until they do, the server answers only the enrolment and
+   * sign-out calls (server/auth.ts requireMfaEnrollment).
+   */
+  mfaSetupRequired?: boolean;
 };
+
+/** /api/login's answer when the password was right and a code is still due. */
+export type MfaChallenge = { mfaRequired: true; fullName: string };
 
 export type Patient = typeof patients.$inferSelect;
 export type PatientContact = typeof patientContacts.$inferSelect;
@@ -1045,9 +1098,41 @@ export type UpdateDoctorInput = z.infer<typeof updateDoctorSchema>;
 export const securitySettingsSchema = z.object({
   sessionIdleMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(480, "Ko'pi bilan 8 soat"),
   sessionMaxHours: z.coerce.number().int().min(1, "Kamida 1 soat").max(168, "Ko'pi bilan 7 kun"),
+  /**
+   * Role keys whose holders must sign in with a second factor (TZ §12). Staff
+   * in these roles who have not enrolled are sent to the enrolment screen on
+   * their next sign-in; they cannot switch 2FA off.
+   */
+  mfaRequiredRoles: z
+    .array(z.string().trim().min(1).max(64))
+    .max(100)
+    .transform((keys) => [...new Set(keys)]),
 });
 export type SecuritySettings = z.infer<typeof securitySettingsSchema>;
-export const DEFAULT_SECURITY_SETTINGS: SecuritySettings = { sessionIdleMinutes: 30, sessionMaxHours: 12 };
+export const DEFAULT_SECURITY_SETTINGS: SecuritySettings = {
+  sessionIdleMinutes: 30,
+  sessionMaxHours: 12,
+  mfaRequiredRoles: [],
+};
+
+/**
+ * A code typed at sign-in or in the 2FA settings: either the six digits from
+ * the authenticator app or a recovery code ("ABCD-2345"). Spaces and dashes are
+ * forgiven — people copy them from wherever the code was shown.
+ */
+export const mfaCodeSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(1, "Kodni kiriting")
+    .max(32, "Kod juda uzun"),
+});
+
+export const mfaPasswordSchema = z.object({
+  password: z.string().min(1, "Joriy parolni kiriting"),
+});
+
+export const mfaDisableSchema = mfaPasswordSchema.merge(mfaCodeSchema);
 
 /** Why a session was ended — sent with the 401 so the login screen can say so. */
 export const SESSION_END_CODES = ["SESSION_IDLE", "SESSION_MAX", "SESSION_REVOKED"] as const;

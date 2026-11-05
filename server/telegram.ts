@@ -310,21 +310,55 @@ export async function telegramPhoneStatus(phone: string): Promise<TelegramPhoneS
  * mutually exclusive, so a deployed instance must never call this — it would
  * unregister the production webhook and steal every update.
  */
+/**
+ * Runs the bot in polling mode for as long as the process lives, and never
+ * lets it take the process down.
+ *
+ * bot.start() rejects when polling fails — most often a 409 "terminated by
+ * other getUpdates request", which is what Telegram answers when a second
+ * process polls with the same token, and also for ~30 s after a restart while
+ * the previous process's long poll is still open on Telegram's side. That
+ * rejection used to be unhandled and killed the whole clinic server. Now it is
+ * logged and polling resumes: after a conflict once the old long poll must
+ * have expired, after anything else (network) with growing back-off.
+ *
+ * Resolves only if the bot is stopped on purpose or a webhook is in charge.
+ */
 export async function startTelegramPolling(): Promise<void> {
   if (!telegramEnabled || telegramUsesWebhook) return;
-  const bot = getBot();
-  const hook = await bot.api.getWebhookInfo();
-  if (hook.url) {
-    log(`[telegram] webhook o'rnatilgan (${hook.url}) — polling ishga tushirilmadi`);
-    return;
+  let failures = 0;
+  for (;;) {
+    try {
+      const bot = getBot();
+      const hook = await bot.api.getWebhookInfo();
+      if (hook.url) {
+        log(`[telegram] webhook o'rnatilgan (${hook.url}) — polling ishga tushirilmadi`);
+        return;
+      }
+      const me = await telegramBotInfo();
+      await bot.start({
+        allowed_updates: ["message"],
+        drop_pending_updates: true,
+        onStart: () => {
+          failures = 0;
+          log(`[telegram] @${me?.username} polling rejimida ishlayapti`);
+        },
+      });
+      return; // stopped deliberately
+    } catch (err) {
+      failures++;
+      const conflict = err instanceof GrammyError && err.error_code === 409;
+      // A long poll lasts 30 s, so a conflict clears once it has expired.
+      const delay = conflict ? 35_000 : Math.min(300_000, 5_000 * 2 ** Math.min(failures - 1, 6));
+      const why = conflict
+        ? "shu token bilan boshqa nusxa ishlayapti yoki oldingi ulanish hali yopilmagan"
+        : err instanceof Error
+          ? err.message
+          : String(err);
+      console.warn(`[telegram] polling to'xtadi (${why}); ${Math.round(delay / 1000)} s dan keyin qayta uriniladi`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
-  const me = await telegramBotInfo();
-  // start() never resolves while the bot runs, so it is deliberately not awaited.
-  void bot.start({
-    allowed_updates: ["message"],
-    drop_pending_updates: true,
-    onStart: () => log(`[telegram] @${me?.username} polling rejimida ishlayapti`),
-  });
 }
 
 export type DeliveryResult = { sent: boolean; reason?: string };

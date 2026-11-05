@@ -47,6 +47,7 @@ import type {
   UpdateRoleInput,
   UpdateUserInput,
   User,
+  UserMfa,
 } from "@shared/schema";
 
 /** Local (not UTC) calendar day — the lab's own day is what reports count. */
@@ -298,6 +299,29 @@ export interface IStorage {
    * account nobody is signed in as.
    */
   setLockState(userId: string, state: LockState): Promise<void>;
+
+  // --- two-factor sign-in (B1.8, TZ §12). Secrets arrive already encrypted.
+
+  /** False until `npm run db:mfa` has created the table (Postgres only). */
+  mfaAvailable(): Promise<boolean>;
+  /** Undefined when the user has no 2FA — or when the table does not exist yet. */
+  getUserMfa(userId: string): Promise<UserMfa | undefined>;
+  /** Every enrolled user and since when — the staff list's 2FA column. */
+  listMfaEnrollments(): Promise<{ userId: string; enabledAt: string }[]>;
+  /** Creates or replaces the enrolment; `lastUsedStep` is the code that confirmed it. */
+  saveUserMfa(
+    input: { userId: string; secret: string; recoveryCodes: string[]; lastUsedStep: number },
+    actor: Actor,
+  ): Promise<UserMfa>;
+  replaceRecoveryCodes(userId: string, hashes: string[], actor: Actor): Promise<boolean>;
+  /**
+   * Records a code's step as used — only if it is newer than the last one.
+   * False means the code was already spent (a replay, or a parallel request).
+   */
+  consumeMfaStep(userId: string, step: number): Promise<boolean>;
+  /** Removes one recovery code; false when it was not (or no longer) there. */
+  consumeRecoveryCode(userId: string, hash: string): Promise<boolean>;
+  deleteUserMfa(userId: string): Promise<boolean>;
 
   /** Each row carries when the patient was last here and how many visits they have had. */
   listPatients(query?: PatientQuery): Promise<Paged<PatientListItem>>;

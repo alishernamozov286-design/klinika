@@ -43,7 +43,8 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `server/storage-types.ts`: `IStorage` interfeysi.
 - `server/storage-pg.ts`, `server/storage-file.ts`: **ikkala** implementatsiya. Yangi metod ikkalasiga ham yoziladi, aks holda tsc xato beradi. `storage-file.test.ts` fayl omborini testlaydi.
 - `server/routes.ts`: barcha API. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali.
-- `server/auth.ts`: sessiya, Passport, login blokirovkasi, `forgetSessionUser`.
+- `server/auth.ts`: sessiya, Passport, login blokirovkasi, `forgetSessionUser`, `requireMfaEnrollment`.
+- `server/mfa.ts`: TOTP, kalitni shifrlash, zaxira kodlar (B1.8).
 - `shared/permissions.ts`: **ruxsatlar katalogi** (`PERMISSIONS`) va TZ §3 dagi 11 ta rolning boshlang‘ich ruxsatlari (`SYSTEM_ROLES`).
 - `server/rbac.ts`: `requirePermission`, `hasPermission`, `toSessionUser`, rollar keshi (60 s, `invalidateRoles()`).
 - `client/src/lib/access.ts`: qaysi sahifa qaysi ruxsat bilan ochiladi (router, sidebar, command palette uchun yagona jadval).
@@ -89,9 +90,9 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-05. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 24 → ≈32%**.
+> Holat 2026-11-05. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 25 → ≈33%**.
 
-### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 80%
+### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 90%
 
 - [x] **B1.1** Ma'lumotlar bazasi: PostgreSQL + Drizzle, fayl ombori zaxira varianti.
 - [x] **B1.2** Login va parol: scrypt xesh, brute-force blokirovka (username+IP), eskalatsiyali bloklash.
@@ -118,7 +119,15 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Faol seanslar: Sozlamalar → Xavfsizlik (qurilma, IP, vaqt; bittasini yoki boshqalarini yopish). Admin xodimning barcha seanslarini yopa oladi. Parol almashganda / xodim bloklanganda seanslar avtomatik yopiladi.
   - Siyosat `app_settings` jadvalida (`security` kaliti), `settings.manage` bilan o'zgartiriladi. Migratsiya: `npm run db:security`; jadvalsiz standart siyosat ishlaydi.
   - Yo'l-yo'lakay: `ApiError` (toast'larda xom JSON o'rniga toza xabar), `npm run db:upgrade` (barcha migratsiyalar ketma-ket).
-- [ ] **B1.8** Ikki bosqichli autentifikatsiya (`§12`): TOTP (Google Authenticator), ixtiyoriy, rol bo‘yicha majburiy qilish imkoni bilan.
+- [x] **B1.8** Ikki bosqichli autentifikatsiya (`§12`): TOTP (Google Authenticator), ixtiyoriy, rol bo‘yicha majburiy qilish imkoni bilan.
+  - Yadro `server/mfa.ts` (RFC 6238, `node:crypto`; RFC test vektorlari bilan tekshirilgan). Kalit AES-256-GCM bilan shifrlanadi (`MFA_ENCRYPTION_KEY`, bo‘lmasa `SESSION_SECRET` dan), zaxira kodlar faqat SHA-256 xesh sifatida saqlanadi.
+  - `user_mfa` jadvali (alohida, `users` qatoriga sir tushmasin). Migratsiya: `npm run db:mfa` (`db:upgrade` ichida). Jadval yo‘q bo‘lsa kirish avvalgidek ishlaydi, hech kimda 2FA yo‘q deb hisoblanadi.
+  - Kirish: parol → `mfaRequired` → `POST /api/login/mfa` (6 xonali kod yoki zaxira kod). Noto‘g‘ri kod parol xatosi bilan **bir xil eskalatsiyali qulfga** hisoblanadi; kutish holati 5 daqiqa / 5 xato bilan tugaydi. Kod qadami bir marta ishlaydi (replay yo‘q), sarflash atomik (`UPDATE … WHERE last_used_step < $step`), parallel so‘rovda ham bittasi o‘tadi.
+  - Yoqish: Sozlamalar → Xavfsizlik (parol → QR → birinchi kod → 10 ta zaxira kod, bir marta ko‘rsatiladi). O‘chirish va zaxira kodlarni yangilash parol/kod talab qiladi. Boshqa qurilmalardagi seanslar yoqilganda yopiladi.
+  - Rol bo‘yicha majburiylik: `app_settings.security.mfaRequiredRoles` (Sozlamalar → "2FA ni majburiy qilish", `settings.manage`). Majburiy roldagi 2FA'siz xodim kirgach faqat sozlash ekrani (`MfaEnrollmentGate`) ochiladi; server qolgan barcha API'ni 403 `MFA_SETUP_REQUIRED` bilan yopadi (`requireMfaEnrollment`). Majburiy rol 2FA'ni o‘zi o‘chira olmaydi.
+  - Telefon yo‘qolsa: Xodimlar → "2FA ni o‘chirish" (`users.manage`; super adminnikini faqat super admin; seanslar yopiladi). Oxirgi chora: `npm run mfa:reset -- <login>`.
+  - Testlar: `server/mfa.test.ts` (14), `server/storage-file.test.ts` (2FA bloki), 42 ta API e2e tekshiruv (vaqtinchalik skript bilan).
+  - **Qoldi:** real Neon'da `npm run db:mfa` hali bajarilmagan (foydalanuvchi ruxsati kerak); brauzerda qo‘lda ko‘rib chiqish; `api/index.js` ni qayta yig‘ish (deploydan oldin).
 - [~] **B1.9** Bemor ID (`§4.2`): `patientNumber` bor. **Qoldi:** barcha yangi modullarda faqat shu ID orqali bog‘lanish (qabul mezoni 16.1).
 - [~] **B1.10** Umumiy ustunlar (`§10`): `updatedAt`/`updatedBy` qo'shildi — roles, departments, doctors, expenses, patients. **Qoldi:** orders, tests, payments.
 
@@ -244,4 +253,6 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B7.9 · Xarajatlar sahifasi to'liq; menyuda "Klinika" bo'limi (Shifokorlar, Bo'limlar, Xodimlar+Rollar alohida sahifalar); noma'lum /api yo'llari endi 404 JSON qaytaradi.
 - 2026-11-05 · B2.1–B2.3 · Bemor ma'lumotlari: tug'ilgan sana, hujjatlar, favqulodda aloqa, takroriy bemorni aniqlash va bloklash, kartalarni birlashtirish, oxirgi tashrif.
 - 2026-11-05 · B2.4–B2.5, B1.6 · Bemor kartasi sahifasi, tashriflar jadvali, kartani ochish jurnali.
+- 2026-11-05 · B1.8 · Ikki bosqichli autentifikatsiya: TOTP, zaxira kodlar, rol bo'yicha majburiylik, admin reset, qulf bilan bog'langan kod xatolari.
 - 2026-11-05 · fix · Postgres'dagi ichki so'rovlar: natijalar navbati (kutilmoqda/tayyor), tahlil nomi bo'yicha qidiruv, bemorlarning oxirgi tashrifi, bo'limlardagi shifokorlar soni noto'g'ri edi; tuzatildi va himoya testi qo'shildi.
+- 2026-11-05 · fix · Telegram polling 409 xatosi butun serverni o'chirardi; endi xato yoziladi va bot o'zi qayta ulanadi (409 da 35 s, boshqa xatolarda 5 s → 5 daq).

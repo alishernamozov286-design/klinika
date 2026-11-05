@@ -22,6 +22,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, RoleBadge } from "@/components/ui-kit";
 import { CommandPalette } from "@/components/command-palette";
 import { SessionGuard } from "@/components/session-guard";
+import { MfaEnrollmentGate } from "@/components/mfa-panel";
 import { OrderDialog } from "@/components/order-dialog";
 import { PatientDialog } from "@/components/patient-dialog";
 import { OrderDetailDialog } from "@/components/order-detail-dialog";
@@ -182,6 +183,17 @@ function Shell() {
 
   // Already signed in: /login has nothing to offer.
   if (location === "/login") return <Redirect to="/home" replace />;
+
+  // The role requires 2FA and it is not set up: nothing else is available
+  // until it is (the server refuses every other call too).
+  if (user.mfaSetupRequired) {
+    return (
+      <>
+        <MfaEnrollmentGate />
+        <SessionGuard />
+      </>
+    );
+  }
 
   const style = {
     "--sidebar-width": "16.5rem",

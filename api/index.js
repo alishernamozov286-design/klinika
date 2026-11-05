@@ -437,6 +437,9 @@ __export(schema_exports, {
   labSettingsSchema: () => labSettingsSchema,
   localDayString: () => localDayString,
   loginSchema: () => loginSchema,
+  mfaCodeSchema: () => mfaCodeSchema,
+  mfaDisableSchema: () => mfaDisableSchema,
+  mfaPasswordSchema: () => mfaPasswordSchema,
   nationalPhoneDigits: () => nationalPhoneDigits,
   normalizeUzPhone: () => normalizeUzPhone,
   orderTests: () => orderTests,
@@ -460,6 +463,7 @@ __export(schema_exports, {
   updateRoleSchema: () => updateRoleSchema,
   updateSampleSchema: () => updateSampleSchema,
   updateUserSchema: () => updateUserSchema,
+  userMfa: () => userMfa,
   users: () => users,
   visits: () => visits
 });
@@ -502,7 +506,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -599,6 +603,15 @@ var init_schema = __esm({
       /** One of the TZ §3 roles. These cannot be deleted; their key is fixed. */
       isSystem: boolean("is_system").notNull().default(false),
       createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
+    });
+    userMfa = pgTable("user_mfa", {
+      userId: varchar("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+      secret: text("secret").notNull(),
+      lastUsedStep: integer("last_used_step").notNull().default(0),
+      recoveryCodes: text("recovery_codes").array().notNull().default(sql`'{}'::text[]`),
+      enabledAt: isoTimestamp("enabled_at").defaultNow().notNull(),
       updatedAt: isoTimestamp("updated_at"),
       updatedBy: varchar("updated_by")
     });
@@ -1018,9 +1031,26 @@ var init_schema = __esm({
     updateDoctorSchema = insertDoctorSchema.omit({ userId: true }).partial();
     securitySettingsSchema = z.object({
       sessionIdleMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(480, "Ko'pi bilan 8 soat"),
-      sessionMaxHours: z.coerce.number().int().min(1, "Kamida 1 soat").max(168, "Ko'pi bilan 7 kun")
+      sessionMaxHours: z.coerce.number().int().min(1, "Kamida 1 soat").max(168, "Ko'pi bilan 7 kun"),
+      /**
+       * Role keys whose holders must sign in with a second factor (TZ §12). Staff
+       * in these roles who have not enrolled are sent to the enrolment screen on
+       * their next sign-in; they cannot switch 2FA off.
+       */
+      mfaRequiredRoles: z.array(z.string().trim().min(1).max(64)).max(100).transform((keys) => [...new Set(keys)])
     });
-    DEFAULT_SECURITY_SETTINGS = { sessionIdleMinutes: 30, sessionMaxHours: 12 };
+    DEFAULT_SECURITY_SETTINGS = {
+      sessionIdleMinutes: 30,
+      sessionMaxHours: 12,
+      mfaRequiredRoles: []
+    };
+    mfaCodeSchema = z.object({
+      code: z.string().trim().min(1, "Kodni kiriting").max(32, "Kod juda uzun")
+    });
+    mfaPasswordSchema = z.object({
+      password: z.string().min(1, "Joriy parolni kiriting")
+    });
+    mfaDisableSchema = mfaPasswordSchema.merge(mfaCodeSchema);
     SESSION_END_CODES = ["SESSION_IDLE", "SESSION_MAX", "SESSION_REVOKED"];
     loginSchema = z.object({
       username: z.string().trim().min(1, "Loginni kiriting"),
@@ -1898,6 +1928,70 @@ var init_storage_pg = __esm({
           // Stamped on every write so an admin can see when the trouble started.
           lastFailedAt: state.failedAttempts > 0 || state.lockedUntil ? (/* @__PURE__ */ new Date()).toISOString() : null
         }).where(eq(users.id, userId));
+      }
+      // ------------------------------------------------------------------ 2FA
+      async mfaAvailable() {
+        try {
+          await db.select({ userId: userMfa.userId }).from(userMfa).limit(1);
+          return true;
+        } catch (err) {
+          if (isMissingTable(err)) return false;
+          throw err;
+        }
+      }
+      async getUserMfa(userId) {
+        try {
+          const [row] = await db.select().from(userMfa).where(eq(userMfa.userId, userId)).limit(1);
+          return row;
+        } catch (err) {
+          if (isMissingTable(err)) return void 0;
+          throw err;
+        }
+      }
+      async listMfaEnrollments() {
+        try {
+          return await db.select({ userId: userMfa.userId, enabledAt: userMfa.enabledAt }).from(userMfa);
+        } catch (err) {
+          if (isMissingTable(err)) return [];
+          throw err;
+        }
+      }
+      async saveUserMfa(input, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const values = {
+          secret: input.secret,
+          recoveryCodes: input.recoveryCodes,
+          lastUsedStep: input.lastUsedStep,
+          enabledAt: now,
+          updatedAt: now,
+          updatedBy: actor.id
+        };
+        const [row] = await db.insert(userMfa).values({ userId: input.userId, ...values }).onConflictDoUpdate({ target: userMfa.userId, set: values }).returning();
+        return row;
+      }
+      async replaceRecoveryCodes(userId, hashes, actor) {
+        const rows = await db.update(userMfa).set({ recoveryCodes: hashes, updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id }).where(eq(userMfa.userId, userId)).returning({ userId: userMfa.userId });
+        return rows.length > 0;
+      }
+      async consumeMfaStep(userId, step) {
+        const rows = await db.update(userMfa).set({ lastUsedStep: step }).where(and(eq(userMfa.userId, userId), sql2`${userMfa.lastUsedStep} < ${step}`)).returning({ userId: userMfa.userId });
+        return rows.length > 0;
+      }
+      async consumeRecoveryCode(userId, hash) {
+        const rows = await db.update(userMfa).set({
+          recoveryCodes: sql2`array_remove(${userMfa.recoveryCodes}, ${hash})`,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(and(eq(userMfa.userId, userId), sql2`${hash} = ANY(${userMfa.recoveryCodes})`)).returning({ userId: userMfa.userId });
+        return rows.length > 0;
+      }
+      async deleteUserMfa(userId) {
+        try {
+          const rows = await db.delete(userMfa).where(eq(userMfa.userId, userId)).returning({ userId: userMfa.userId });
+          return rows.length > 0;
+        } catch (err) {
+          if (isMissingTable(err)) return false;
+          throw err;
+        }
       }
       // ------------------------------------------------------------- patients
       async listPatients(query = {}) {
@@ -2835,6 +2929,7 @@ var init_db = __esm({
     TMP_FILE = path.join(DATA_DIR, "db.tmp.json");
     emptyDb = () => ({
       users: [],
+      userMfa: [],
       roles: [],
       departments: [],
       doctors: [],
@@ -3237,6 +3332,7 @@ var init_storage_file = __esm({
         const before = this.db.users.length;
         this.db.users = this.db.users.filter((u) => u.id !== id);
         if (this.db.users.length === before) return false;
+        this.db.userMfa = this.db.userMfa.filter((m) => m.userId !== id);
         await this.persist();
         return true;
       }
@@ -4057,6 +4153,63 @@ var init_storage_file = __esm({
           byReferrer: Array.from(refAgg.entries()).map(([referrer, v]) => ({ referrer, patients: v.patients.size, revenue: v.revenue })).sort((a, b) => b.revenue - a.revenue).slice(0, 10)
         };
       }
+      // ------------------------------------------------------------------ 2FA
+      async mfaAvailable() {
+        return true;
+      }
+      async getUserMfa(userId) {
+        const row = this.db.userMfa.find((m) => m.userId === userId);
+        return row ? { ...row, recoveryCodes: [...row.recoveryCodes] } : void 0;
+      }
+      async listMfaEnrollments() {
+        return this.db.userMfa.map((m) => ({ userId: m.userId, enabledAt: m.enabledAt }));
+      }
+      async saveUserMfa(input, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const row = {
+          userId: input.userId,
+          secret: input.secret,
+          recoveryCodes: [...input.recoveryCodes],
+          lastUsedStep: input.lastUsedStep,
+          enabledAt: now,
+          updatedAt: now,
+          updatedBy: actor.id
+        };
+        this.db.userMfa = [...this.db.userMfa.filter((m) => m.userId !== input.userId), row];
+        await this.persist();
+        return { ...row, recoveryCodes: [...row.recoveryCodes] };
+      }
+      async replaceRecoveryCodes(userId, hashes, actor) {
+        const row = this.db.userMfa.find((m) => m.userId === userId);
+        if (!row) return false;
+        row.recoveryCodes = [...hashes];
+        row.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        row.updatedBy = actor.id;
+        await this.persist();
+        return true;
+      }
+      async consumeMfaStep(userId, step) {
+        const row = this.db.userMfa.find((m) => m.userId === userId);
+        if (!row || row.lastUsedStep >= step) return false;
+        row.lastUsedStep = step;
+        await this.persist();
+        return true;
+      }
+      async consumeRecoveryCode(userId, hash) {
+        const row = this.db.userMfa.find((m) => m.userId === userId);
+        if (!row || !row.recoveryCodes.includes(hash)) return false;
+        row.recoveryCodes = row.recoveryCodes.filter((h) => h !== hash);
+        row.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        await this.persist();
+        return true;
+      }
+      async deleteUserMfa(userId) {
+        const before = this.db.userMfa.length;
+        this.db.userMfa = this.db.userMfa.filter((m) => m.userId !== userId);
+        if (this.db.userMfa.length === before) return false;
+        await this.persist();
+        return true;
+      }
       // ------------------------------------------------------------- security
       async getSecuritySettings() {
         return { ...DEFAULT_SECURITY_SETTINGS, ...this.db.security ?? {} };
@@ -4476,6 +4629,16 @@ function setupAuth(app) {
   app.use(passport.initialize());
   app.use(passport.session());
   app.use("/api", enforceSessionPolicy());
+  app.use("/api", requireMfaEnrollment);
+}
+var ENROLMENT_PATHS = [/^\/user$/, /^\/logout$/, /^\/session\//, /^\/user\/mfa(\/|$)/];
+function requireMfaEnrollment(req, res, next) {
+  if (!req.isAuthenticated?.() || !req.session?.mfaSetupRequired) return next();
+  if (ENROLMENT_PATHS.some((re) => re.test(req.path))) return next();
+  res.status(403).json({
+    message: "Davom etish uchun ikki bosqichli autentifikatsiyani sozlang",
+    code: "MFA_SETUP_REQUIRED"
+  });
 }
 var MAX_ATTEMPTS = 8;
 var WINDOW_MS = 15 * 60 * 1e3;
@@ -4557,6 +4720,137 @@ function stamp() {
 // server/routes.ts
 init_patient_identity();
 init_password();
+import QRCode from "qrcode";
+
+// server/mfa.ts
+import { createCipheriv, createDecipheriv, createHash as createHash2, createHmac, randomBytes as randomBytes2, randomInt, timingSafeEqual as timingSafeEqual2 } from "crypto";
+var TOTP_DIGITS = 6;
+var TOTP_PERIOD_S = 30;
+var TOTP_WINDOW = 1;
+var RECOVERY_CODE_COUNT = 10;
+var MFA_ISSUER = "NEOGEN CLINIC";
+var B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function base32Encode(bytes) {
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (const byte of bytes) {
+    value = value << 8 | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[value >>> bits - 5 & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += B32[value << 5 - bits & 31];
+  return out;
+}
+function base32Decode(input) {
+  const clean = input.toUpperCase().replace(/[\s=-]/g, "");
+  let bits = 0;
+  let value = 0;
+  const out = [];
+  for (const ch of clean) {
+    const idx = B32.indexOf(ch);
+    if (idx < 0) throw new Error("Base32 kalit noto'g'ri");
+    value = value << 5 | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push(value >>> bits - 8 & 255);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(out);
+}
+function generateTotpSecret() {
+  return base32Encode(randomBytes2(20));
+}
+function hotp(key, counter, digits = TOTP_DIGITS) {
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(counter));
+  const mac = createHmac("sha1", key).update(msg).digest();
+  const offset = mac[mac.length - 1] & 15;
+  const bin = (mac[offset] & 127) << 24 | mac[offset + 1] << 16 | mac[offset + 2] << 8 | mac[offset + 3];
+  return String(bin % 10 ** digits).padStart(digits, "0");
+}
+var totpStep = (timeMs) => Math.floor(timeMs / 1e3 / TOTP_PERIOD_S);
+var sameString = (a, b) => a.length === b.length && timingSafeEqual2(Buffer.from(a), Buffer.from(b));
+function verifyTotp(secret, code, opts = {}) {
+  const digits = code.replace(/\s/g, "");
+  if (!/^\d{6}$/.test(digits)) return null;
+  const key = base32Decode(secret);
+  const current = totpStep(opts.now ?? Date.now());
+  for (let delta = -TOTP_WINDOW; delta <= TOTP_WINDOW; delta++) {
+    const step = current + delta;
+    if (step <= (opts.lastUsedStep ?? 0)) continue;
+    if (sameString(hotp(key, step), digits)) return step;
+  }
+  return null;
+}
+function otpauthUrl(account, secret, issuer = MFA_ISSUER) {
+  const label = encodeURIComponent(`${issuer}:${account}`);
+  const params = new URLSearchParams({
+    secret,
+    issuer,
+    algorithm: "SHA1",
+    digits: String(TOTP_DIGITS),
+    period: String(TOTP_PERIOD_S)
+  });
+  return `otpauth://totp/${label}?${params.toString()}`;
+}
+function encryptionKey() {
+  const material = process.env.MFA_ENCRYPTION_KEY ?? process.env.SESSION_SECRET ?? "medlab-dev-secret-change-in-production";
+  return createHash2("sha256").update(`neogen-mfa:${material}`).digest();
+}
+function encryptSecret(plain) {
+  const iv = randomBytes2(12);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return ["v1", iv.toString("base64url"), tag.toString("base64url"), ct.toString("base64url")].join(".");
+}
+function decryptSecret(stored) {
+  const [version, iv, tag, ct] = stored.split(".");
+  if (version !== "v1" || !iv || !tag || !ct) return null;
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(iv, "base64url"));
+    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+var RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function normalizeRecoveryCode(code) {
+  return code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function hashRecoveryCode(code) {
+  return createHash2("sha256").update(`neogen-recovery:${normalizeRecoveryCode(code)}`).digest("hex");
+}
+function generateRecoveryCodes(count = RECOVERY_CODE_COUNT) {
+  const codes = [];
+  while (codes.length < count) {
+    let raw = "";
+    for (let i = 0; i < 8; i++) raw += RECOVERY_ALPHABET[randomInt(RECOVERY_ALPHABET.length)];
+    const code = `${raw.slice(0, 4)}-${raw.slice(4)}`;
+    if (!codes.includes(code)) codes.push(code);
+  }
+  return { codes, hashes: codes.map(hashRecoveryCode) };
+}
+function looksLikeTotp(code) {
+  return /^\d{6}$/.test(code.replace(/\s/g, ""));
+}
+function checkMfaCode(record, code, now = Date.now()) {
+  if (looksLikeTotp(code)) {
+    const secret = decryptSecret(record.secret);
+    if (!secret) return { ok: false, reason: "unreadable" };
+    const step = verifyTotp(secret, code, { now, lastUsedStep: record.lastUsedStep });
+    return step === null ? { ok: false, reason: "invalid" } : { ok: true, kind: "totp", step };
+  }
+  if (normalizeRecoveryCode(code).length !== 8) return { ok: false, reason: "invalid" };
+  const hash = hashRecoveryCode(code);
+  return record.recoveryCodes.some((h) => sameString(h, hash)) ? { ok: true, kind: "recovery", hash } : { ok: false, reason: "invalid" };
+}
 
 // server/telegram.ts
 init_schema();
@@ -4875,6 +5169,49 @@ async function registerRoutes(app) {
       res.json(await telegramPhoneStatus(phone));
     })
   );
+  const MFA_PENDING_TTL_MS = 5 * 6e4;
+  const MFA_SETUP_TTL_MS = 10 * 6e4;
+  const MFA_MAX_ATTEMPTS = 5;
+  const MFA_NOT_MIGRATED = "Ikki bosqichli kirish uchun ma'lumotlar bazasi yangilanmagan. Administrator npm run db:mfa ni bajarishi kerak";
+  const mfaRequiredFor = async (role) => (await getSessionPolicy()).mfaRequiredRoles.includes(role) && await storage.mfaAvailable();
+  const mfaStatusOf = async (userId, role) => {
+    const [record, available, policy2] = await Promise.all([
+      storage.getUserMfa(userId),
+      storage.mfaAvailable(),
+      getSessionPolicy()
+    ]);
+    return {
+      enabled: Boolean(record),
+      enabledAt: record?.enabledAt ?? null,
+      recoveryCodesLeft: record?.recoveryCodes.length ?? 0,
+      required: policy2.mfaRequiredRoles.includes(role),
+      available
+    };
+  };
+  const verifyAndConsume = async (record, code) => {
+    const check = checkMfaCode(record, code);
+    if (!check.ok) return check.reason;
+    const spent = check.kind === "totp" ? await storage.consumeMfaStep(record.userId, check.step) : await storage.consumeRecoveryCode(record.userId, check.hash);
+    return spent ? check.kind : "invalid";
+  };
+  const codeAccepted = (r) => r === "totp" || r === "recovery";
+  const completeLogin = (req, res, next, user, account, opts) => {
+    req.logIn(user, async (loginErr) => {
+      if (loginErr) return next(loginErr);
+      try {
+        stampSession(req);
+        if (opts.mustEnrol) req.session.mfaSetupRequired = true;
+        if (account && (account.failedAttempts > 0 || account.lockLevel > 0)) {
+          await storage.setLockState(account.id, registerSuccess());
+        }
+        void audit(req, "login", "auth", user.id, `${user.fullName} tizimga kirdi${opts.how}`);
+        const body = { ...user, mfaSetupRequired: opts.mustEnrol || void 0 };
+        res.json(body);
+      } catch (err) {
+        next(err);
+      }
+    });
+  };
   app.post("/api/login", loginRateLimit, (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -4925,18 +5262,89 @@ async function registerRoutes(app) {
               attemptsLeft: left
             });
           }
-          request.logIn(user, async (loginErr) => {
-            if (loginErr) return next(loginErr);
-            stampSession(request);
+          try {
             clearFailedLogins(request);
-            if (account && (account.failedAttempts > 0 || account.lockLevel > 0)) {
-              await storage.setLockState(account.id, registerSuccess());
+            if (await storage.getUserMfa(user.id)) {
+              request.session.mfaPending = { userId: user.id, at: Date.now(), attempts: 0 };
+              const challenge = { mfaRequired: true, fullName: user.fullName };
+              return request.session.save((saveErr) => saveErr ? next(saveErr) : response.json(challenge));
             }
-            void audit(request, "login", "auth", user.id, `${user.fullName} tizimga kirdi`);
-            response.json(user);
-          });
+            completeLogin(request, response, next, user, account, {
+              mustEnrol: await mfaRequiredFor(user.role),
+              how: ""
+            });
+          } catch (e) {
+            next(e);
+          }
         }
       )(request, response, next);
+    })(req, res, next);
+  });
+  app.post("/api/login/mfa", (req, res, next) => {
+    handle(async (request, response) => {
+      const { code } = mfaCodeSchema.parse(request.body);
+      const pending = request.session.mfaPending;
+      const restart = (message) => {
+        delete request.session.mfaPending;
+        return response.status(401).json({ message, code: "MFA_EXPIRED" });
+      };
+      if (!pending || Date.now() - pending.at > MFA_PENDING_TTL_MS) {
+        return restart("Kirish muddati tugadi. Login va parolni qaytadan kiriting");
+      }
+      const account = await storage.getUser(pending.userId);
+      if (!account || !account.isActive) return restart("Login yoki parol noto'g'ri");
+      const remaining = lockRemainingMs(account.lockedUntil);
+      if (remaining > 0) {
+        delete request.session.mfaPending;
+        return response.status(423).json({
+          message: lockMessage(remaining, isFinalLock(account)),
+          lockedUntil: account.lockedUntil
+        });
+      }
+      const record = await storage.getUserMfa(account.id);
+      if (!record) return restart("Kirish muddati tugadi. Login va parolni qaytadan kiriting");
+      const result = await verifyAndConsume(record, code);
+      if (result === "unreadable") {
+        console.error(
+          `[mfa] ${account.username}: secret cannot be decrypted (MFA_ENCRYPTION_KEY / SESSION_SECRET changed?)`
+        );
+        delete request.session.mfaPending;
+        return response.status(500).json({
+          message: "Ikki bosqichli kirish kalitini o'qib bo'lmadi. Administrator 2FA ni qayta o'rnatishi kerak"
+        });
+      }
+      if (result === "invalid") {
+        const decision = registerFailure(account);
+        await storage.setLockState(account.id, decision);
+        if (decision.justLocked) {
+          delete request.session.mfaPending;
+          await audit(
+            request,
+            "login",
+            "auth",
+            account.id,
+            `${account.fullName} hisobi qulflandi \u2014 noto'g'ri 2FA kodi (${formatLockRemaining(decision.lockedForMs ?? 0)})`
+          );
+          return response.status(423).json({
+            message: lockMessage(decision.lockedForMs ?? 0, isFinalLock(decision)),
+            lockedUntil: decision.lockedUntil
+          });
+        }
+        pending.attempts += 1;
+        if (pending.attempts >= MFA_MAX_ATTEMPTS) {
+          return restart("Juda ko'p noto'g'ri kod. Login va parolni qaytadan kiriting");
+        }
+        const left = decision.lockLevel > 0 ? 1 : ATTEMPTS_BEFORE_LOCK - decision.failedAttempts;
+        return response.status(401).json({
+          message: "Kod noto'g'ri yoki eskirgan",
+          warning: attemptsLeftMessage(left, decision.lockLevel),
+          attemptsLeft: left
+        });
+      }
+      const { password: _password, ...pub } = account;
+      const user = await toSessionUser(pub);
+      const how = result === "recovery" ? ` (zaxira kod bilan; ${Math.max(0, record.recoveryCodes.length - 1)} ta qoldi)` : " (2FA)";
+      completeLogin(request, response, next, user, account, { mustEnrol: false, how });
     })(req, res, next);
   });
   app.post(
@@ -4970,8 +5378,125 @@ async function registerRoutes(app) {
   });
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated?.()) return res.status(401).json({ message: "Avval tizimga kiring" });
-    res.json(req.user);
+    const me = { ...req.user, mfaSetupRequired: req.session.mfaSetupRequired || void 0 };
+    res.json(me);
   });
+  app.get(
+    "/api/user/mfa",
+    requireAuth,
+    handle(async (req, res) => {
+      res.json(await mfaStatusOf(req.user.id, req.user.role));
+    })
+  );
+  app.post(
+    "/api/user/mfa/setup",
+    requireAuth,
+    handle(async (req, res) => {
+      const { password } = mfaPasswordSchema.parse(req.body);
+      const me = req.user;
+      const full = await storage.getUser(me.id);
+      if (!full) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (!await verifyPassword(password, full.password)) {
+        return res.status(400).json({ message: "Joriy parol noto'g'ri" });
+      }
+      if (!await storage.mfaAvailable()) return res.status(503).json({ message: MFA_NOT_MIGRATED });
+      if (await storage.getUserMfa(me.id)) {
+        return res.status(409).json({ message: "Ikki bosqichli kirish allaqachon yoqilgan" });
+      }
+      const secret = generateTotpSecret();
+      const url = otpauthUrl(me.username, secret);
+      req.session.mfaSetup = { secret: encryptSecret(secret), at: Date.now() };
+      const setup = {
+        secret,
+        otpauthUrl: url,
+        qrDataUrl: await QRCode.toDataURL(url, { margin: 1, width: 240, errorCorrectionLevel: "M" })
+      };
+      res.json(setup);
+    })
+  );
+  app.post(
+    "/api/user/mfa/enable",
+    requireAuth,
+    handle(async (req, res) => {
+      const { code } = mfaCodeSchema.parse(req.body);
+      const me = req.user;
+      const setup = req.session.mfaSetup;
+      if (!setup || Date.now() - setup.at > MFA_SETUP_TTL_MS) {
+        delete req.session.mfaSetup;
+        return res.status(400).json({ message: "Sozlash muddati tugadi. Qaytadan boshlang" });
+      }
+      const secret = decryptSecret(setup.secret);
+      const step = secret ? verifyTotp(secret, code) : null;
+      if (step === null) {
+        return res.status(400).json({
+          message: "Kod noto'g'ri. Ilovadagi joriy kodni kiriting va telefon vaqti to'g'riligini tekshiring"
+        });
+      }
+      if (await storage.getUserMfa(me.id)) {
+        delete req.session.mfaSetup;
+        return res.status(409).json({ message: "Ikki bosqichli kirish allaqachon yoqilgan" });
+      }
+      const { codes, hashes } = generateRecoveryCodes();
+      await storage.saveUserMfa(
+        { userId: me.id, secret: setup.secret, recoveryCodes: hashes, lastUsedStep: step },
+        actorOf(req)
+      );
+      delete req.session.mfaSetup;
+      delete req.session.mfaSetupRequired;
+      const ended = await revokeUserSessions(sessionStore, sessionPool, me.id, { keepSid: req.sessionID });
+      await audit(
+        req,
+        "update",
+        "user",
+        me.id,
+        `${me.fullName} ikki bosqichli autentifikatsiyani yoqdi${ended ? ` (${ended} ta boshqa seans yopildi)` : ""}`
+      );
+      res.json({ recoveryCodes: codes, endedSessions: ended });
+    })
+  );
+  app.post(
+    "/api/user/mfa/disable",
+    requireAuth,
+    handle(async (req, res) => {
+      const { password, code } = mfaDisableSchema.parse(req.body);
+      const me = req.user;
+      if ((await getSessionPolicy()).mfaRequiredRoles.includes(me.role)) {
+        return res.status(403).json({
+          message: "Rolingiz uchun ikki bosqichli kirish majburiy. Telefon almashgan bo'lsa, administrator 2FA ni qayta o'rnatadi"
+        });
+      }
+      const full = await storage.getUser(me.id);
+      if (!full) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (!await verifyPassword(password, full.password)) {
+        return res.status(400).json({ message: "Joriy parol noto'g'ri" });
+      }
+      const record = await storage.getUserMfa(me.id);
+      if (!record) return res.status(404).json({ message: "Ikki bosqichli kirish yoqilmagan" });
+      if (!codeAccepted(await verifyAndConsume(record, code))) {
+        return res.status(400).json({ message: "Kod noto'g'ri yoki eskirgan" });
+      }
+      await storage.deleteUserMfa(me.id);
+      await audit(req, "update", "user", me.id, `${me.fullName} ikki bosqichli autentifikatsiyani o'chirdi`);
+      res.sendStatus(204);
+    })
+  );
+  app.post(
+    "/api/user/mfa/recovery-codes",
+    requireAuth,
+    handle(async (req, res) => {
+      const { code } = mfaCodeSchema.parse(req.body);
+      const me = req.user;
+      const record = await storage.getUserMfa(me.id);
+      if (!record) return res.status(404).json({ message: "Ikki bosqichli kirish yoqilmagan" });
+      if (!codeAccepted(await verifyAndConsume(record, code))) {
+        return res.status(400).json({ message: "Kod noto'g'ri yoki eskirgan" });
+      }
+      const { codes, hashes } = generateRecoveryCodes();
+      await storage.replaceRecoveryCodes(me.id, hashes, actorOf(req));
+      await audit(req, "update", "user", me.id, `${me.fullName} yangi zaxira kodlar yaratdi`);
+      res.json({ recoveryCodes: codes });
+    })
+  );
   app.get(
     "/api/patients",
     requirePermission("patients.read"),
@@ -5894,7 +6419,8 @@ async function registerRoutes(app) {
   const labelList = (list) => list.map((p) => `${PERMISSION_GROUP_LABEL[PERMISSIONS[p].group]}: ${PERMISSIONS[p].label}`).join(", ");
   app.get(
     "/api/roles",
-    requirePermission("users.manage", "roles.manage"),
+    // settings.manage: the 2FA policy is set per role.
+    requirePermission("users.manage", "roles.manage", "settings.manage"),
     handle(async (_req, res) => {
       res.json(await storage.listRoles());
     })
@@ -6015,6 +6541,39 @@ async function registerRoutes(app) {
       res.json({ ended });
     })
   );
+  app.get(
+    "/api/users/mfa",
+    requirePermission("users.manage"),
+    handle(async (_req, res) => {
+      res.json(await storage.listMfaEnrollments());
+    })
+  );
+  app.post(
+    "/api/users/:id/mfa/reset",
+    requirePermission("users.manage"),
+    handle(async (req, res) => {
+      const target = await storage.getUser(req.params.id);
+      if (!target) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
+      if (target.id === req.user.id) {
+        return res.status(400).json({ message: "O'z hisobingiz uchun Sozlamalar \u2192 Xavfsizlik bo'limidan foydalaning" });
+      }
+      if ((target.role === SUPER_ADMIN || target.role === LEGACY_ADMIN) && !isSuperAdmin(req)) {
+        return res.status(403).json({ message: "Super administrator 2FA sini faqat super administrator o'chira oladi" });
+      }
+      if (!await storage.deleteUserMfa(target.id)) {
+        return res.status(404).json({ message: "Bu xodimda ikki bosqichli kirish yoqilmagan" });
+      }
+      const ended = await revokeUserSessions(sessionStore, sessionPool, target.id);
+      await audit(
+        req,
+        "update",
+        "user",
+        target.id,
+        `${target.fullName} \u2014 ikki bosqichli kirish administrator tomonidan o'chirildi${ended ? ` (${ended} ta seans yopildi)` : ""}`
+      );
+      res.json({ ended });
+    })
+  );
   app.post(
     "/api/users/:id/sessions/revoke",
     requirePermission("users.manage"),
@@ -6041,17 +6600,33 @@ async function registerRoutes(app) {
     "/api/settings/security",
     requirePermission("settings.manage"),
     handle(async (req, res) => {
-      const input = securitySettingsSchema.parse(req.body);
       const before = await storage.getSecuritySettings();
+      const input = securitySettingsSchema.parse({
+        ...before,
+        ...securitySettingsSchema.partial().parse(req.body)
+      });
+      const added = input.mfaRequiredRoles.filter((k) => !before.mfaRequiredRoles.includes(k));
+      const removed = before.mfaRequiredRoles.filter((k) => !input.mfaRequiredRoles.includes(k));
+      const roleList = await storage.listRoles();
+      const roleName = new Map(roleList.map((r) => [r.key, r.name]));
+      const unknown = added.filter((k) => !roleName.has(k));
+      if (unknown.length) return res.status(400).json({ message: `Noma'lum rol: ${unknown.join(", ")}` });
+      if (added.length && !await storage.mfaAvailable()) return res.status(503).json({ message: MFA_NOT_MIGRATED });
       const saved = await storage.updateSecuritySettings(input, actorOf(req));
       invalidateSessionPolicy();
-      await audit(
-        req,
-        "update",
-        "settings",
-        "security",
-        `Seans siyosati: faolsizlik ${before.sessionIdleMinutes} \u2192 ${saved.sessionIdleMinutes} daq., maksimal ${before.sessionMaxHours} \u2192 ${saved.sessionMaxHours} soat`
-      );
+      const changes = [];
+      if (before.sessionIdleMinutes !== saved.sessionIdleMinutes) {
+        changes.push(`faolsizlik ${before.sessionIdleMinutes} \u2192 ${saved.sessionIdleMinutes} daq.`);
+      }
+      if (before.sessionMaxHours !== saved.sessionMaxHours) {
+        changes.push(`maksimal ${before.sessionMaxHours} \u2192 ${saved.sessionMaxHours} soat`);
+      }
+      const names = (keys) => keys.map((k) => roleName.get(k) ?? k).join(", ");
+      if (added.length) changes.push(`2FA majburiy: ${names(added)}`);
+      if (removed.length) changes.push(`2FA ixtiyoriy: ${names(removed)}`);
+      if (changes.length) {
+        await audit(req, "update", "settings", "security", `Xavfsizlik siyosati: ${changes.join("; ")}`);
+      }
       res.json(saved);
     })
   );

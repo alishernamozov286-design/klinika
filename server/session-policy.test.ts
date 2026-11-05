@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./storage", () => ({
-  storage: { getSecuritySettings: async () => ({ sessionIdleMinutes: 30, sessionMaxHours: 12 }) },
+  storage: { getSecuritySettings: async () => ({ sessionIdleMinutes: 30, sessionMaxHours: 12, mfaRequiredRoles: [] }) },
 }));
 
 const { enforceSessionPolicy, invalidateSessionPolicy, publicSessionId } = await import("./session-policy");

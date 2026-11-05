@@ -45,6 +45,7 @@ import type {
   UpdateSampleInput,
   UpdateUserInput,
   User,
+  UserMfa,
   Visit,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
@@ -509,6 +510,8 @@ export class FileStorage implements IStorage {
     const before = this.db.users.length;
     this.db.users = this.db.users.filter((u) => u.id !== id);
     if (this.db.users.length === before) return false;
+    // ON DELETE CASCADE, as in Postgres.
+    this.db.userMfa = this.db.userMfa.filter((m) => m.userId !== id);
     await this.persist();
     return true;
   }
@@ -1536,6 +1539,77 @@ export class FileStorage implements IStorage {
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, 10),
     };
+  }
+
+  // ------------------------------------------------------------------ 2FA
+
+  async mfaAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async getUserMfa(userId: string): Promise<UserMfa | undefined> {
+    const row = this.db.userMfa.find((m) => m.userId === userId);
+    return row ? { ...row, recoveryCodes: [...row.recoveryCodes] } : undefined;
+  }
+
+  async listMfaEnrollments(): Promise<{ userId: string; enabledAt: string }[]> {
+    return this.db.userMfa.map((m) => ({ userId: m.userId, enabledAt: m.enabledAt }));
+  }
+
+  async saveUserMfa(
+    input: { userId: string; secret: string; recoveryCodes: string[]; lastUsedStep: number },
+    actor: Actor,
+  ): Promise<UserMfa> {
+    const now = new Date().toISOString();
+    const row: UserMfa = {
+      userId: input.userId,
+      secret: input.secret,
+      recoveryCodes: [...input.recoveryCodes],
+      lastUsedStep: input.lastUsedStep,
+      enabledAt: now,
+      updatedAt: now,
+      updatedBy: actor.id,
+    };
+    this.db.userMfa = [...this.db.userMfa.filter((m) => m.userId !== input.userId), row];
+    await this.persist();
+    return { ...row, recoveryCodes: [...row.recoveryCodes] };
+  }
+
+  async replaceRecoveryCodes(userId: string, hashes: string[], actor: Actor): Promise<boolean> {
+    const row = this.db.userMfa.find((m) => m.userId === userId);
+    if (!row) return false;
+    row.recoveryCodes = [...hashes];
+    row.updatedAt = new Date().toISOString();
+    row.updatedBy = actor.id;
+    await this.persist();
+    return true;
+  }
+
+  async consumeMfaStep(userId: string, step: number): Promise<boolean> {
+    // Check and write happen in one synchronous stretch, so no other request
+    // can slip in between them on this single-process store.
+    const row = this.db.userMfa.find((m) => m.userId === userId);
+    if (!row || row.lastUsedStep >= step) return false;
+    row.lastUsedStep = step;
+    await this.persist();
+    return true;
+  }
+
+  async consumeRecoveryCode(userId: string, hash: string): Promise<boolean> {
+    const row = this.db.userMfa.find((m) => m.userId === userId);
+    if (!row || !row.recoveryCodes.includes(hash)) return false;
+    row.recoveryCodes = row.recoveryCodes.filter((h) => h !== hash);
+    row.updatedAt = new Date().toISOString();
+    await this.persist();
+    return true;
+  }
+
+  async deleteUserMfa(userId: string): Promise<boolean> {
+    const before = this.db.userMfa.length;
+    this.db.userMfa = this.db.userMfa.filter((m) => m.userId !== userId);
+    if (this.db.userMfa.length === before) return false;
+    await this.persist();
+    return true;
   }
 
   // ------------------------------------------------------------- security
