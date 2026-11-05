@@ -70,6 +70,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   5. `super_admin` hamma ruxsatni avtomatik oladi, unga qo‘shish shart emas.
 - Rol kalitlari: `super_admin`, `rahbar`, `registrator`, `shifokor`, `laborant`, `lab_mudiri`, `omborchi`, `hamshira`, `kassir`, `buxgalter`, `auditor`. Eski `admin` = `super_admin` (`canonicalRoleKey`).
 - Baza masofaviy (Neon, so‘rov 0.3–1.8 s): bitta sahifa uchun bir nechta ketma-ket so‘rov qilma, JOIN yoki bitta CTE bilan ol.
+- **Drizzle tuzog'i:** bitta jadvalli `select` ichida `${table.column}` jadval nomisiz yoziladi. Ichki so'rovda (`(SELECT …)`, `EXISTS`) tashqi ustunni hech qachon `${…}` bilan yozma — `"orders"."id"` kabi aniq nom va ichkarida taxallus ishlat. `server/storage-pg-sql.test.ts` buni tekshiradi. Fayl ombori testlari bu xatoni ko'rmaydi, shuning uchun Postgres so'rovlarini haqiqiy bazada ham tekshir.
 - Migratsiya: sxema o‘zgarsa mavjud ma'lumotni buzmasin (yangi ustunlar nullable yoki default bilan). Real bazaga `db:push` qilishdan oldin foydalanuvchidan so‘ra.
 
 ---
@@ -243,3 +244,4 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B7.9 · Xarajatlar sahifasi to'liq; menyuda "Klinika" bo'limi (Shifokorlar, Bo'limlar, Xodimlar+Rollar alohida sahifalar); noma'lum /api yo'llari endi 404 JSON qaytaradi.
 - 2026-11-05 · B2.1–B2.3 · Bemor ma'lumotlari: tug'ilgan sana, hujjatlar, favqulodda aloqa, takroriy bemorni aniqlash va bloklash, kartalarni birlashtirish, oxirgi tashrif.
 - 2026-11-05 · B2.4–B2.5, B1.6 · Bemor kartasi sahifasi, tashriflar jadvali, kartani ochish jurnali.
+- 2026-11-05 · fix · Postgres'dagi ichki so'rovlar: natijalar navbati (kutilmoqda/tayyor), tahlil nomi bo'yicha qidiruv, bemorlarning oxirgi tashrifi, bo'limlardagi shifokorlar soni noto'g'ri edi; tuzatildi va himoya testi qo'shildi.

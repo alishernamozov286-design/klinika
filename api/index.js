@@ -1728,7 +1728,7 @@ var init_storage_pg = __esm({
       async listRoles() {
         const rows = await db.select({
           role: roles,
-          userCount: sql2`(SELECT count(*)::int FROM ${users} WHERE ${users.role} = ${roles.key})`
+          userCount: sql2`(SELECT count(*)::int FROM ${users} u WHERE u.role = "roles"."key")`
         }).from(roles);
         return sortRoles(rows.map((r) => ({ ...mapRole(r.role), userCount: r.userCount })));
       }
@@ -1766,7 +1766,7 @@ var init_storage_pg = __esm({
       async listDepartments() {
         const rows = await db.select({
           dept: departments,
-          doctorCount: sql2`(SELECT count(*)::int FROM ${doctors} WHERE ${doctors.departmentId} = ${departments.id})`
+          doctorCount: sql2`(SELECT count(*)::int FROM ${doctors} d WHERE d.department_id = "departments"."id")`
         }).from(departments).orderBy(desc(departments.isActive), asc(departments.name));
         return rows.map((r) => ({ ...mapDepartment(r.dept), doctorCount: r.doctorCount }));
       }
@@ -1923,12 +1923,12 @@ var init_storage_pg = __esm({
         }
         let q = db.select({
           patient: patients,
-          lastVisitAt: sql2`(SELECT max(${orders.createdAt}) FROM ${orders}
-          WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
+          lastVisitAt: sql2`(SELECT max(o.created_at) FROM ${orders} o
+          WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`,
           // A visit is a day at the clinic, however many orders it had.
-          visitCount: sql2`(SELECT count(DISTINCT coalesce(${orders.visitId},
-            ((${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
-          FROM ${orders} WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`
+          visitCount: sql2`(SELECT count(DISTINCT coalesce(o.visit_id,
+            ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
+          FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`
         }).from(patients).where(where).orderBy(desc(patients.createdAt), desc(patients.patientNumber)).$dynamic();
         if (query.limit !== void 0) q = q.limit(query.limit);
         if (query.offset) q = q.offset(query.offset);
@@ -2169,18 +2169,18 @@ var init_storage_pg = __esm({
           const phoneDigits = digits.length >= 3 ? sql2` OR regexp_replace(p.phone, '[^0-9]', '', 'g') LIKE ${"%" + digits + "%"}` : sql2``;
           base.push(sql2`(
         EXISTS (SELECT 1 FROM ${patients} p
-                WHERE p.id = ${orders.patientId}
+                WHERE p.id = "orders"."patient_id"
                   AND (p.full_name ILIKE ${like} OR p.phone ILIKE ${like}${phoneDigits}))
         OR ${orders.orderNumber}::text ILIKE ${like}
         OR EXISTS (SELECT 1 FROM ${orderTests} ot
-                   WHERE ot.order_id = ${orders.id} AND ot.test_name ILIKE ${like})
+                   WHERE ot.order_id = "orders"."id" AND ot.test_name ILIKE ${like})
       )`);
         }
         const baseWhere = base.length ? and(...base) : void 0;
         const notCancelled = sql2`${orders.status} <> 'cancelled'`;
-        const hasItems = sql2`EXISTS (SELECT 1 FROM ${orderTests} ot WHERE ot.order_id = ${orders.id})`;
+        const hasItems = sql2`EXISTS (SELECT 1 FROM ${orderTests} ot WHERE ot.order_id = "orders"."id")`;
         const hasBlank = sql2`EXISTS (SELECT 1 FROM ${orderTests} ot
-                                 WHERE ot.order_id = ${orders.id}
+                                 WHERE ot.order_id = "orders"."id"
                                    AND (ot.result IS NULL OR ot.result = ''))`;
         const readyExpr = sql2`(${hasItems} AND NOT ${hasBlank})`;
         const conditions = [...base];

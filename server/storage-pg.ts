@@ -215,6 +215,14 @@ export function isMissingTable(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "42P01";
 }
 
+/*
+ * Correlated subqueries below name their tables explicitly ("orders"."id",
+ * aliases inside). Drizzle renders `${table.column}` WITHOUT the table name
+ * in a single-table select, so `ot.order_id = ${orders.id}` became
+ * `ot.order_id = "id"` — which Postgres resolves to the subquery's own id
+ * column, silently matching nothing. Never interpolate an outer column into
+ * a subquery here; write the qualified name.
+ */
 export class PgStorage implements IStorage {
   async seed(): Promise<SeedResult> {
     let createdTests = 0;
@@ -303,7 +311,7 @@ export class PgStorage implements IStorage {
     const rows = await db
       .select({
         role: roles,
-        userCount: sql<number>`(SELECT count(*)::int FROM ${users} WHERE ${users.role} = ${roles.key})`,
+        userCount: sql<number>`(SELECT count(*)::int FROM ${users} u WHERE u.role = "roles"."key")`,
       })
       .from(roles);
     return sortRoles(rows.map((r) => ({ ...mapRole(r.role), userCount: r.userCount })));
@@ -355,7 +363,7 @@ export class PgStorage implements IStorage {
     const rows = await db
       .select({
         dept: departments,
-        doctorCount: sql<number>`(SELECT count(*)::int FROM ${doctors} WHERE ${doctors.departmentId} = ${departments.id})`,
+        doctorCount: sql<number>`(SELECT count(*)::int FROM ${doctors} d WHERE d.department_id = "departments"."id")`,
       })
       .from(departments)
       .orderBy(desc(departments.isActive), asc(departments.name));
@@ -560,12 +568,12 @@ export class PgStorage implements IStorage {
     let q = db
       .select({
         patient: patients,
-        lastVisitAt: sql<string | null>`(SELECT max(${orders.createdAt}) FROM ${orders}
-          WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
+        lastVisitAt: sql<string | null>`(SELECT max(o.created_at) FROM ${orders} o
+          WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`,
         // A visit is a day at the clinic, however many orders it had.
-        visitCount: sql<number>`(SELECT count(DISTINCT coalesce(${orders.visitId},
-            ((${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
-          FROM ${orders} WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
+        visitCount: sql<number>`(SELECT count(DISTINCT coalesce(o.visit_id,
+            ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
+          FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`,
       })
       .from(patients)
       .where(where)
@@ -904,19 +912,19 @@ export class PgStorage implements IStorage {
           : sql``;
       base.push(sql`(
         EXISTS (SELECT 1 FROM ${patients} p
-                WHERE p.id = ${orders.patientId}
+                WHERE p.id = "orders"."patient_id"
                   AND (p.full_name ILIKE ${like} OR p.phone ILIKE ${like}${phoneDigits}))
         OR ${orders.orderNumber}::text ILIKE ${like}
         OR EXISTS (SELECT 1 FROM ${orderTests} ot
-                   WHERE ot.order_id = ${orders.id} AND ot.test_name ILIKE ${like})
+                   WHERE ot.order_id = "orders"."id" AND ot.test_name ILIKE ${like})
       )`);
     }
     const baseWhere = base.length ? and(...base) : undefined;
 
     const notCancelled = sql`${orders.status} <> 'cancelled'`;
-    const hasItems = sql`EXISTS (SELECT 1 FROM ${orderTests} ot WHERE ot.order_id = ${orders.id})`;
+    const hasItems = sql`EXISTS (SELECT 1 FROM ${orderTests} ot WHERE ot.order_id = "orders"."id")`;
     const hasBlank = sql`EXISTS (SELECT 1 FROM ${orderTests} ot
-                                 WHERE ot.order_id = ${orders.id}
+                                 WHERE ot.order_id = "orders"."id"
                                    AND (ot.result IS NULL OR ot.result = ''))`;
     const readyExpr = sql`(${hasItems} AND NOT ${hasBlank})`;
 
