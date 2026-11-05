@@ -8,9 +8,12 @@ import {
   CornerDownLeft,
   FlaskConical,
   Loader2,
+  Network,
   Receipt,
   Search,
   Settings,
+  Stethoscope,
+  UserCog,
   UserPlus,
   Users,
   Wallet,
@@ -131,6 +134,9 @@ export function CommandPalette({
       { kind: "action", id: "go-results", label: "Natijalar", hint: "Bo'limga o'tish", icon: ClipboardCheck, run: () => go("/results") },
       { kind: "action", id: "go-reports", label: "Hisobotlar", hint: "Bo'limga o'tish", icon: BarChart3, run: () => go("/reports") },
       { kind: "action", id: "go-expenses", label: "Xarajatlar", hint: "Bo'limga o'tish", icon: Wallet, run: () => go("/expenses") },
+      { kind: "action", id: "go-doctors", label: "Shifokorlar", hint: "Bo'limga o'tish", icon: Stethoscope, run: () => go("/doctors") },
+      { kind: "action", id: "go-departments", label: "Bo'limlar", hint: "Bo'limga o'tish", icon: Network, run: () => go("/departments") },
+      { kind: "action", id: "go-staff", label: "Xodimlar", hint: "Bo'limga o'tish", icon: UserCog, run: () => go("/staff") },
       { kind: "action", id: "go-settings", label: "Sozlamalar", hint: "Bo'limga o'tish", icon: Settings, run: () => go("/settings") },
     ];
     actions.push(

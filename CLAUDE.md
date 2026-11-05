@@ -47,6 +47,8 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/permissions.ts`: **ruxsatlar katalogi** (`PERMISSIONS`) va TZ §3 dagi 11 ta rolning boshlang‘ich ruxsatlari (`SYSTEM_ROLES`).
 - `server/rbac.ts`: `requirePermission`, `hasPermission`, `toSessionUser`, rollar keshi (60 s, `invalidateRoles()`).
 - `client/src/lib/access.ts`: qaysi sahifa qaysi ruxsat bilan ochiladi (router, sidebar, command palette uchun yagona jadval).
+- Menyu tuzilmasi: Ish maydoni (Bosh sahifa, Bemorlar, Buyurtmalar, Natijalar) · Klinika (Shifokorlar, Bo'limlar, Xodimlar) · Boshqaruv (Hisobotlar, Xarajatlar, Sozlamalar). Yangi modul sahifasi shu bo'limlardan biriga qo'shiladi.
+- Migratsiyalar: `npm run db:upgrade` hammasini ketma-ket bajaradi (har biri qayta ishga tushirsa xavfsiz).
 - `client/src/pages/*`: sahifalar. `client/src/App.tsx`: routing (og‘ir sahifalar `lazy`). `client/src/components/app-sidebar.tsx`: menyu.
 - `client/src/components/ui-kit.tsx`: `PageHeader`, `SectionCard`, `StatCard`, badge'lar, `EmptyState`, `TableSkeleton`, `Pagination`… **Yangi UI shulardan quriladi.**
 - `client/src/lib/format.ts`: pul, telefon, sana formatlari.
@@ -189,6 +191,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B7.6** Chek (`§15.7`): to‘lov cheki chop etish.
 - [ ] **B7.7** Kassa bosh sahifasi, kunlik tushum, xizmatlar narxlari ekrani (`§9.1`).
 - [~] **B7.8** Moliyaviy hisobotlar (`§9.1`): tushum va xarajatlar bor. **Qoldi:** buxgalter uchun davr bo‘yicha to‘liq hisobot.
+- [x] **B7.9** Xarajatlar sahifasi (`§9`, `§10`, `§13`): to'lov usuli va oluvchi; o'chirish o'rniga sababli bekor qilish (yozuv saqlanadi, hisobotlarga kirmaydi); tahrirlash audit bilan; butun davr tahlili (`/api/expenses/summary`: kategoriya, to'lov usuli, kunlik dinamika, o'tgan davr bilan solishtirish); filtrlar (kategoriya, usul, matn, bekor qilinganlar); davr shablonlari; CSV. Migratsiya: `npm run db:expenses` (**yangi kod ishga tushishidan OLDIN** bajarilishi shart).
 
 ### Hisobotlar va rahbariyat paneli (`§13`) ≈35%
 
@@ -237,3 +240,4 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B1.4 · RBAC: 11 rol, 26 ruxsat, rollar ekrani, server himoyasi. Yo‘l-yo‘lakay: bazasiz (JSON) rejimni buzayotgan `db-pg` importi tuzatildi; registrator API orqali buyurtmani bekor qila olishi va pul qaytara olishi yopildi.
 - 2026-11-05 · B1.5 · Bo'limlar va shifokorlar: jadvallar, API, Sozlamalar tablari, ish jadvali muharriri.
 - 2026-11-05 · B1.7 · Seans xavfsizligi: faolsizlik/umumiy muddat, ogohlantirish oynasi, faol seanslar ro'yxati, parol almashganda seanslarni yopish.
+- 2026-11-05 · B7.9 · Xarajatlar sahifasi to'liq; menyuda "Klinika" bo'limi (Shifokorlar, Bo'limlar, Xodimlar+Rollar alohida sahifalar); noma'lum /api yo'llari endi 404 JSON qaytaradi.

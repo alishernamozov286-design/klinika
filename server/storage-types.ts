@@ -6,6 +6,7 @@ import type {
   CreatePaymentInput,
   DashboardStatsData,
   Expense,
+  ExpenseSummary,
   InsertExpense,
   InsertPatient,
   InsertTest,
@@ -35,6 +36,7 @@ import type {
   UpdateOrderInput,
   UpdateSampleInput,
   UpdateDepartmentInput,
+  UpdateExpenseInput,
   UpdateDoctorInput,
   UpdateRoleInput,
   UpdateUserInput,
@@ -107,7 +109,18 @@ export function resolveFlag(
 /** Who is performing the write — carried into payments, expenses and the log. */
 export type Actor = { id: string | null; name: string };
 
-export type ExpenseQuery = { from?: string; to?: string; limit?: number; offset?: number };
+export type ExpenseQuery = {
+  from?: string;
+  to?: string;
+  category?: string;
+  method?: string;
+  /** Matched against the note and the payee, case-insensitively. */
+  search?: string;
+  /** "active" by default: cancelled rows are listed only when asked for. */
+  status?: "active" | "cancelled" | "all";
+  limit?: number;
+  offset?: number;
+};
 
 export type AuditQuery = { entity?: string; limit?: number; offset?: number };
 
@@ -266,9 +279,16 @@ export interface IStorage {
   addPayment(orderId: string, input: CreatePaymentInput, actor: Actor): Promise<OrderWithDetails | undefined>;
   deletePayment(paymentId: string): Promise<boolean>;
 
+  /** `total_amount` sums the active rows of the match, whatever the status filter. */
   listExpenses(query?: ExpenseQuery): Promise<Paged<Expense> & { total_amount: number }>;
+  getExpense(id: string): Promise<Expense | undefined>;
   createExpense(input: InsertExpense, actor: Actor): Promise<Expense>;
-  deleteExpense(id: string): Promise<boolean>;
+  updateExpense(id: string, input: UpdateExpenseInput, actor: Actor): Promise<Expense | undefined>;
+  /** Marks the row cancelled; it stays in the ledger and out of every total. */
+  cancelExpense(id: string, reason: string, actor: Actor): Promise<Expense | undefined>;
+  getExpenseSummary(from: string, to: string): Promise<ExpenseSummary>;
+  /** Distinct payees used before, most frequent first — suggestions for the form. */
+  listExpensePayees(limit?: number): Promise<string[]>;
 
   writeAudit(input: AuditInput): Promise<void>;
   listAudit(query?: AuditQuery): Promise<Paged<AuditEntry>>;

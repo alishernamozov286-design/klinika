@@ -26,7 +26,13 @@ import {
   type InsertDoctor,
   type DashboardStatsData,
   type Expense,
+  type ExpenseStatus,
+  type ExpenseSummary,
   type InsertExpense,
+  type PaymentMethod,
+  type UpdateExpenseInput,
+  daysBetween,
+  previousRange,
   type Payment,
   type InsertPatient,
   type InsertTest,
@@ -141,6 +147,15 @@ const mapRole = (row: typeof roles.$inferSelect): RoleRecord => ({
   createdAt: iso(row.createdAt) ?? row.createdAt,
   updatedAt: iso(row.updatedAt),
   permissions: (row.permissions ?? []).filter(isPermission) as Permission[],
+});
+
+const mapExpense = (row: typeof expenses.$inferSelect): Expense => ({
+  ...row,
+  method: row.method as PaymentMethod,
+  status: row.status as ExpenseStatus,
+  createdAt: iso(row.createdAt) ?? row.createdAt,
+  updatedAt: iso(row.updatedAt),
+  cancelledAt: iso(row.cancelledAt),
 });
 
 const mapDepartment = (row: typeof departments.$inferSelect): Department => ({
@@ -1166,9 +1181,18 @@ export class PgStorage implements IStorage {
   // ------------------------------------------------------------- expenses
 
   async listExpenses(query: ExpenseQuery = {}): Promise<Paged<Expense> & { total_amount: number }> {
+    const status = query.status ?? "active";
     const parts = [];
     if (query.from) parts.push(gte(expenses.spentOn, query.from));
     if (query.to) parts.push(lte(expenses.spentOn, query.to));
+    if (query.category) parts.push(eq(expenses.category, query.category));
+    if (query.method) parts.push(eq(expenses.method, query.method));
+    const q0 = query.search?.trim();
+    if (q0) {
+      const like = `%${q0.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      parts.push(or(sql`${expenses.note} ILIKE ${like}`, sql`${expenses.payee} ILIKE ${like}`)!);
+    }
+    if (status !== "all") parts.push(eq(expenses.status, status));
     const where = parts.length ? and(...parts) : undefined;
 
     let q = db
@@ -1185,17 +1209,22 @@ export class PgStorage implements IStorage {
       db
         .select({
           count: sql<number>`count(*)::int`,
-          sum: sql<number>`coalesce(sum(${expenses.amount}), 0)::int`,
+          sum: sql<number>`coalesce(sum(${expenses.amount}) FILTER (WHERE ${expenses.status} = 'active'), 0)::bigint::float8`,
         })
         .from(expenses)
         .where(where),
     ]);
 
     return {
-      items: rows.map((r) => ({ ...r, createdAt: iso(r.createdAt) })),
+      items: rows.map(mapExpense),
       total: agg?.count ?? 0,
       total_amount: agg?.sum ?? 0,
     };
+  }
+
+  async getExpense(id: string): Promise<Expense | undefined> {
+    const [row] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+    return row && mapExpense(row);
   }
 
   async createExpense(input: InsertExpense, actor: Actor): Promise<Expense> {
@@ -1204,18 +1233,113 @@ export class PgStorage implements IStorage {
       .values({
         category: input.category,
         amount: input.amount,
-        note: input.note?.trim() || null,
+        method: input.method,
+        payee: input.payee ?? null,
+        note: input.note ?? null,
         spentOn: input.spentOn,
         createdBy: actor.id,
         createdByName: actor.name,
       })
       .returning();
-    return { ...row, createdAt: iso(row.createdAt) };
+    return mapExpense(row);
   }
 
-  async deleteExpense(id: string): Promise<boolean> {
-    const rows = await db.delete(expenses).where(eq(expenses.id, id)).returning({ id: expenses.id });
-    return rows.length > 0;
+  async updateExpense(id: string, input: UpdateExpenseInput, actor: Actor): Promise<Expense | undefined> {
+    const patch: Partial<typeof expenses.$inferInsert> = {
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor.id,
+    };
+    if (input.category !== undefined) patch.category = input.category;
+    if (input.amount !== undefined) patch.amount = input.amount;
+    if (input.method !== undefined) patch.method = input.method;
+    if (input.payee !== undefined) patch.payee = input.payee ?? null;
+    if (input.note !== undefined) patch.note = input.note ?? null;
+    if (input.spentOn !== undefined) patch.spentOn = input.spentOn;
+    const [row] = await db.update(expenses).set(patch).where(eq(expenses.id, id)).returning();
+    return row && mapExpense(row);
+  }
+
+  async cancelExpense(id: string, reason: string, actor: Actor): Promise<Expense | undefined> {
+    const [row] = await db
+      .update(expenses)
+      .set({
+        status: "cancelled",
+        cancelledAt: new Date().toISOString(),
+        cancelledBy: actor.id,
+        cancelledByName: actor.name,
+        cancelReason: reason,
+      })
+      .where(eq(expenses.id, id))
+      .returning();
+    return row && mapExpense(row);
+  }
+
+  /**
+   * Five small aggregates run side by side. Each is one round trip, and they
+   * overlap, so the dashboard costs about as much as a single query.
+   */
+  async getExpenseSummary(from: string, to: string): Promise<ExpenseSummary> {
+    const range = and(gte(expenses.spentOn, from), lte(expenses.spentOn, to));
+    const active = and(range, eq(expenses.status, "active"));
+    const prev = previousRange(from, to);
+    const sumAmount = sql<number>`coalesce(sum(${expenses.amount}), 0)::bigint::float8`;
+
+    const [byCategory, byMethod, perDay, [agg], [prevAgg]] = await Promise.all([
+      db
+        .select({ category: expenses.category, amount: sumAmount, count: sql<number>`count(*)::int` })
+        .from(expenses)
+        .where(active)
+        .groupBy(expenses.category)
+        .orderBy(desc(sumAmount)),
+      db
+        .select({ method: expenses.method, amount: sumAmount, count: sql<number>`count(*)::int` })
+        .from(expenses)
+        .where(active)
+        .groupBy(expenses.method)
+        .orderBy(desc(sumAmount)),
+      db.select({ date: expenses.spentOn, amount: sumAmount }).from(expenses).where(active).groupBy(expenses.spentOn),
+      db
+        .select({
+          total: sql<number>`coalesce(sum(${expenses.amount}) FILTER (WHERE ${expenses.status} = 'active'), 0)::bigint::float8`,
+          count: sql<number>`count(*) FILTER (WHERE ${expenses.status} = 'active')::int`,
+          largest: sql<number>`coalesce(max(${expenses.amount}) FILTER (WHERE ${expenses.status} = 'active'), 0)::int`,
+          cancelledCount: sql<number>`count(*) FILTER (WHERE ${expenses.status} = 'cancelled')::int`,
+          cancelledAmount: sql<number>`coalesce(sum(${expenses.amount}) FILTER (WHERE ${expenses.status} = 'cancelled'), 0)::bigint::float8`,
+        })
+        .from(expenses)
+        .where(range),
+      db
+        .select({ total: sumAmount })
+        .from(expenses)
+        .where(and(gte(expenses.spentOn, prev.from), lte(expenses.spentOn, prev.to), eq(expenses.status, "active"))),
+    ]);
+
+    const day = new Map(perDay.map((d) => [d.date, Number(d.amount)]));
+    const total = Number(agg?.total ?? 0);
+    const count = agg?.count ?? 0;
+    return {
+      range: { from, to },
+      total,
+      count,
+      average: count ? Math.round(total / count) : 0,
+      largest: agg?.largest ?? 0,
+      byCategory: byCategory.map((c) => ({ ...c, amount: Number(c.amount) })),
+      byMethod: byMethod.map((m) => ({ ...m, amount: Number(m.amount) })),
+      daily: daysBetween(from, to).map((date) => ({ date, amount: day.get(date) ?? 0 })),
+      previous: { ...prev, total: Number(prevAgg?.total ?? 0) },
+      cancelled: { count: agg?.cancelledCount ?? 0, amount: Number(agg?.cancelledAmount ?? 0) },
+    };
+  }
+
+  async listExpensePayees(limit = 30): Promise<string[]> {
+    const rows = await db
+      .select({ payee: expenses.payee })
+      .from(expenses)
+      .where(sql`${expenses.payee} IS NOT NULL AND btrim(${expenses.payee}) <> ''`)
+      .groupBy(expenses.payee)
+      .orderBy(desc(sql`count(*)`))
+      .limit(limit);
+    return rows.map((r) => r.payee!).filter(Boolean);
   }
 
   // ---------------------------------------------------------------- audit
@@ -1450,7 +1574,8 @@ export class PgStorage implements IStorage {
         .orderBy(desc(sql`sum(${orderTests.price})`)),
     ]);
 
-    const spentInRange = and(gte(expenses.spentOn, from), lte(expenses.spentOn, to));
+    // Cancelled expenses never reduce the profit.
+    const spentInRange = and(gte(expenses.spentOn, from), lte(expenses.spentOn, to), eq(expenses.status, "active"));
     const [expensesByCategory, byReferrer] = await Promise.all([
       db
         .select({

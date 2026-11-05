@@ -1,6 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-// Wallet — Xarajatlar menyusi qaytarilganda kerak bo'ladi (pastdagi izohga qarang).
-import { BarChart3, FileText, FlaskConical, Home, Settings, ShieldCheck, Users } from "lucide-react";
+import {
+  BarChart3,
+  FileText,
+  FlaskConical,
+  Home,
+  Network,
+  Settings,
+  ShieldCheck,
+  Stethoscope,
+  UserCog,
+  Users,
+  Wallet,
+} from "lucide-react";
 import { Link, useLocation } from "wouter";
 import type { LabSettings } from "@shared/schema";
 import {
@@ -34,13 +45,19 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
+    // The clinic's structure: who works here and where (TZ §3, §10).
+    label: "Klinika",
+    items: [
+      { title: "Shifokorlar", url: "/doctors", icon: Stethoscope },
+      { title: "Bo'limlar", url: "/departments", icon: Network },
+      { title: "Xodimlar", url: "/staff", icon: UserCog },
+    ],
+  },
+  {
     label: "Boshqaruv",
     items: [
       { title: "Hisobotlar", url: "/reports", icon: BarChart3 },
-      // Xarajatlar sahifasi hozircha yashirilgan — /expenses yo'li va uning
-      // API'si ishlaydi, faqat menyuga chiqarilmaydi. Tayyor bo'lganda shu
-      // qatorni qayta ochish kifoya:
-      // { title: "Xarajatlar", url: "/expenses", icon: Wallet },
+      { title: "Xarajatlar", url: "/expenses", icon: Wallet },
       { title: "Sozlamalar", url: "/settings", icon: Settings },
     ],
   },

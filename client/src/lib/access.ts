@@ -14,4 +14,7 @@ export const ROUTE_ACCESS: Record<string, Permission[]> = {
   "/results": ["orders.read"],
   "/reports": ["reports.view"],
   "/expenses": ["expenses.read"],
+  "/staff": ["users.manage", "roles.manage"],
+  "/doctors": ["doctors.manage"],
+  "/departments": ["departments.manage"],
 };

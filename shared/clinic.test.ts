@@ -63,3 +63,17 @@ describe("insertDepartmentSchema", () => {
     expect(insertDepartmentSchema.safeParse({ name: "Terapiya", kind: "sklad" }).success).toBe(false);
   });
 });
+
+describe("previousRange / daysBetween", () => {
+  it("is the same number of days right before", async () => {
+    const { previousRange } = await import("./schema");
+    expect(previousRange("2026-10-01", "2026-10-31")).toEqual({ from: "2026-08-31", to: "2026-09-30" });
+    expect(previousRange("2026-03-01", "2026-03-01")).toEqual({ from: "2026-02-28", to: "2026-02-28" });
+  });
+
+  it("lists every calendar day inclusive", async () => {
+    const { daysBetween } = await import("./schema");
+    expect(daysBetween("2026-02-27", "2026-03-02")).toEqual(["2026-02-27", "2026-02-28", "2026-03-01", "2026-03-02"]);
+    expect(daysBetween("2026-03-02", "2026-03-01")).toEqual([]);
+  });
+});

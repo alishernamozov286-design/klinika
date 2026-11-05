@@ -40,6 +40,12 @@ export type ResultFlag = (typeof RESULT_FLAGS)[number];
 export const PAYMENT_METHODS = ["naqd", "karta", "o'tkazma"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  naqd: "Naqd",
+  karta: "Karta",
+  "o'tkazma": "Bank o'tkazmasi",
+};
+
 /**
  * Where a sample is on its way from the patient's arm to the analyser.
  *
@@ -85,6 +91,14 @@ export const EXPENSE_CATEGORIES = [
   "Boshqa",
 ] as const;
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+
+/**
+ * A recorded expense is never deleted (TZ §10: financial operations are
+ * cancelled, not erased). A cancelled one keeps its amount and who cancelled
+ * it and why, and simply stops counting towards any total.
+ */
+export const EXPENSE_STATUSES = ["active", "cancelled"] as const;
+export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
 
 /**
  * What a department does. Drives where it shows up later: ambulator and
@@ -346,9 +360,20 @@ export const expenses = pgTable("expenses", {
   note: text("note"),
   /** The day the money was actually spent, which is not always today. */
   spentOn: text("spent_on").notNull(),
+  /** How it was paid: cash from the till, card, or bank transfer. */
+  method: text("method").notNull().default("naqd"),
+  /** Who was paid — the supplier, the landlord, the employee. */
+  payee: text("payee"),
+  status: text("status").notNull().default("active"),
+  cancelledAt: isoTimestamp("cancelled_at"),
+  cancelledBy: varchar("cancelled_by"),
+  cancelledByName: text("cancelled_by_name"),
+  cancelReason: text("cancel_reason"),
   createdBy: varchar("created_by"),
   createdByName: text("created_by_name"),
   createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
 });
 
 /**
@@ -477,7 +502,27 @@ export type Payment = Omit<typeof payments.$inferSelect, "method"> & { method: P
 // `status` is a plain text column; narrow it for the app.
 export type Sample = Omit<typeof samples.$inferSelect, "status"> & { status: SampleStatus };
 
-export type Expense = typeof expenses.$inferSelect;
+export type Expense = Omit<typeof expenses.$inferSelect, "method" | "status"> & {
+  method: PaymentMethod;
+  status: ExpenseStatus;
+};
+
+/** The figures behind the expenses dashboard, over a whole date range. */
+export type ExpenseSummary = {
+  range: { from: string; to: string };
+  /** Active expenses only — cancelled ones never count. */
+  total: number;
+  count: number;
+  average: number;
+  largest: number;
+  byCategory: { category: string; amount: number; count: number }[];
+  byMethod: { method: string; amount: number; count: number }[];
+  /** Every day of the range, zero-filled, oldest first. */
+  daily: { date: string; amount: number }[];
+  /** The same number of days immediately before `range`. */
+  previous: { from: string; to: string; total: number };
+  cancelled: { count: number; amount: number };
+};
 
 export type AuditEntry = typeof auditLog.$inferSelect;
 
@@ -664,13 +709,57 @@ export const createPaymentSchema = z.object({
 
 export const insertExpenseSchema = z.object({
   category: z.enum(EXPENSE_CATEGORIES),
-  amount: z.coerce.number().int().min(1, "Summani kiriting"),
-  note: z.string().trim().nullish(),
+  amount: z.coerce.number().int().min(1, "Summani kiriting").max(10_000_000_000, "Summani tekshiring"),
+  method: z.enum(PAYMENT_METHODS).default("naqd"),
+  payee: z
+    .string()
+    .trim()
+    .max(120, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+  note: z
+    .string()
+    .trim()
+    .max(300, "Izoh juda uzun")
+    .nullish()
+    .transform((v) => v || null),
   spentOn: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Sanani tanlang")
     .default(() => localDayString(new Date())),
 });
+
+export const updateExpenseSchema = insertExpenseSchema.partial();
+
+export const cancelExpenseSchema = z.object({
+  reason: z.string().trim().min(3, "Bekor qilish sababini yozing").max(300, "Juda uzun"),
+});
+
+export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
+
+/**
+ * The period of the same length that ends the day before `from` — what
+ * "compared with the previous period" means on every finance screen.
+ */
+export function previousRange(from: string, to: string): { from: string; to: string } {
+  const day = 86_400_000;
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  const days = Math.max(0, Math.round((end - start) / day)) + 1;
+  const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
+  return { from: iso(start - days * day), to: iso(start - day) };
+}
+
+/** Every calendar day from `from` to `to` inclusive, as YYYY-MM-DD; capped at 400. */
+export function daysBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  const day = 86_400_000;
+  const end = Date.parse(`${to}T00:00:00Z`);
+  for (let t = Date.parse(`${from}T00:00:00Z`); t <= end && out.length < 400; t += day) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
 
 export const changePasswordSchema = z
   .object({

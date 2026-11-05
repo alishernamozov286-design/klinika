@@ -557,3 +557,71 @@ describe("security settings", () => {
     expect(await storage.getSecuritySettings()).toEqual({ sessionIdleMinutes: 15, sessionMaxHours: 8 });
   });
 });
+
+describe("expenses: ledger rules", () => {
+  const base = { category: "Reaktivlar" as const, method: "naqd" as const, payee: null, note: null };
+
+  it("cancels instead of deleting, and drops the row from every total", async () => {
+    const keep = await storage.createExpense({ ...base, amount: 100000, spentOn: "2026-10-05" }, ACTOR);
+    const gone = await storage.createExpense({ ...base, amount: 40000, spentOn: "2026-10-06" }, ACTOR);
+    const cancelled = await storage.cancelExpense(gone.id, "Ikki marta kiritilgan", ACTOR);
+    expect(cancelled).toMatchObject({ status: "cancelled", cancelReason: "Ikki marta kiritilgan", cancelledByName: ACTOR.name });
+
+    const active = await storage.listExpenses({ from: "2026-10-01", to: "2026-10-31" });
+    expect(active.items.map((e) => e.id)).toEqual([keep.id]);
+    expect(active.total_amount).toBe(100000);
+
+    // Still in the ledger when asked for — never erased.
+    const all = await storage.listExpenses({ from: "2026-10-01", to: "2026-10-31", status: "all" });
+    expect(all.total).toBe(2);
+    expect(all.total_amount).toBe(100000);
+
+    const summary = await storage.getExpenseSummary("2026-10-01", "2026-10-31");
+    expect(summary).toMatchObject({ total: 100000, count: 1, cancelled: { count: 1, amount: 40000 } });
+
+    const report = await storage.getRevenueReport("2026-10-01", "2026-10-31");
+    expect(report.totalExpenses).toBe(100000);
+  });
+
+  it("edits fields and stamps who edited", async () => {
+    const row = await storage.createExpense({ ...base, amount: 50000, spentOn: "2026-10-05" }, ACTOR);
+    const edited = await storage.updateExpense(row.id, { amount: 55000, method: "karta", payee: "Medtexnika" }, ACTOR);
+    expect(edited).toMatchObject({ amount: 55000, method: "karta", payee: "Medtexnika", updatedBy: ACTOR.id });
+    expect(edited?.updatedAt).toBeTruthy();
+  });
+
+  it("filters by category, method and text in payee or note", async () => {
+    await storage.createExpense({ ...base, amount: 1000, spentOn: "2026-10-01", payee: "Medtexnika MChJ" }, ACTOR);
+    await storage.createExpense({ ...base, category: "Ijara", amount: 2000, spentOn: "2026-10-02", method: "o'tkazma" }, ACTOR);
+    await storage.createExpense({ ...base, amount: 3000, spentOn: "2026-10-03", note: "gemoglobin reaktivi" }, ACTOR);
+    const q = (extra: object) => storage.listExpenses({ from: "2026-10-01", to: "2026-10-31", ...extra });
+    expect((await q({ category: "Ijara" })).total).toBe(1);
+    expect((await q({ method: "o'tkazma" })).total).toBe(1);
+    expect((await q({ search: "medtex" })).total).toBe(1);
+    expect((await q({ search: "GEMOGLOBIN" })).total).toBe(1);
+  });
+
+  it("summarises the whole range, zero-fills days and compares with the previous period", async () => {
+    await storage.createExpense({ ...base, amount: 30000, spentOn: "2026-09-25" }, ACTOR);
+    await storage.createExpense({ ...base, amount: 70000, spentOn: "2026-10-01" }, ACTOR);
+    await storage.createExpense({ ...base, category: "Ijara", amount: 200000, spentOn: "2026-10-03", method: "o'tkazma" }, ACTOR);
+
+    const s = await storage.getExpenseSummary("2026-10-01", "2026-10-07");
+    expect(s.total).toBe(270000);
+    expect(s.count).toBe(2);
+    expect(s.average).toBe(135000);
+    expect(s.largest).toBe(200000);
+    expect(s.byCategory[0]).toEqual({ category: "Ijara", amount: 200000, count: 1 });
+    expect(s.byMethod.map((m) => m.method).sort()).toEqual(["naqd", "o'tkazma"]);
+    expect(s.daily).toHaveLength(7);
+    expect(s.daily[1]).toEqual({ date: "2026-10-02", amount: 0 });
+    expect(s.previous).toEqual({ from: "2026-09-24", to: "2026-09-30", total: 30000 });
+  });
+
+  it("suggests payees, most used first", async () => {
+    await storage.createExpense({ ...base, amount: 1, spentOn: "2026-10-01", payee: "B" }, ACTOR);
+    await storage.createExpense({ ...base, amount: 1, spentOn: "2026-10-01", payee: "A" }, ACTOR);
+    await storage.createExpense({ ...base, amount: 1, spentOn: "2026-10-02", payee: "A" }, ACTOR);
+    expect(await storage.listExpensePayees()).toEqual(["A", "B"]);
+  });
+});

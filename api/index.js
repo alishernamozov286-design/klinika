@@ -314,9 +314,11 @@ __export(schema_exports, {
   DEPARTMENT_KINDS: () => DEPARTMENT_KINDS,
   DEPARTMENT_KIND_LABELS: () => DEPARTMENT_KIND_LABELS,
   EXPENSE_CATEGORIES: () => EXPENSE_CATEGORIES,
+  EXPENSE_STATUSES: () => EXPENSE_STATUSES,
   ORDER_STATUSES: () => ORDER_STATUSES,
   ORDER_STATUS_LABELS: () => ORDER_STATUS_LABELS,
   PAYMENT_METHODS: () => PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS: () => PAYMENT_METHOD_LABELS,
   RESULT_FLAGS: () => RESULT_FLAGS,
   SAMPLE_REJECT_REASONS: () => SAMPLE_REJECT_REASONS,
   SAMPLE_STATUSES: () => SAMPLE_STATUSES,
@@ -327,9 +329,11 @@ __export(schema_exports, {
   WEEKDAY_SHORT: () => WEEKDAY_SHORT,
   appSettings: () => appSettings,
   auditLog: () => auditLog,
+  cancelExpenseSchema: () => cancelExpenseSchema,
   changePasswordSchema: () => changePasswordSchema,
   createOrderSchema: () => createOrderSchema,
   createPaymentSchema: () => createPaymentSchema,
+  daysBetween: () => daysBetween,
   departments: () => departments,
   doctors: () => doctors,
   expenses: () => expenses,
@@ -350,6 +354,7 @@ __export(schema_exports, {
   orders: () => orders,
   patients: () => patients,
   payments: () => payments,
+  previousRange: () => previousRange,
   roles: () => roles,
   samples: () => samples,
   saveResultsSchema: () => saveResultsSchema,
@@ -360,6 +365,7 @@ __export(schema_exports, {
   tests: () => tests,
   updateDepartmentSchema: () => updateDepartmentSchema,
   updateDoctorSchema: () => updateDoctorSchema,
+  updateExpenseSchema: () => updateExpenseSchema,
   updateOrderSchema: () => updateOrderSchema,
   updateRoleSchema: () => updateRoleSchema,
   updateSampleSchema: () => updateSampleSchema,
@@ -384,11 +390,28 @@ function nationalPhoneDigits(value) {
   if (digits.length === 10 && digits.startsWith("8")) return digits.slice(1);
   return digits.slice(0, 9);
 }
+function previousRange(from, to) {
+  const day = 864e5;
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  const days = Math.max(0, Math.round((end - start) / day)) + 1;
+  const iso2 = (t) => new Date(t).toISOString().slice(0, 10);
+  return { from: iso2(start - days * day), to: iso2(start - day) };
+}
+function daysBetween(from, to) {
+  const out = [];
+  const day = 864e5;
+  const end = Date.parse(`${to}T00:00:00Z`);
+  for (let t = Date.parse(`${from}T00:00:00Z`); t <= end && out.length < 400; t += day) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
 function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -404,6 +427,11 @@ var init_schema = __esm({
     };
     RESULT_FLAGS = ["low", "normal", "high"];
     PAYMENT_METHODS = ["naqd", "karta", "o'tkazma"];
+    PAYMENT_METHOD_LABELS = {
+      naqd: "Naqd",
+      karta: "Karta",
+      "o'tkazma": "Bank o'tkazmasi"
+    };
     SAMPLE_STATUSES = ["kutilmoqda", "olindi", "qabul_qilindi", "rad_etildi"];
     SAMPLE_STATUS_LABELS = {
       kutilmoqda: "Kutilmoqda",
@@ -429,6 +457,7 @@ var init_schema = __esm({
       "Soliq",
       "Boshqa"
     ];
+    EXPENSE_STATUSES = ["active", "cancelled"];
     DEPARTMENT_KINDS = ["ambulator", "diagnostika", "laboratoriya", "statsionar", "boshqa"];
     DEPARTMENT_KIND_LABELS = {
       ambulator: "Ambulator qabul",
@@ -626,9 +655,20 @@ var init_schema = __esm({
       note: text("note"),
       /** The day the money was actually spent, which is not always today. */
       spentOn: text("spent_on").notNull(),
+      /** How it was paid: cash from the till, card, or bank transfer. */
+      method: text("method").notNull().default("naqd"),
+      /** Who was paid — the supplier, the landlord, the employee. */
+      payee: text("payee"),
+      status: text("status").notNull().default("active"),
+      cancelledAt: isoTimestamp("cancelled_at"),
+      cancelledBy: varchar("cancelled_by"),
+      cancelledByName: text("cancelled_by_name"),
+      cancelReason: text("cancel_reason"),
       createdBy: varchar("created_by"),
       createdByName: text("created_by_name"),
-      createdAt: isoTimestamp("created_at").defaultNow().notNull()
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
     });
     auditLog = pgTable(
       "audit_log",
@@ -731,9 +771,15 @@ var init_schema = __esm({
     });
     insertExpenseSchema = z.object({
       category: z.enum(EXPENSE_CATEGORIES),
-      amount: z.coerce.number().int().min(1, "Summani kiriting"),
-      note: z.string().trim().nullish(),
+      amount: z.coerce.number().int().min(1, "Summani kiriting").max(1e10, "Summani tekshiring"),
+      method: z.enum(PAYMENT_METHODS).default("naqd"),
+      payee: z.string().trim().max(120, "Juda uzun").nullish().transform((v) => v || null),
+      note: z.string().trim().max(300, "Izoh juda uzun").nullish().transform((v) => v || null),
       spentOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Sanani tanlang").default(() => localDayString(/* @__PURE__ */ new Date()))
+    });
+    updateExpenseSchema = insertExpenseSchema.partial();
+    cancelExpenseSchema = z.object({
+      reason: z.string().trim().min(3, "Bekor qilish sababini yozing").max(300, "Juda uzun")
     });
     changePasswordSchema = z.object({
       currentPassword: z.string().min(1, "Joriy parolni kiriting"),
@@ -1348,7 +1394,7 @@ import { and, asc, desc, eq, gte, inArray, lte, or, sql as sql2 } from "drizzle-
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapPatient, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapDepartment, doctorSelect, mapDoctor, PgStorage;
+var iso, mapUser, mapPatient, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapExpense, mapDepartment, doctorSelect, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -1396,6 +1442,14 @@ var init_storage_pg = __esm({
       createdAt: iso(row.createdAt) ?? row.createdAt,
       updatedAt: iso(row.updatedAt),
       permissions: (row.permissions ?? []).filter(isPermission)
+    });
+    mapExpense = (row) => ({
+      ...row,
+      method: row.method,
+      status: row.status,
+      createdAt: iso(row.createdAt) ?? row.createdAt,
+      updatedAt: iso(row.updatedAt),
+      cancelledAt: iso(row.cancelledAt)
     });
     mapDepartment = (row) => ({
       ...row,
@@ -2111,9 +2165,18 @@ var init_storage_pg = __esm({
       }
       // ------------------------------------------------------------- expenses
       async listExpenses(query = {}) {
+        const status = query.status ?? "active";
         const parts = [];
         if (query.from) parts.push(gte(expenses.spentOn, query.from));
         if (query.to) parts.push(lte(expenses.spentOn, query.to));
+        if (query.category) parts.push(eq(expenses.category, query.category));
+        if (query.method) parts.push(eq(expenses.method, query.method));
+        const q0 = query.search?.trim();
+        if (q0) {
+          const like = `%${q0.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+          parts.push(or(sql2`${expenses.note} ILIKE ${like}`, sql2`${expenses.payee} ILIKE ${like}`));
+        }
+        if (status !== "all") parts.push(eq(expenses.status, status));
         const where = parts.length ? and(...parts) : void 0;
         let q = db.select().from(expenses).where(where).orderBy(desc(expenses.spentOn), desc(expenses.createdAt)).$dynamic();
         if (query.limit !== void 0) q = q.limit(query.limit);
@@ -2122,29 +2185,97 @@ var init_storage_pg = __esm({
           q,
           db.select({
             count: sql2`count(*)::int`,
-            sum: sql2`coalesce(sum(${expenses.amount}), 0)::int`
+            sum: sql2`coalesce(sum(${expenses.amount}) FILTER (WHERE ${expenses.status} = 'active'), 0)::bigint::float8`
           }).from(expenses).where(where)
         ]);
         return {
-          items: rows.map((r) => ({ ...r, createdAt: iso(r.createdAt) })),
+          items: rows.map(mapExpense),
           total: agg?.count ?? 0,
           total_amount: agg?.sum ?? 0
         };
+      }
+      async getExpense(id) {
+        const [row] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+        return row && mapExpense(row);
       }
       async createExpense(input, actor) {
         const [row] = await db.insert(expenses).values({
           category: input.category,
           amount: input.amount,
-          note: input.note?.trim() || null,
+          method: input.method,
+          payee: input.payee ?? null,
+          note: input.note ?? null,
           spentOn: input.spentOn,
           createdBy: actor.id,
           createdByName: actor.name
         }).returning();
-        return { ...row, createdAt: iso(row.createdAt) };
+        return mapExpense(row);
       }
-      async deleteExpense(id) {
-        const rows = await db.delete(expenses).where(eq(expenses.id, id)).returning({ id: expenses.id });
-        return rows.length > 0;
+      async updateExpense(id, input, actor) {
+        const patch = {
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedBy: actor.id
+        };
+        if (input.category !== void 0) patch.category = input.category;
+        if (input.amount !== void 0) patch.amount = input.amount;
+        if (input.method !== void 0) patch.method = input.method;
+        if (input.payee !== void 0) patch.payee = input.payee ?? null;
+        if (input.note !== void 0) patch.note = input.note ?? null;
+        if (input.spentOn !== void 0) patch.spentOn = input.spentOn;
+        const [row] = await db.update(expenses).set(patch).where(eq(expenses.id, id)).returning();
+        return row && mapExpense(row);
+      }
+      async cancelExpense(id, reason, actor) {
+        const [row] = await db.update(expenses).set({
+          status: "cancelled",
+          cancelledAt: (/* @__PURE__ */ new Date()).toISOString(),
+          cancelledBy: actor.id,
+          cancelledByName: actor.name,
+          cancelReason: reason
+        }).where(eq(expenses.id, id)).returning();
+        return row && mapExpense(row);
+      }
+      /**
+       * Five small aggregates run side by side. Each is one round trip, and they
+       * overlap, so the dashboard costs about as much as a single query.
+       */
+      async getExpenseSummary(from, to) {
+        const range = and(gte(expenses.spentOn, from), lte(expenses.spentOn, to));
+        const active = and(range, eq(expenses.status, "active"));
+        const prev = previousRange(from, to);
+        const sumAmount = sql2`coalesce(sum(${expenses.amount}), 0)::bigint::float8`;
+        const [byCategory, byMethod, perDay, [agg], [prevAgg]] = await Promise.all([
+          db.select({ category: expenses.category, amount: sumAmount, count: sql2`count(*)::int` }).from(expenses).where(active).groupBy(expenses.category).orderBy(desc(sumAmount)),
+          db.select({ method: expenses.method, amount: sumAmount, count: sql2`count(*)::int` }).from(expenses).where(active).groupBy(expenses.method).orderBy(desc(sumAmount)),
+          db.select({ date: expenses.spentOn, amount: sumAmount }).from(expenses).where(active).groupBy(expenses.spentOn),
+          db.select({
+            total: sql2`coalesce(sum(${expenses.amount}) FILTER (WHERE ${expenses.status} = 'active'), 0)::bigint::float8`,
+            count: sql2`count(*) FILTER (WHERE ${expenses.status} = 'active')::int`,
+            largest: sql2`coalesce(max(${expenses.amount}) FILTER (WHERE ${expenses.status} = 'active'), 0)::int`,
+            cancelledCount: sql2`count(*) FILTER (WHERE ${expenses.status} = 'cancelled')::int`,
+            cancelledAmount: sql2`coalesce(sum(${expenses.amount}) FILTER (WHERE ${expenses.status} = 'cancelled'), 0)::bigint::float8`
+          }).from(expenses).where(range),
+          db.select({ total: sumAmount }).from(expenses).where(and(gte(expenses.spentOn, prev.from), lte(expenses.spentOn, prev.to), eq(expenses.status, "active")))
+        ]);
+        const day = new Map(perDay.map((d) => [d.date, Number(d.amount)]));
+        const total = Number(agg?.total ?? 0);
+        const count = agg?.count ?? 0;
+        return {
+          range: { from, to },
+          total,
+          count,
+          average: count ? Math.round(total / count) : 0,
+          largest: agg?.largest ?? 0,
+          byCategory: byCategory.map((c) => ({ ...c, amount: Number(c.amount) })),
+          byMethod: byMethod.map((m) => ({ ...m, amount: Number(m.amount) })),
+          daily: daysBetween(from, to).map((date) => ({ date, amount: day.get(date) ?? 0 })),
+          previous: { ...prev, total: Number(prevAgg?.total ?? 0) },
+          cancelled: { count: agg?.cancelledCount ?? 0, amount: Number(agg?.cancelledAmount ?? 0) }
+        };
+      }
+      async listExpensePayees(limit = 30) {
+        const rows = await db.select({ payee: expenses.payee }).from(expenses).where(sql2`${expenses.payee} IS NOT NULL AND btrim(${expenses.payee}) <> ''`).groupBy(expenses.payee).orderBy(desc(sql2`count(*)`)).limit(limit);
+        return rows.map((r) => r.payee).filter(Boolean);
       }
       // ---------------------------------------------------------------- audit
       async writeAudit(input) {
@@ -2281,7 +2412,7 @@ var init_storage_pg = __esm({
             revenue: sql2`coalesce(sum(${orderTests.price}), 0)::int`
           }).from(orderTests).innerJoin(orders, eq(orders.id, orderTests.orderId)).leftJoin(tests, eq(tests.id, orderTests.testId)).where(inRange).groupBy(sql2`coalesce(${tests.category}, 'Boshqa')`).orderBy(desc(sql2`sum(${orderTests.price})`))
         ]);
-        const spentInRange = and(gte(expenses.spentOn, from), lte(expenses.spentOn, to));
+        const spentInRange = and(gte(expenses.spentOn, from), lte(expenses.spentOn, to), eq(expenses.status, "active"));
         const [expensesByCategory, byReferrer] = await Promise.all([
           db.select({
             category: expenses.category,
@@ -2433,7 +2564,7 @@ function isWaiting(order) {
 function isReady(order) {
   return order.items.length > 0 && order.items.every((i) => i.result);
 }
-var digitsOf, copyRole, FileStorage;
+var digitsOf, copyRole, normalizeExpense, FileStorage;
 var init_storage_file = __esm({
   "server/storage-file.ts"() {
     "use strict";
@@ -2446,6 +2577,21 @@ var init_storage_file = __esm({
     init_storage_types();
     digitsOf = (value) => (value ?? "").replace(/\D/g, "");
     copyRole = (r) => ({ ...r, permissions: [...r.permissions] });
+    normalizeExpense = (e) => ({
+      note: null,
+      createdBy: null,
+      createdByName: null,
+      ...e,
+      method: e.method ?? "naqd",
+      payee: e.payee ?? null,
+      status: e.status ?? "active",
+      cancelledAt: e.cancelledAt ?? null,
+      cancelledBy: e.cancelledBy ?? null,
+      cancelledByName: e.cancelledByName ?? null,
+      cancelReason: e.cancelReason ?? null,
+      updatedAt: e.updatedAt ?? null,
+      updatedBy: e.updatedBy ?? null
+    });
     FileStorage = class {
       db;
       constructor() {
@@ -3192,38 +3338,112 @@ var init_storage_file = __esm({
         return true;
       }
       // ------------------------------------------------------------- expenses
+      allExpenses() {
+        return this.db.expenses.map((e) => normalizeExpense(e));
+      }
       async listExpenses(query = {}) {
-        let rows = [...this.db.expenses];
+        const status = query.status ?? "active";
+        const q = query.search?.trim().toLowerCase();
+        let rows = this.allExpenses();
         if (query.from) rows = rows.filter((e) => e.spentOn >= query.from);
         if (query.to) rows = rows.filter((e) => e.spentOn <= query.to);
+        if (query.category) rows = rows.filter((e) => e.category === query.category);
+        if (query.method) rows = rows.filter((e) => e.method === query.method);
+        if (q) rows = rows.filter((e) => `${e.note ?? ""} ${e.payee ?? ""}`.toLowerCase().includes(q));
+        if (status !== "all") rows = rows.filter((e) => e.status === status);
         rows.sort((a, b) => b.spentOn.localeCompare(a.spentOn) || b.createdAt.localeCompare(a.createdAt));
         const total = rows.length;
-        const total_amount = rows.reduce((s, e) => s + e.amount, 0);
+        const total_amount = rows.filter((e) => e.status === "active").reduce((s, e) => s + e.amount, 0);
         const offset = query.offset ?? 0;
         const limit = query.limit ?? total;
         return { items: rows.slice(offset, offset + limit), total, total_amount };
       }
+      async getExpense(id) {
+        const row = this.db.expenses.find((e) => e.id === id);
+        return row && normalizeExpense(row);
+      }
       async createExpense(input, actor) {
-        const row = {
+        const row = normalizeExpense({
           id: randomUUID(),
           category: input.category,
           amount: input.amount,
-          note: input.note?.trim() || null,
+          method: input.method,
+          payee: input.payee ?? null,
+          note: input.note ?? null,
           spentOn: input.spentOn,
           createdBy: actor.id,
           createdByName: actor.name,
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
-        };
+        });
         this.db.expenses.push(row);
         await this.persist();
-        return row;
+        return { ...row };
       }
-      async deleteExpense(id) {
-        const before = this.db.expenses.length;
-        this.db.expenses = this.db.expenses.filter((e) => e.id !== id);
-        if (this.db.expenses.length === before) return false;
+      async updateExpense(id, input, actor) {
+        const i = this.db.expenses.findIndex((e) => e.id === id);
+        if (i === -1) return void 0;
+        const row = normalizeExpense(this.db.expenses[i]);
+        if (input.category !== void 0) row.category = input.category;
+        if (input.amount !== void 0) row.amount = input.amount;
+        if (input.method !== void 0) row.method = input.method;
+        if (input.payee !== void 0) row.payee = input.payee ?? null;
+        if (input.note !== void 0) row.note = input.note ?? null;
+        if (input.spentOn !== void 0) row.spentOn = input.spentOn;
+        row.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        row.updatedBy = actor.id;
+        this.db.expenses[i] = row;
         await this.persist();
-        return true;
+        return { ...row };
+      }
+      async cancelExpense(id, reason, actor) {
+        const i = this.db.expenses.findIndex((e) => e.id === id);
+        if (i === -1) return void 0;
+        const row = normalizeExpense(this.db.expenses[i]);
+        row.status = "cancelled";
+        row.cancelledAt = (/* @__PURE__ */ new Date()).toISOString();
+        row.cancelledBy = actor.id;
+        row.cancelledByName = actor.name;
+        row.cancelReason = reason;
+        this.db.expenses[i] = row;
+        await this.persist();
+        return { ...row };
+      }
+      async getExpenseSummary(from, to) {
+        const inRange = this.allExpenses().filter((e) => e.spentOn >= from && e.spentOn <= to);
+        const active = inRange.filter((e) => e.status === "active");
+        const cancelled = inRange.filter((e) => e.status === "cancelled");
+        const group = (key) => {
+          const m = /* @__PURE__ */ new Map();
+          for (const e of active) {
+            const g = m.get(key(e)) ?? { amount: 0, count: 0 };
+            g.amount += e.amount;
+            g.count += 1;
+            m.set(key(e), g);
+          }
+          return [...m.entries()].sort((a, b) => b[1].amount - a[1].amount);
+        };
+        const perDay = /* @__PURE__ */ new Map();
+        for (const e of active) perDay.set(e.spentOn, (perDay.get(e.spentOn) ?? 0) + e.amount);
+        const total = active.reduce((s, e) => s + e.amount, 0);
+        const prev = previousRange(from, to);
+        const prevTotal = this.allExpenses().filter((e) => e.status === "active" && e.spentOn >= prev.from && e.spentOn <= prev.to).reduce((s, e) => s + e.amount, 0);
+        return {
+          range: { from, to },
+          total,
+          count: active.length,
+          average: active.length ? Math.round(total / active.length) : 0,
+          largest: active.reduce((m, e) => Math.max(m, e.amount), 0),
+          byCategory: group((e) => e.category).map(([category, g]) => ({ category, ...g })),
+          byMethod: group((e) => e.method).map(([method, g]) => ({ method, ...g })),
+          daily: daysBetween(from, to).map((date) => ({ date, amount: perDay.get(date) ?? 0 })),
+          previous: { ...prev, total: prevTotal },
+          cancelled: { count: cancelled.length, amount: cancelled.reduce((s, e) => s + e.amount, 0) }
+        };
+      }
+      async listExpensePayees(limit = 30) {
+        const counts = /* @__PURE__ */ new Map();
+        for (const e of this.allExpenses()) if (e.payee) counts.set(e.payee, (counts.get(e.payee) ?? 0) + 1);
+        return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([p]) => p);
       }
       // ---------------------------------------------------------------- audit
       async writeAudit(input) {
@@ -3366,7 +3586,7 @@ var init_storage_file = __esm({
           bucket.revenue += order.totalAmount;
           refAgg.set(key, bucket);
         }
-        const spent = this.db.expenses.filter((e) => e.spentOn >= from && e.spentOn <= to);
+        const spent = this.allExpenses().filter((e) => e.status === "active" && e.spentOn >= from && e.spentOn <= to);
         const totalExpenses = spent.reduce((s, e) => s + e.amount, 0);
         const expAgg = /* @__PURE__ */ new Map();
         for (const e of spent) expAgg.set(e.category, (expAgg.get(e.category) ?? 0) + e.amount);
@@ -4596,18 +4816,51 @@ async function registerRoutes(app) {
       res.sendStatus(204);
     })
   );
+  const expenseQuery = (req) => {
+    const status = stringParam(req.query.status);
+    const category = stringParam(req.query.category);
+    const method = stringParam(req.query.method);
+    return {
+      from: stringParam(req.query.from),
+      to: stringParam(req.query.to),
+      category: category && EXPENSE_CATEGORIES.includes(category) ? category : void 0,
+      method: method && PAYMENT_METHODS.includes(method) ? method : void 0,
+      search: stringParam(req.query.search),
+      status: status === "cancelled" || status === "all" ? status : "active"
+    };
+  };
+  const fmtSum = (n) => `${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
   app.get(
     "/api/expenses",
     requirePermission("expenses.read"),
     handle(async (req, res) => {
       res.json(
         await storage.listExpenses({
-          from: stringParam(req.query.from),
-          to: stringParam(req.query.to),
+          ...expenseQuery(req),
           limit: numberParam(req.query.limit),
           offset: numberParam(req.query.offset, 0)
         })
       );
+    })
+  );
+  app.get(
+    "/api/expenses/summary",
+    requirePermission("expenses.read"),
+    handle(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      const day = /^\d{4}-\d{2}-\d{2}$/;
+      if (!from || !to || !day.test(from) || !day.test(to) || from > to) {
+        return res.status(400).json({ message: "Davrni to'g'ri tanlang" });
+      }
+      res.json(await storage.getExpenseSummary(from, to));
+    })
+  );
+  app.get(
+    "/api/expenses/payees",
+    requirePermission("expenses.manage"),
+    handle(async (_req, res) => {
+      res.json(await storage.listExpensePayees());
     })
   );
   app.post(
@@ -4616,18 +4869,60 @@ async function registerRoutes(app) {
     handle(async (req, res) => {
       const input = insertExpenseSchema.parse(req.body);
       const row = await storage.createExpense(input, actorOf(req));
-      await audit(req, "create", "expense", row.id, `${row.category}: ${row.amount} so'm`);
+      await audit(
+        req,
+        "create",
+        "expense",
+        row.id,
+        `${row.category}: ${fmtSum(row.amount)}${row.payee ? ` \u2192 ${row.payee}` : ""} (${row.spentOn})`
+      );
       res.status(201).json(row);
     })
   );
-  app.delete(
+  app.patch(
     "/api/expenses/:id",
     requirePermission("expenses.manage"),
     handle(async (req, res) => {
-      const ok = await storage.deleteExpense(req.params.id);
-      if (!ok) return res.status(404).json({ message: "Xarajat topilmadi" });
-      await audit(req, "delete", "expense", req.params.id, "Xarajat o'chirildi");
-      res.sendStatus(204);
+      const input = updateExpenseSchema.parse(req.body);
+      const before = await storage.getExpense(req.params.id);
+      if (!before) return res.status(404).json({ message: "Xarajat topilmadi" });
+      if (before.status === "cancelled") {
+        return res.status(409).json({ message: "Bekor qilingan xarajatni tahrirlab bo'lmaydi" });
+      }
+      const row = await storage.updateExpense(req.params.id, input, actorOf(req));
+      if (!row) return res.status(404).json({ message: "Xarajat topilmadi" });
+      const changes = [];
+      if (row.amount !== before.amount) changes.push(`summa ${fmtSum(before.amount)} \u2192 ${fmtSum(row.amount)}`);
+      if (row.category !== before.category) changes.push(`kategoriya ${before.category} \u2192 ${row.category}`);
+      if (row.spentOn !== before.spentOn) changes.push(`sana ${before.spentOn} \u2192 ${row.spentOn}`);
+      if (row.method !== before.method) changes.push(`to'lov ${before.method} \u2192 ${row.method}`);
+      if ((row.payee ?? "") !== (before.payee ?? "")) changes.push(`oluvchi: ${row.payee ?? "\u2014"}`);
+      if ((row.note ?? "") !== (before.note ?? "")) changes.push("izoh o'zgardi");
+      if (changes.length) {
+        await audit(req, "update", "expense", row.id, `${row.category} xarajati \u2014 ${changes.join(", ")}`);
+      }
+      res.json(row);
+    })
+  );
+  app.post(
+    "/api/expenses/:id/cancel",
+    requirePermission("expenses.manage"),
+    handle(async (req, res) => {
+      const { reason } = cancelExpenseSchema.parse(req.body);
+      const before = await storage.getExpense(req.params.id);
+      if (!before) return res.status(404).json({ message: "Xarajat topilmadi" });
+      if (before.status === "cancelled") {
+        return res.status(409).json({ message: "Bu xarajat allaqachon bekor qilingan" });
+      }
+      const row = await storage.cancelExpense(req.params.id, reason, actorOf(req));
+      await audit(
+        req,
+        "delete",
+        "expense",
+        req.params.id,
+        `${before.category}: ${fmtSum(before.amount)} bekor qilindi \u2014 ${reason}`
+      );
+      res.json(row);
     })
   );
   app.get(
@@ -4716,15 +5011,22 @@ async function registerRoutes(app) {
     "/api/export/expenses.csv",
     requirePermission("data.export"),
     handle(async (req, res) => {
-      const { items } = await storage.listExpenses({
-        from: stringParam(req.query.from),
-        to: stringParam(req.query.to)
-      });
+      const { items } = await storage.listExpenses(expenseQuery(req));
       csvHeaders(res, `xarajatlar-${stamp()}.csv`);
       res.send(
         toCsv(
-          ["Sana", "Kategoriya", "Summa", "Izoh", "Kim kiritdi"],
-          items.map((e) => [e.spentOn, e.category, e.amount, e.note ?? "", e.createdByName ?? ""])
+          ["Sana", "Kategoriya", "Summa", "To'lov usuli", "Oluvchi", "Izoh", "Kim kiritdi", "Holat", "Bekor qilish sababi"],
+          items.map((e) => [
+            e.spentOn,
+            e.category,
+            e.amount,
+            e.method,
+            e.payee ?? "",
+            e.note ?? "",
+            e.createdByName ?? "",
+            e.status === "cancelled" ? "Bekor qilingan" : "Faol",
+            e.cancelReason ?? ""
+          ])
         )
       );
     })
@@ -5292,6 +5594,10 @@ async function registerRoutes(app) {
       res.sendStatus(204);
     })
   );
+  app.use("/api", (req, res, next) => {
+    if (res.headersSent) return next();
+    res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });
+  });
   app.use("/api", (err, _req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof ZodError) {

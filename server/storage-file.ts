@@ -12,6 +12,7 @@ import type {
   InsertDoctor,
   DashboardStatsData,
   Expense,
+  ExpenseSummary,
   InsertExpense,
   Payment,
   InsertPatient,
@@ -34,13 +35,14 @@ import type {
   Test,
   UpdateDepartmentInput,
   UpdateDoctorInput,
+  UpdateExpenseInput,
   UpdateOrderInput,
   UpdateRoleInput,
   UpdateSampleInput,
   UpdateUserInput,
   User,
 } from "@shared/schema";
-import { DEFAULT_SECURITY_SETTINGS, nationalPhoneDigits } from "@shared/schema";
+import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { type DbShape, readDbSync, writeDb } from "./db";
 import { hashPassword } from "./password";
@@ -103,6 +105,26 @@ function isReady(order: OrderWithDetails): boolean {
 
 /** Zero-setup fallback used when DATABASE_URL is not configured. */
 const copyRole = (r: RoleRecord): RoleRecord => ({ ...r, permissions: [...r.permissions] });
+
+/**
+ * Expenses saved before the method/payee/status columns existed come back
+ * with those fields missing; they were all cash and all active.
+ */
+const normalizeExpense = (e: Partial<Expense> & Pick<Expense, "id" | "category" | "amount" | "spentOn" | "createdAt">): Expense => ({
+  note: null,
+  createdBy: null,
+  createdByName: null,
+  ...e,
+  method: e.method ?? "naqd",
+  payee: e.payee ?? null,
+  status: e.status ?? "active",
+  cancelledAt: e.cancelledAt ?? null,
+  cancelledBy: e.cancelledBy ?? null,
+  cancelledByName: e.cancelledByName ?? null,
+  cancelReason: e.cancelReason ?? null,
+  updatedAt: e.updatedAt ?? null,
+  updatedBy: e.updatedBy ?? null,
+});
 
 export class FileStorage implements IStorage {
   private db: DbShape;
@@ -1022,41 +1044,125 @@ export class FileStorage implements IStorage {
 
   // ------------------------------------------------------------- expenses
 
+  private allExpenses(): Expense[] {
+    return this.db.expenses.map((e) => normalizeExpense(e));
+  }
+
   async listExpenses(query: ExpenseQuery = {}): Promise<Paged<Expense> & { total_amount: number }> {
-    let rows = [...this.db.expenses];
+    const status = query.status ?? "active";
+    const q = query.search?.trim().toLowerCase();
+    let rows = this.allExpenses();
     if (query.from) rows = rows.filter((e) => e.spentOn >= query.from!);
     if (query.to) rows = rows.filter((e) => e.spentOn <= query.to!);
+    if (query.category) rows = rows.filter((e) => e.category === query.category);
+    if (query.method) rows = rows.filter((e) => e.method === query.method);
+    if (q) rows = rows.filter((e) => `${e.note ?? ""} ${e.payee ?? ""}`.toLowerCase().includes(q));
+    if (status !== "all") rows = rows.filter((e) => e.status === status);
     rows.sort((a, b) => b.spentOn.localeCompare(a.spentOn) || b.createdAt.localeCompare(a.createdAt));
 
     const total = rows.length;
-    const total_amount = rows.reduce((s, e) => s + e.amount, 0);
+    const total_amount = rows.filter((e) => e.status === "active").reduce((s, e) => s + e.amount, 0);
     const offset = query.offset ?? 0;
     const limit = query.limit ?? total;
     return { items: rows.slice(offset, offset + limit), total, total_amount };
   }
 
+  async getExpense(id: string): Promise<Expense | undefined> {
+    const row = this.db.expenses.find((e) => e.id === id);
+    return row && normalizeExpense(row);
+  }
+
   async createExpense(input: InsertExpense, actor: Actor): Promise<Expense> {
-    const row: Expense = {
+    const row = normalizeExpense({
       id: randomUUID(),
       category: input.category,
       amount: input.amount,
-      note: input.note?.trim() || null,
+      method: input.method,
+      payee: input.payee ?? null,
+      note: input.note ?? null,
       spentOn: input.spentOn,
       createdBy: actor.id,
       createdByName: actor.name,
       createdAt: new Date().toISOString(),
-    };
+    });
     this.db.expenses.push(row);
     await this.persist();
-    return row;
+    return { ...row };
   }
 
-  async deleteExpense(id: string): Promise<boolean> {
-    const before = this.db.expenses.length;
-    this.db.expenses = this.db.expenses.filter((e) => e.id !== id);
-    if (this.db.expenses.length === before) return false;
+  async updateExpense(id: string, input: UpdateExpenseInput, actor: Actor): Promise<Expense | undefined> {
+    const i = this.db.expenses.findIndex((e) => e.id === id);
+    if (i === -1) return undefined;
+    const row = normalizeExpense(this.db.expenses[i]);
+    if (input.category !== undefined) row.category = input.category;
+    if (input.amount !== undefined) row.amount = input.amount;
+    if (input.method !== undefined) row.method = input.method;
+    if (input.payee !== undefined) row.payee = input.payee ?? null;
+    if (input.note !== undefined) row.note = input.note ?? null;
+    if (input.spentOn !== undefined) row.spentOn = input.spentOn;
+    row.updatedAt = new Date().toISOString();
+    row.updatedBy = actor.id;
+    this.db.expenses[i] = row;
     await this.persist();
-    return true;
+    return { ...row };
+  }
+
+  async cancelExpense(id: string, reason: string, actor: Actor): Promise<Expense | undefined> {
+    const i = this.db.expenses.findIndex((e) => e.id === id);
+    if (i === -1) return undefined;
+    const row = normalizeExpense(this.db.expenses[i]);
+    row.status = "cancelled";
+    row.cancelledAt = new Date().toISOString();
+    row.cancelledBy = actor.id;
+    row.cancelledByName = actor.name;
+    row.cancelReason = reason;
+    this.db.expenses[i] = row;
+    await this.persist();
+    return { ...row };
+  }
+
+  async getExpenseSummary(from: string, to: string): Promise<ExpenseSummary> {
+    const inRange = this.allExpenses().filter((e) => e.spentOn >= from && e.spentOn <= to);
+    const active = inRange.filter((e) => e.status === "active");
+    const cancelled = inRange.filter((e) => e.status === "cancelled");
+
+    const group = <K extends string>(key: (e: Expense) => K) => {
+      const m = new Map<K, { amount: number; count: number }>();
+      for (const e of active) {
+        const g = m.get(key(e)) ?? { amount: 0, count: 0 };
+        g.amount += e.amount;
+        g.count += 1;
+        m.set(key(e), g);
+      }
+      return [...m.entries()].sort((a, b) => b[1].amount - a[1].amount);
+    };
+    const perDay = new Map<string, number>();
+    for (const e of active) perDay.set(e.spentOn, (perDay.get(e.spentOn) ?? 0) + e.amount);
+
+    const total = active.reduce((s, e) => s + e.amount, 0);
+    const prev = previousRange(from, to);
+    const prevTotal = this.allExpenses()
+      .filter((e) => e.status === "active" && e.spentOn >= prev.from && e.spentOn <= prev.to)
+      .reduce((s, e) => s + e.amount, 0);
+
+    return {
+      range: { from, to },
+      total,
+      count: active.length,
+      average: active.length ? Math.round(total / active.length) : 0,
+      largest: active.reduce((m, e) => Math.max(m, e.amount), 0),
+      byCategory: group((e) => e.category).map(([category, g]) => ({ category, ...g })),
+      byMethod: group((e) => e.method).map(([method, g]) => ({ method, ...g })),
+      daily: daysBetween(from, to).map((date) => ({ date, amount: perDay.get(date) ?? 0 })),
+      previous: { ...prev, total: prevTotal },
+      cancelled: { count: cancelled.length, amount: cancelled.reduce((s, e) => s + e.amount, 0) },
+    };
+  }
+
+  async listExpensePayees(limit = 30): Promise<string[]> {
+    const counts = new Map<string, number>();
+    for (const e of this.allExpenses()) if (e.payee) counts.set(e.payee, (counts.get(e.payee) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([p]) => p);
   }
 
   // ---------------------------------------------------------------- audit
@@ -1239,7 +1345,8 @@ export class FileStorage implements IStorage {
       refAgg.set(key, bucket);
     }
 
-    const spent = this.db.expenses.filter((e) => e.spentOn >= from && e.spentOn <= to);
+    // Cancelled expenses never reduce the profit.
+    const spent = this.allExpenses().filter((e) => e.status === "active" && e.spentOn >= from && e.spentOn <= to);
     const totalExpenses = spent.reduce((s, e) => s + e.amount, 0);
     const expAgg = new Map<string, number>();
     for (const e of spent) expAgg.set(e.category, (expAgg.get(e.category) ?? 0) + e.amount);

@@ -10,6 +10,10 @@ import {
   createOrderSchema,
   createPaymentSchema,
   insertExpenseSchema,
+  updateExpenseSchema,
+  cancelExpenseSchema,
+  EXPENSE_CATEGORIES,
+  PAYMENT_METHODS,
   insertPatientSchema,
   insertTestSchema,
   insertUserSchema,
@@ -70,7 +74,7 @@ import {
 } from "./session-policy";
 import { verifyPassword } from "./password";
 import { localDay, storage, usingPostgres } from "./storage";
-import type { Actor } from "./storage-types";
+import type { Actor, ExpenseQuery } from "./storage-types";
 import {
   claimPendingContact,
   deliverOrderResults,
@@ -704,18 +708,58 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   // -------------------------------------------------------------- expenses
 
+  /** The list filters, shared by the JSON list and the CSV export. */
+  const expenseQuery = (req: Request) => {
+    const status = stringParam(req.query.status);
+    const category = stringParam(req.query.category);
+    const method = stringParam(req.query.method);
+    return {
+      from: stringParam(req.query.from),
+      to: stringParam(req.query.to),
+      category: category && (EXPENSE_CATEGORIES as readonly string[]).includes(category) ? category : undefined,
+      method: method && (PAYMENT_METHODS as readonly string[]).includes(method) ? method : undefined,
+      search: stringParam(req.query.search),
+      status: (status === "cancelled" || status === "all" ? status : "active") as ExpenseQuery["status"],
+    };
+  };
+
+  /** "1 000 000 so'm" with plain spaces — the project's money format, not the locale's. */
+  const fmtSum = (n: number) => `${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
+
   app.get(
     "/api/expenses",
     requirePermission("expenses.read"),
     handle(async (req, res) => {
       res.json(
         await storage.listExpenses({
-          from: stringParam(req.query.from),
-          to: stringParam(req.query.to),
+          ...expenseQuery(req),
           limit: numberParam(req.query.limit),
           offset: numberParam(req.query.offset, 0),
         }),
       );
+    }),
+  );
+
+  /** Whole-range figures for the dashboard: not just the page on screen. */
+  app.get(
+    "/api/expenses/summary",
+    requirePermission("expenses.read"),
+    handle(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      const day = /^\d{4}-\d{2}-\d{2}$/;
+      if (!from || !to || !day.test(from) || !day.test(to) || from > to) {
+        return res.status(400).json({ message: "Davrni to'g'ri tanlang" });
+      }
+      res.json(await storage.getExpenseSummary(from, to));
+    }),
+  );
+
+  app.get(
+    "/api/expenses/payees",
+    requirePermission("expenses.manage"),
+    handle(async (_req, res) => {
+      res.json(await storage.listExpensePayees());
     }),
   );
 
@@ -725,19 +769,68 @@ export async function registerRoutes(app: Express): Promise<void> {
     handle(async (req, res) => {
       const input = insertExpenseSchema.parse(req.body);
       const row = await storage.createExpense(input, actorOf(req));
-      await audit(req, "create", "expense", row.id, `${row.category}: ${row.amount} so'm`);
+      await audit(
+        req,
+        "create",
+        "expense",
+        row.id,
+        `${row.category}: ${fmtSum(row.amount)}${row.payee ? ` → ${row.payee}` : ""} (${row.spentOn})`,
+      );
       res.status(201).json(row);
     }),
   );
 
-  app.delete(
+  app.patch(
     "/api/expenses/:id",
     requirePermission("expenses.manage"),
     handle(async (req, res) => {
-      const ok = await storage.deleteExpense(req.params.id);
-      if (!ok) return res.status(404).json({ message: "Xarajat topilmadi" });
-      await audit(req, "delete", "expense", req.params.id, "Xarajat o'chirildi");
-      res.sendStatus(204);
+      const input = updateExpenseSchema.parse(req.body);
+      const before = await storage.getExpense(req.params.id);
+      if (!before) return res.status(404).json({ message: "Xarajat topilmadi" });
+      if (before.status === "cancelled") {
+        return res.status(409).json({ message: "Bekor qilingan xarajatni tahrirlab bo'lmaydi" });
+      }
+      const row = await storage.updateExpense(req.params.id, input, actorOf(req));
+      if (!row) return res.status(404).json({ message: "Xarajat topilmadi" });
+
+      // A money record's edit history is the point of the audit log.
+      const changes: string[] = [];
+      if (row.amount !== before.amount) changes.push(`summa ${fmtSum(before.amount)} → ${fmtSum(row.amount)}`);
+      if (row.category !== before.category) changes.push(`kategoriya ${before.category} → ${row.category}`);
+      if (row.spentOn !== before.spentOn) changes.push(`sana ${before.spentOn} → ${row.spentOn}`);
+      if (row.method !== before.method) changes.push(`to'lov ${before.method} → ${row.method}`);
+      if ((row.payee ?? "") !== (before.payee ?? "")) changes.push(`oluvchi: ${row.payee ?? "—"}`);
+      if ((row.note ?? "") !== (before.note ?? "")) changes.push("izoh o'zgardi");
+      if (changes.length) {
+        await audit(req, "update", "expense", row.id, `${row.category} xarajati — ${changes.join(", ")}`);
+      }
+      res.json(row);
+    }),
+  );
+
+  /**
+   * TZ §10: financial records are cancelled, never deleted. The row stays in
+   * the ledger with who cancelled it and why, and drops out of every total.
+   */
+  app.post(
+    "/api/expenses/:id/cancel",
+    requirePermission("expenses.manage"),
+    handle(async (req, res) => {
+      const { reason } = cancelExpenseSchema.parse(req.body);
+      const before = await storage.getExpense(req.params.id);
+      if (!before) return res.status(404).json({ message: "Xarajat topilmadi" });
+      if (before.status === "cancelled") {
+        return res.status(409).json({ message: "Bu xarajat allaqachon bekor qilingan" });
+      }
+      const row = await storage.cancelExpense(req.params.id, reason, actorOf(req));
+      await audit(
+        req,
+        "delete",
+        "expense",
+        req.params.id,
+        `${before.category}: ${fmtSum(before.amount)} bekor qilindi — ${reason}`,
+      );
+      res.json(row);
     }),
   );
 
@@ -839,15 +932,22 @@ export async function registerRoutes(app: Express): Promise<void> {
     "/api/export/expenses.csv",
     requirePermission("data.export"),
     handle(async (req, res) => {
-      const { items } = await storage.listExpenses({
-        from: stringParam(req.query.from),
-        to: stringParam(req.query.to),
-      });
+      const { items } = await storage.listExpenses(expenseQuery(req));
       csvHeaders(res, `xarajatlar-${stamp()}.csv`);
       res.send(
         toCsv(
-          ["Sana", "Kategoriya", "Summa", "Izoh", "Kim kiritdi"],
-          items.map((e) => [e.spentOn, e.category, e.amount, e.note ?? "", e.createdByName ?? ""]),
+          ["Sana", "Kategoriya", "Summa", "To'lov usuli", "Oluvchi", "Izoh", "Kim kiritdi", "Holat", "Bekor qilish sababi"],
+          items.map((e) => [
+            e.spentOn,
+            e.category,
+            e.amount,
+            e.method,
+            e.payee ?? "",
+            e.note ?? "",
+            e.createdByName ?? "",
+            e.status === "cancelled" ? "Bekor qilingan" : "Faol",
+            e.cancelReason ?? "",
+          ]),
         ),
       );
     }),
@@ -1562,6 +1662,13 @@ export async function registerRoutes(app: Express): Promise<void> {
       res.sendStatus(204);
     }),
   );
+
+  // An unknown API path is a 404 in JSON, not the client app's index.html with
+  // a 200 — which is what the SPA fallback further down would otherwise serve.
+  app.use("/api", (req, res, next) => {
+    if (res.headersSent) return next();
+    res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });
+  });
 
   // Turn validation and storage rejections into clean Uzbek API errors before
   // they reach the generic 500 handler in index.ts.
