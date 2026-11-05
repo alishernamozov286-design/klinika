@@ -32,6 +32,9 @@ import {
   updateDepartmentSchema,
   updateDoctorSchema,
   securitySettingsSchema,
+  type DuplicateCandidate,
+  type InsertPatient,
+  type Patient,
   type PublicUser,
   type SessionUser,
 } from "@shared/schema";
@@ -64,6 +67,7 @@ import {
   sessionStore,
 } from "./auth";
 import { csvHeaders, stamp, toCsv } from "./csv";
+import { ageFromBirthDate, compareIdentity, nameKey, patientAge } from "@shared/patient-identity";
 import { hasPermission, invalidateRoles, isSuperAdmin, requirePermission, toSessionUser } from "./rbac";
 import {
   getSessionPolicy,
@@ -334,11 +338,79 @@ export async function registerRoutes(app: Express): Promise<void> {
     "/api/patients/:id",
     requirePermission("patients.read"),
     handle(async (req, res) => {
-      const patient = await storage.getPatient(req.params.id);
+      const patient = await storage.getPatientDetails(req.params.id);
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
       res.json(patient);
     }),
   );
+
+  /**
+   * Graded possible duplicates of the person described (TZ §4.2). Strong
+   * matches first; at most five, which is all a registrar will read.
+   */
+  async function findDuplicates(
+    input: Partial<Pick<InsertPatient, "fullName" | "phone" | "birthDate" | "passport" | "pinfl">>,
+    excludeId?: string,
+  ): Promise<DuplicateCandidate[]> {
+    const typed = {
+      fullName: input.fullName ?? null,
+      phoneDigits: input.phone ? nationalPhoneDigits(input.phone) : null,
+      birthDate: input.birthDate ?? null,
+      passport: input.passport ?? null,
+      pinfl: input.pinfl ?? null,
+    };
+    const surname = (input.fullName ?? "").trim().split(/\s+/)[0] || null;
+    const candidates = await storage.findPatientCandidates({
+      surname,
+      nameKey: nameKey(surname),
+      phoneDigits: typed.phoneDigits,
+      birthDate: typed.birthDate,
+      passport: typed.passport,
+      pinfl: typed.pinfl,
+      excludeId,
+    });
+    const graded: DuplicateCandidate[] = [];
+    for (const patient of candidates) {
+      const match = compareIdentity(typed, {
+        fullName: patient.fullName,
+        phoneDigits: nationalPhoneDigits(patient.phone),
+        birthDate: patient.birthDate,
+        passport: patient.passport,
+        pinfl: patient.pinfl,
+      });
+      if (match) graded.push({ patient, ...match });
+    }
+    return graded
+      .sort((a, b) => Number(b.strength === "strong") - Number(a.strength === "strong") || b.reasons.length - a.reasons.length)
+      .slice(0, 5);
+  }
+
+  /** The form asks while the registrar types, before anything is saved. */
+  app.post(
+    "/api/patients/check-duplicates",
+    requirePermission("patients.create", "patients.update"),
+    handle(async (req, res) => {
+      const input = insertPatientSchema
+        .pick({ fullName: true, phone: true, birthDate: true, passport: true, pinfl: true })
+        .partial()
+        .safeParse(req.body);
+      // Half-typed input is normal here: check whatever parses, ignore the rest.
+      const body = input.success ? input.data : {};
+      const excludeId = typeof req.body?.excludeId === "string" ? req.body.excludeId : undefined;
+      res.json(await findDuplicates(body, excludeId));
+    }),
+  );
+
+  /** The birth date, when given, also keeps the legacy age column truthful. */
+  const withAge = <T extends Partial<InsertPatient>>(input: T): T =>
+    input.birthDate ? { ...input, age: ageFromBirthDate(input.birthDate) } : input;
+
+  const duplicateResponse = (res: Response, strong: DuplicateCandidate[]) =>
+    res.status(409).json({
+      code: "DUPLICATE_PATIENT",
+      message: `Bu bemor bazada bor bo'lishi mumkin: ${strong[0].patient.fullName} (№${strong[0].patient.patientNumber}) — ${strong[0].reasons.join(", ")}`,
+      candidates: strong,
+    });
 
   /** A patient's full visit history — the "was he here before?" question. */
   app.get(
@@ -354,9 +426,19 @@ export async function registerRoutes(app: Express): Promise<void> {
     "/api/patients",
     requirePermission("patients.create"),
     handle(async (req, res) => {
-      const input = insertPatientSchema.parse(req.body);
-      const patient = await storage.createPatient(input);
-      await audit(req, "create", "patient", patient.id, `№${patient.patientNumber} ${patient.fullName}`);
+      const input = withAge(insertPatientSchema.parse(req.body));
+      if (!input.allowDuplicate) {
+        const strong = (await findDuplicates(input)).filter((c) => c.strength === "strong");
+        if (strong.length) return duplicateResponse(res, strong);
+      }
+      const patient = await storage.createPatient(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "patient",
+        patient.id,
+        `№${patient.patientNumber} ${patient.fullName}${input.allowDuplicate ? " (o'xshash bemor ogohlantirishi tasdiqlangan)" : ""}`,
+      );
       // If they opened the bot before their first visit, bind that chat now.
       res.status(201).json(await claimPendingContact(patient));
     }),
@@ -366,12 +448,75 @@ export async function registerRoutes(app: Express): Promise<void> {
     "/api/patients/:id",
     requirePermission("patients.update"),
     handle(async (req, res) => {
-      const input = insertPatientSchema.partial().parse(req.body);
-      const patient = await storage.updatePatient(req.params.id, input);
+      const input = withAge(insertPatientSchema.partial().parse(req.body));
+      const before = await storage.getPatient(req.params.id);
+      if (!before) return res.status(404).json({ message: "Bemor topilmadi" });
+
+      // An edit is only stopped by a document collision: two cards sharing a
+      // passport or JShShIR is never right, whereas a shared phone often is.
+      const idChanged =
+        (input.pinfl !== undefined && input.pinfl !== before.pinfl) ||
+        (input.passport !== undefined && input.passport !== before.passport);
+      if (idChanged && !input.allowDuplicate) {
+        const clash = (await findDuplicates({ pinfl: input.pinfl, passport: input.passport }, before.id)).filter(
+          (c) => c.strength === "strong",
+        );
+        if (clash.length) return duplicateResponse(res, clash);
+      }
+
+      const patient = await storage.updatePatient(req.params.id, input, actorOf(req));
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
-      await audit(req, "update", "patient", patient.id, `№${patient.patientNumber} ${patient.fullName} tahrirlandi`);
+
+      const changes: string[] = [];
+      const fields: [keyof Patient, string][] = [
+        ["fullName", "F.I.Sh"],
+        ["phone", "telefon"],
+        ["birthDate", "tug'ilgan sana"],
+        ["gender", "jinsi"],
+        ["address", "manzil"],
+        ["passport", "pasport"],
+        ["pinfl", "JShShIR"],
+      ];
+      for (const [k, label] of fields) if ((before[k] ?? null) !== (patient[k] ?? null)) changes.push(label);
+      if (input.emergencyContact !== undefined) changes.push("favqulodda aloqa");
+      await audit(
+        req,
+        "update",
+        "patient",
+        patient.id,
+        `№${patient.patientNumber} ${patient.fullName} — ${changes.length ? changes.join(", ") + " o'zgardi" : "tahrirlandi"}`,
+      );
       // A corrected phone number can match a chat that was waiting all along.
       res.json(await claimPendingContact(patient));
+    }),
+  );
+
+  /**
+   * Folds a duplicate card into the real one (TZ §4.2). Everything clinical
+   * moves; nothing is lost. Gated like deletion because the duplicate card
+   * stops existing.
+   */
+  app.post(
+    "/api/patients/:id/merge",
+    requirePermission("patients.delete"),
+    handle(async (req, res) => {
+      const intoId = typeof req.body?.intoId === "string" ? req.body.intoId : "";
+      if (!intoId || intoId === req.params.id) {
+        return res.status(400).json({ message: "Qaysi bemorga birlashtirishni tanlang" });
+      }
+      const [source, target] = await Promise.all([storage.getPatient(req.params.id), storage.getPatient(intoId)]);
+      if (!source || !target) return res.status(404).json({ message: "Bemor topilmadi" });
+      const moved = await storage.mergePatients(source.id, target.id);
+      if (!moved) return res.status(404).json({ message: "Bemor topilmadi" });
+      await audit(
+        req,
+        "update",
+        "patient",
+        target.id,
+        `№${source.patientNumber} ${source.fullName} kartasi №${target.patientNumber} ${target.fullName} bilan birlashtirildi ` +
+          `(${moved.orders} ta buyurtma, ${moved.contacts} ta aloqa ko'chirildi)`,
+      );
+      res.json({ ...moved, patient: await storage.getPatientDetails(target.id) });
     }),
   );
 
@@ -865,14 +1010,33 @@ export async function registerRoutes(app: Express): Promise<void> {
       csvHeaders(res, `bemorlar-${stamp()}.csv`);
       res.send(
         toCsv(
-          ["№", "F.I.Sh", "Telefon", "Yosh", "Jinsi", "Manzil", "Telegram", "Ro'yxatdan o'tgan"],
+          [
+            "№",
+            "F.I.Sh",
+            "Telefon",
+            "Tug'ilgan sana",
+            "Yosh",
+            "Jinsi",
+            "Manzil",
+            "Pasport",
+            "JShShIR",
+            "Tashriflar",
+            "Oxirgi tashrif",
+            "Telegram",
+            "Ro'yxatdan o'tgan",
+          ],
           items.map((p) => [
             p.patientNumber,
             p.fullName,
             p.phone,
-            p.age ?? "",
+            p.birthDate ?? "",
+            patientAge(p) ?? "",
             p.gender ?? "",
             p.address ?? "",
+            p.passport ?? "",
+            p.pinfl ?? "",
+            p.visitCount,
+            p.lastVisitAt ? localDay(p.lastVisitAt) : "",
             p.telegramChatId ? "ha" : "yo'q",
             localDay(p.createdAt),
           ]),

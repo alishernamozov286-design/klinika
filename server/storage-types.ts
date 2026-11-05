@@ -24,6 +24,8 @@ import type {
   OrderWithDetails,
   Paged,
   Patient,
+  PatientDetails,
+  PatientListItem,
   PublicUser,
   ResultFlag,
   RevenueReportData,
@@ -55,6 +57,17 @@ export function todayKey(): string {
 }
 
 export type PatientQuery = { search?: string; limit?: number; offset?: number };
+
+export type PatientCandidateQuery = {
+  nameKey?: string | null;
+  /** First word of the name, for a cheap prefilter before nameKey is compared. */
+  surname?: string | null;
+  phoneDigits?: string | null;
+  birthDate?: string | null;
+  passport?: string | null;
+  pinfl?: string | null;
+  excludeId?: string;
+};
 
 export type OrderQuery = {
   search?: string;
@@ -228,13 +241,26 @@ export interface IStorage {
    */
   setLockState(userId: string, state: LockState): Promise<void>;
 
-  listPatients(query?: PatientQuery): Promise<Paged<Patient>>;
+  /** Each row carries when the patient was last here and how many visits they have had. */
+  listPatients(query?: PatientQuery): Promise<Paged<PatientListItem>>;
+  /** The card with its contacts — what the edit form and the patient card load. */
+  getPatientDetails(id: string): Promise<PatientDetails | undefined>;
+  /**
+   * Patients who might be the person described: any one identity field in
+   * common. Deliberately broad; shared/patient-identity grades the result.
+   */
+  findPatientCandidates(input: PatientCandidateQuery): Promise<Patient[]>;
+  /**
+   * Folds a duplicate card into the real one: its orders, contacts and
+   * Telegram link move over, the empty duplicate is removed. Returns what moved.
+   */
+  mergePatients(sourceId: string, targetId: string): Promise<{ orders: number; contacts: number } | undefined>;
   getPatient(id: string): Promise<Patient | undefined>;
   /** Matched on the 9 national digits, so formatting never blocks a match. */
   getPatientByPhone(phone: string): Promise<Patient | undefined>;
   getPatientByChatId(chatId: string): Promise<Patient | undefined>;
-  createPatient(input: InsertPatient): Promise<Patient>;
-  updatePatient(id: string, input: Partial<InsertPatient>): Promise<Patient | undefined>;
+  createPatient(input: InsertPatient, actor?: Actor): Promise<Patient>;
+  updatePatient(id: string, input: Partial<InsertPatient>, actor?: Actor): Promise<Patient | undefined>;
   deletePatient(id: string): Promise<boolean>;
 
   listTests(opts?: { activeOnly?: boolean }): Promise<Test[]>;

@@ -3,6 +3,7 @@ import { pgTable, text, varchar, integer, timestamp, boolean, index, json } from
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { isPermission, type Permission } from "./permissions";
+import { normalizePassport, normalizePinfl } from "./patient-identity";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -227,14 +228,43 @@ export const patients = pgTable("patients", {
   fullName: text("full_name").notNull(),
   phone: text("phone").notNull(),
   address: text("address"),
+  /** Typed in at registration when the birth date is not known. Display uses patientAge(). */
   age: integer("age"),
   gender: text("gender"),
+  /** YYYY-MM-DD. Preferred over `age`: an age goes stale, a birth date does not. */
+  birthDate: text("birth_date"),
+  /** Passport or ID card series and number, normalised: "AA1234567". */
+  passport: text("passport"),
+  /** JShShIR — the 14-digit personal number; the surest key against duplicates. */
+  pinfl: text("pinfl"),
   createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
   // Set by the Telegram bot when the patient shares their contact; null means
   // "not connected yet", and results for them stay queued until they are.
   telegramChatId: text("telegram_chat_id"),
   telegramLinkedAt: isoTimestamp("telegram_linked_at"),
 });
+
+/**
+ * People to call about a patient (TZ §10 `patient_contacts`). Separate rows
+ * rather than columns so a patient can have more than one; the registration
+ * form edits the emergency one.
+ */
+export const patientContacts = pgTable(
+  "patient_contacts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    patientId: varchar("patient_id").notNull(),
+    name: text("name").notNull(),
+    /** "Onasi", "Turmush o'rtog'i"… free text. */
+    relation: text("relation"),
+    phone: text("phone").notNull(),
+    isEmergency: boolean("is_emergency").notNull().default(true),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({ patientIdx: index("IDX_patient_contacts_patient").on(t.patientId) }),
+);
 
 export const tests = pgTable("tests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -472,6 +502,20 @@ export type SessionUser = PublicUser & {
 };
 
 export type Patient = typeof patients.$inferSelect;
+export type PatientContact = typeof patientContacts.$inferSelect;
+
+/** A row of the patients list: the card plus when they were last here. */
+export type PatientListItem = Patient & { lastVisitAt: string | null; visitCount: number };
+
+/** One patient with everything the card screen and the edit form need. */
+export type PatientDetails = Patient & { contacts: PatientContact[] };
+
+/** A possible duplicate of the patient being registered. */
+export type DuplicateCandidate = {
+  patient: Patient;
+  strength: "strong" | "weak";
+  reasons: string[];
+};
 
 export type Department = Omit<typeof departments.$inferSelect, "kind"> & { kind: DepartmentKind };
 /** A department as the admin screen lists it: with its doctor head count. */
@@ -614,10 +658,53 @@ export function nationalPhoneDigits(value: string | null | undefined): string {
   return digits.slice(0, 9);
 }
 
+const birthDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang")
+  .refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri")
+  .refine((v) => v <= localDayString(new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas")
+  .refine((v) => Number(v.slice(0, 4)) >= new Date().getFullYear() - 130, "Tug'ilgan sanani tekshiring");
+
+export const emergencyContactSchema = z.object({
+  name: z.string().trim().min(2, "Aloqa uchun shaxs ismini kiriting").max(120),
+  relation: z
+    .string()
+    .trim()
+    .max(60)
+    .nullish()
+    .transform((v) => v || null),
+  phone: z.string().trim().min(7, "Telefon raqamini to'g'ri kiriting").transform(normalizeUzPhone),
+});
+
 export const insertPatientSchema = createInsertSchema(patients)
   // patientNumber is allocated by the store, never accepted from the client.
-  .omit({ id: true, patientNumber: true, createdAt: true, telegramChatId: true, telegramLinkedAt: true })
+  .omit({
+    id: true,
+    patientNumber: true,
+    createdAt: true,
+    updatedAt: true,
+    updatedBy: true,
+    telegramChatId: true,
+    telegramLinkedAt: true,
+  })
   .extend({
+    birthDate: z.union([birthDateSchema, z.literal("")]).nullish().transform((v) => v || null),
+    passport: z
+      .string()
+      .trim()
+      .max(20, "Pasport raqami juda uzun")
+      .nullish()
+      .transform((v) => normalizePassport(v))
+      .refine((v) => v === null || /^[A-Z]{2}\d{7}$/.test(v) || /^[A-Z0-9]{5,20}$/.test(v), "Pasport raqamini tekshiring"),
+    pinfl: z
+      .string()
+      .nullish()
+      .transform((v) => normalizePinfl(v))
+      .refine((v) => v === null || /^\d{14}$/.test(v), "JShShIR 14 ta raqamdan iborat bo'lishi kerak"),
+    /** Replaces the emergency contact; null removes it, undefined leaves it alone. */
+    emergencyContact: emergencyContactSchema.nullish(),
+    /** Sent after the registrar has seen the duplicate warning and confirmed. */
+    allowDuplicate: z.boolean().optional(),
     fullName: z.string().trim().min(3, "F.I.Sh kamida 3 ta belgidan iborat bo'lishi kerak"),
     phone: z
       .string()

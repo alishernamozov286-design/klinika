@@ -25,6 +25,9 @@ import type {
   OrderTest,
   OrderWithDetails,
   Patient,
+  PatientContact,
+  PatientDetails,
+  PatientListItem,
   PublicUser,
   RevenueReportData,
   RoleRecord,
@@ -43,6 +46,7 @@ import type {
   User,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
+import { nameKey } from "@shared/patient-identity";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { type DbShape, readDbSync, writeDb } from "./db";
 import { hashPassword } from "./password";
@@ -63,6 +67,7 @@ import {
   type IStorage,
   type OrderQuery,
   type Paged,
+  type PatientCandidateQuery,
   type PatientQuery,
   type ResultInput,
   resolveFlag,
@@ -105,6 +110,16 @@ function isReady(order: OrderWithDetails): boolean {
 
 /** Zero-setup fallback used when DATABASE_URL is not configured. */
 const copyRole = (r: RoleRecord): RoleRecord => ({ ...r, permissions: [...r.permissions] });
+
+/** Patients saved before birth date / documents / edit stamps existed. */
+const normalizePatient = (p: Patient): Patient => ({
+  ...p,
+  birthDate: p.birthDate ?? null,
+  passport: p.passport ?? null,
+  pinfl: p.pinfl ?? null,
+  updatedAt: p.updatedAt ?? null,
+  updatedBy: p.updatedBy ?? null,
+});
 
 /**
  * Expenses saved before the method/payee/status columns existed come back
@@ -488,9 +503,9 @@ export class FileStorage implements IStorage {
 
   // ------------------------------------------------------------- patients
 
-  async listPatients(query: PatientQuery = {}): Promise<Paged<Patient>> {
+  async listPatients(query: PatientQuery = {}): Promise<Paged<PatientListItem>> {
     const search = query.search?.trim().toLowerCase();
-    let rows = [...this.db.patients];
+    let rows = this.db.patients.map(normalizePatient);
     if (search) {
       const wantedNumber = asNumberSearch(search);
       rows = rows.filter(
@@ -499,18 +514,93 @@ export class FileStorage implements IStorage {
           contains(p.fullName, search) ||
           contains(p.phone, search) ||
           phoneContains(p.phone, search) ||
-          contains(p.address, search),
+          contains(p.address, search) ||
+          (p.passport ?? "").toLowerCase().includes(search.replace(/\s/g, "")) ||
+          (search.replace(/\D/g, "").length >= 6 && (p.pinfl ?? "").includes(search.replace(/\D/g, ""))),
       );
     }
     rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.patientNumber - a.patientNumber);
     const total = rows.length;
     const offset = query.offset ?? 0;
     const limit = query.limit ?? total;
-    return { items: rows.slice(offset, offset + limit), total };
+    const page = rows.slice(offset, offset + limit).map((p) => {
+      const visits = this.db.orders.filter((o) => o.patientId === p.id && o.status !== "cancelled");
+      const last = visits.reduce<string | null>((m, o) => (!m || o.createdAt > m ? o.createdAt : m), null);
+      return { ...p, lastVisitAt: last, visitCount: visits.length };
+    });
+    return { items: page, total };
   }
 
   async getPatient(id: string): Promise<Patient | undefined> {
-    return this.db.patients.find((p) => p.id === id);
+    const p = this.db.patients.find((x) => x.id === id);
+    return p && normalizePatient(p);
+  }
+
+  async getPatientDetails(id: string): Promise<PatientDetails | undefined> {
+    const p = await this.getPatient(id);
+    if (!p) return undefined;
+    const contacts = this.db.patientContacts.filter((c) => c.patientId === id).map((c) => ({ ...c }));
+    return { ...p, contacts };
+  }
+
+  async findPatientCandidates(q: PatientCandidateQuery): Promise<Patient[]> {
+    return this.db.patients
+      .map(normalizePatient)
+      .filter((p) => p.id !== q.excludeId)
+      .filter(
+        (p) =>
+          (q.pinfl && p.pinfl === q.pinfl) ||
+          (q.passport && p.passport === q.passport) ||
+          (q.phoneDigits?.length === 9 && nationalPhoneDigits(p.phone) === q.phoneDigits) ||
+          (q.nameKey && nameKey(p.fullName).startsWith(q.nameKey)),
+      )
+      .slice(0, 20);
+  }
+
+  /** Writes the emergency contact: replaced by a value, removed by null, kept by undefined. */
+  private setEmergencyContact(patientId: string, contact: InsertPatient["emergencyContact"]) {
+    if (contact === undefined) return;
+    this.db.patientContacts = this.db.patientContacts.filter((c) => !(c.patientId === patientId && c.isEmergency));
+    if (contact) {
+      const row: PatientContact = {
+        id: randomUUID(),
+        patientId,
+        name: contact.name,
+        relation: contact.relation ?? null,
+        phone: contact.phone,
+        isEmergency: true,
+        createdAt: new Date().toISOString(),
+      };
+      this.db.patientContacts.push(row);
+    }
+  }
+
+  async mergePatients(sourceId: string, targetId: string): Promise<{ orders: number; contacts: number } | undefined> {
+    const source = this.db.patients.find((p) => p.id === sourceId);
+    const target = this.db.patients.find((p) => p.id === targetId);
+    if (!source || !target || source.id === target.id) return undefined;
+    let orders = 0;
+    for (const o of this.db.orders) if (o.patientId === sourceId) (o.patientId = targetId), orders++;
+    let contacts = 0;
+    for (const c of this.db.patientContacts) {
+      if (c.patientId !== sourceId) continue;
+      // The real card keeps its own emergency contact if it has one.
+      if (c.isEmergency && this.db.patientContacts.some((x) => x.patientId === targetId && x.isEmergency)) continue;
+      c.patientId = targetId;
+      contacts++;
+    }
+    this.db.patientContacts = this.db.patientContacts.filter((c) => c.patientId !== sourceId);
+    // Fill gaps on the real card from the duplicate; never overwrite.
+    for (const k of ["birthDate", "passport", "pinfl", "address", "gender", "age"] as const) {
+      if (target[k] == null && source[k] != null) (target as Record<string, unknown>)[k] = source[k];
+    }
+    if (!target.telegramChatId && source.telegramChatId) {
+      target.telegramChatId = source.telegramChatId;
+      target.telegramLinkedAt = source.telegramLinkedAt;
+    }
+    this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
+    await this.persist();
+    return { orders, contacts };
   }
 
   async getPatientByPhone(phone: string): Promise<Patient | undefined> {
@@ -525,7 +615,7 @@ export class FileStorage implements IStorage {
     return this.db.patients.find((p) => p.telegramChatId === chatId);
   }
 
-  async createPatient(input: InsertPatient): Promise<Patient> {
+  async createPatient(input: InsertPatient, actor?: Actor): Promise<Patient> {
     this.db.counters.patientNumber += 1;
     const patient: Patient = {
       id: randomUUID(),
@@ -535,25 +625,39 @@ export class FileStorage implements IStorage {
       address: input.address ?? null,
       age: input.age ?? null,
       gender: input.gender ?? null,
+      birthDate: input.birthDate ?? null,
+      passport: input.passport ?? null,
+      pinfl: input.pinfl ?? null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
+      updatedBy: actor?.id ?? null,
       telegramChatId: null,
       telegramLinkedAt: null,
     };
     this.db.patients.push(patient);
+    this.setEmergencyContact(patient.id, input.emergencyContact);
     await this.persist();
-    return patient;
+    return { ...patient };
   }
 
-  async updatePatient(id: string, input: Partial<InsertPatient>): Promise<Patient | undefined> {
-    const patient = this.db.patients.find((p) => p.id === id);
-    if (!patient) return undefined;
+  async updatePatient(id: string, input: Partial<InsertPatient>, actor?: Actor): Promise<Patient | undefined> {
+    const i = this.db.patients.findIndex((p) => p.id === id);
+    if (i === -1) return undefined;
+    const patient = normalizePatient(this.db.patients[i]);
     if (input.fullName !== undefined) patient.fullName = input.fullName;
     if (input.phone !== undefined) patient.phone = input.phone;
     if (input.address !== undefined) patient.address = input.address ?? null;
     if (input.age !== undefined) patient.age = input.age ?? null;
     if (input.gender !== undefined) patient.gender = input.gender ?? null;
+    if (input.birthDate !== undefined) patient.birthDate = input.birthDate ?? null;
+    if (input.passport !== undefined) patient.passport = input.passport ?? null;
+    if (input.pinfl !== undefined) patient.pinfl = input.pinfl ?? null;
+    patient.updatedAt = new Date().toISOString();
+    patient.updatedBy = actor?.id ?? null;
+    this.db.patients[i] = patient;
+    this.setEmergencyContact(id, input.emergencyContact);
     await this.persist();
-    return patient;
+    return { ...patient };
   }
 
   async deletePatient(id: string): Promise<boolean> {
@@ -563,6 +667,7 @@ export class FileStorage implements IStorage {
     const before = this.db.patients.length;
     this.db.patients = this.db.patients.filter((p) => p.id !== id);
     if (this.db.patients.length === before) return false;
+    this.db.patientContacts = this.db.patientContacts.filter((c) => c.patientId !== id);
     await this.persist();
     return true;
   }

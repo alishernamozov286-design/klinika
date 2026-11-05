@@ -307,6 +307,94 @@ var init_permissions = __esm({
   }
 });
 
+// shared/patient-identity.ts
+function nameKey(name) {
+  return (name ?? "").toLowerCase().split("").map((c) => CYR[c] ?? c).join("").replace(/[‘’ʻʼ'`]/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, " ").trim();
+}
+function shortNameKey(name) {
+  return nameKey(name).split(" ").slice(0, 2).join(" ");
+}
+function normalizePassport(value) {
+  const v = (value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return v || null;
+}
+function normalizePinfl(value) {
+  const v = (value ?? "").replace(/\D/g, "");
+  return v || null;
+}
+function compareIdentity(input, candidate) {
+  const strong = [];
+  const weak = [];
+  const pinfl = normalizePinfl(input.pinfl);
+  const passport3 = normalizePassport(input.passport);
+  const sameName = Boolean(input.fullName) && shortNameKey(input.fullName) === shortNameKey(candidate.fullName);
+  const samePhone = (input.phoneDigits ?? "").length === 9 && input.phoneDigits === candidate.phoneDigits;
+  const sameBirth = Boolean(input.birthDate) && input.birthDate === candidate.birthDate;
+  if (pinfl && pinfl === normalizePinfl(candidate.pinfl)) strong.push("JShShIR bir xil");
+  if (passport3 && passport3 === normalizePassport(candidate.passport)) strong.push("Pasport bir xil");
+  if (sameName && samePhone) strong.push("Ism va telefon bir xil");
+  if (sameName && sameBirth) strong.push("Ism va tug'ilgan sana bir xil");
+  if (strong.length) return { strength: "strong", reasons: strong };
+  if (samePhone) weak.push("Telefon raqami bir xil");
+  if (sameName) weak.push(sameBirth === false && input.birthDate && candidate.birthDate ? "Ismi bir xil, tug'ilgan sanasi boshqa" : "Ismi bir xil");
+  return weak.length ? { strength: "weak", reasons: weak } : null;
+}
+function ageFromBirthDate(birthDate, today = /* @__PURE__ */ new Date()) {
+  if (!birthDate || !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return null;
+  const [y, m, d] = birthDate.split("-").map(Number);
+  let age = today.getFullYear() - y;
+  if (today.getMonth() + 1 < m || today.getMonth() + 1 === m && today.getDate() < d) age--;
+  return age >= 0 ? age : null;
+}
+function patientAge(p) {
+  return ageFromBirthDate(p?.birthDate) ?? p?.age ?? null;
+}
+var CYR;
+var init_patient_identity = __esm({
+  "shared/patient-identity.ts"() {
+    "use strict";
+    CYR = {
+      \u0430: "a",
+      \u0431: "b",
+      \u0432: "v",
+      \u0433: "g",
+      \u0493: "g'",
+      \u0434: "d",
+      \u0435: "e",
+      \u0451: "yo",
+      \u0436: "j",
+      \u0437: "z",
+      \u0438: "i",
+      \u0439: "y",
+      \u043A: "k",
+      \u049B: "q",
+      \u043B: "l",
+      \u043C: "m",
+      \u043D: "n",
+      \u043E: "o",
+      \u045E: "o'",
+      \u043F: "p",
+      \u0440: "r",
+      \u0441: "s",
+      \u0442: "t",
+      \u0443: "u",
+      \u0444: "f",
+      \u0445: "x",
+      \u04B3: "h",
+      \u0446: "s",
+      \u0447: "ch",
+      \u0448: "sh",
+      \u0449: "sh",
+      \u044A: "",
+      \u044B: "i",
+      \u044C: "",
+      \u044D: "e",
+      \u044E: "yu",
+      \u044F: "ya"
+    };
+  }
+});
+
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
@@ -336,6 +424,7 @@ __export(schema_exports, {
   daysBetween: () => daysBetween,
   departments: () => departments,
   doctors: () => doctors,
+  emergencyContactSchema: () => emergencyContactSchema,
   expenses: () => expenses,
   insertDepartmentSchema: () => insertDepartmentSchema,
   insertDoctorSchema: () => insertDoctorSchema,
@@ -352,6 +441,7 @@ __export(schema_exports, {
   normalizeUzPhone: () => normalizeUzPhone,
   orderTests: () => orderTests,
   orders: () => orders,
+  patientContacts: () => patientContacts,
   patients: () => patients,
   payments: () => payments,
   previousRange: () => previousRange,
@@ -411,11 +501,12 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, patientContacts, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
     init_permissions();
+    init_patient_identity();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
     ORDER_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
@@ -551,14 +642,37 @@ var init_schema = __esm({
       fullName: text("full_name").notNull(),
       phone: text("phone").notNull(),
       address: text("address"),
+      /** Typed in at registration when the birth date is not known. Display uses patientAge(). */
       age: integer("age"),
       gender: text("gender"),
+      /** YYYY-MM-DD. Preferred over `age`: an age goes stale, a birth date does not. */
+      birthDate: text("birth_date"),
+      /** Passport or ID card series and number, normalised: "AA1234567". */
+      passport: text("passport"),
+      /** JShShIR — the 14-digit personal number; the surest key against duplicates. */
+      pinfl: text("pinfl"),
       createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by"),
       // Set by the Telegram bot when the patient shares their contact; null means
       // "not connected yet", and results for them stay queued until they are.
       telegramChatId: text("telegram_chat_id"),
       telegramLinkedAt: isoTimestamp("telegram_linked_at")
     });
+    patientContacts = pgTable(
+      "patient_contacts",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        patientId: varchar("patient_id").notNull(),
+        name: text("name").notNull(),
+        /** "Onasi", "Turmush o'rtog'i"… free text. */
+        relation: text("relation"),
+        phone: text("phone").notNull(),
+        isEmergency: boolean("is_emergency").notNull().default(true),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull()
+      },
+      (t) => ({ patientIdx: index("IDX_patient_contacts_patient").on(t.patientId) })
+    );
     tests = pgTable("tests", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       name: text("name").notNull(),
@@ -716,7 +830,28 @@ var init_schema = __esm({
       director: text("director"),
       licenseNumber: text("license_number")
     });
-    insertPatientSchema = createInsertSchema(patients).omit({ id: true, patientNumber: true, createdAt: true, telegramChatId: true, telegramLinkedAt: true }).extend({
+    birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
+    emergencyContactSchema = z.object({
+      name: z.string().trim().min(2, "Aloqa uchun shaxs ismini kiriting").max(120),
+      relation: z.string().trim().max(60).nullish().transform((v) => v || null),
+      phone: z.string().trim().min(7, "Telefon raqamini to'g'ri kiriting").transform(normalizeUzPhone)
+    });
+    insertPatientSchema = createInsertSchema(patients).omit({
+      id: true,
+      patientNumber: true,
+      createdAt: true,
+      updatedAt: true,
+      updatedBy: true,
+      telegramChatId: true,
+      telegramLinkedAt: true
+    }).extend({
+      birthDate: z.union([birthDateSchema, z.literal("")]).nullish().transform((v) => v || null),
+      passport: z.string().trim().max(20, "Pasport raqami juda uzun").nullish().transform((v) => normalizePassport(v)).refine((v) => v === null || /^[A-Z]{2}\d{7}$/.test(v) || /^[A-Z0-9]{5,20}$/.test(v), "Pasport raqamini tekshiring"),
+      pinfl: z.string().nullish().transform((v) => normalizePinfl(v)).refine((v) => v === null || /^\d{14}$/.test(v), "JShShIR 14 ta raqamdan iborat bo'lishi kerak"),
+      /** Replaces the emergency contact; null removes it, undefined leaves it alone. */
+      emergencyContact: emergencyContactSchema.nullish(),
+      /** Sent after the registrar has seen the duplicate warning and confirmed. */
+      allowDuplicate: z.boolean().optional(),
       fullName: z.string().trim().min(3, "F.I.Sh kamida 3 ta belgidan iborat bo'lishi kerak"),
       phone: z.string().trim().min(7, "Telefon raqamini to'g'ri kiriting").transform(normalizeUzPhone),
       age: z.coerce.number().int().min(0, "Yosh manfiy bo'lmasligi kerak").max(130, "Yoshni tekshiring").nullish(),
@@ -1394,7 +1529,7 @@ import { and, asc, desc, eq, gte, inArray, lte, or, sql as sql2 } from "drizzle-
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapPatient, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapExpense, mapDepartment, doctorSelect, mapDoctor, PgStorage;
+var iso, mapUser, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapExpense, mapDepartment, doctorSelect, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -1410,7 +1545,12 @@ var init_storage_pg = __esm({
     mapPatient = (row) => ({
       ...row,
       createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt),
       telegramLinkedAt: iso(row.telegramLinkedAt)
+    });
+    mapContact = (row) => ({
+      ...row,
+      createdAt: iso(row.createdAt)
     });
     mapOrder = (row) => ({
       ...row,
@@ -1725,16 +1865,95 @@ var init_storage_pg = __esm({
           }
           const numberMatch = search.match(/^#?\s*(\d{1,9})$/);
           if (numberMatch) parts.push(eq(patients.patientNumber, Number(numberMatch[1])));
+          const compact = search.toUpperCase().replace(/[^A-Z0-9]/g, "");
+          if (compact.length >= 5) parts.push(sql2`coalesce(${patients.passport}, '') LIKE ${"%" + compact + "%"}`);
+          if (digits.length >= 6) parts.push(sql2`coalesce(${patients.pinfl}, '') LIKE ${"%" + digits + "%"}`);
           where = or(...parts);
         }
-        let q = db.select().from(patients).where(where).orderBy(desc(patients.createdAt), desc(patients.patientNumber)).$dynamic();
+        let q = db.select({
+          patient: patients,
+          lastVisitAt: sql2`(SELECT max(${orders.createdAt}) FROM ${orders}
+          WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
+          visitCount: sql2`(SELECT count(*)::int FROM ${orders}
+          WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`
+        }).from(patients).where(where).orderBy(desc(patients.createdAt), desc(patients.patientNumber)).$dynamic();
         if (query.limit !== void 0) q = q.limit(query.limit);
         if (query.offset) q = q.offset(query.offset);
         const [rows, [{ count }]] = await Promise.all([
           q,
           db.select({ count: sql2`count(*)::int` }).from(patients).where(where)
         ]);
-        return { items: rows.map(mapPatient), total: count };
+        return {
+          items: rows.map((r) => ({
+            ...mapPatient(r.patient),
+            lastVisitAt: r.lastVisitAt ? new Date(r.lastVisitAt).toISOString() : null,
+            visitCount: r.visitCount ?? 0
+          })),
+          total: count
+        };
+      }
+      async getPatientDetails(id) {
+        const [[row], contacts] = await Promise.all([
+          db.select().from(patients).where(eq(patients.id, id)).limit(1),
+          db.select().from(patientContacts).where(eq(patientContacts.patientId, id)).orderBy(asc(patientContacts.createdAt))
+        ]);
+        return row && { ...mapPatient(row), contacts: contacts.map(mapContact) };
+      }
+      async findPatientCandidates(q) {
+        const parts = [];
+        if (q.pinfl) parts.push(eq(patients.pinfl, q.pinfl));
+        if (q.passport) parts.push(eq(patients.passport, q.passport));
+        if (q.phoneDigits?.length === 9) {
+          parts.push(sql2`regexp_replace(${patients.phone}, '[^0-9]', '', 'g') LIKE ${"%" + q.phoneDigits}`);
+        }
+        for (const s of new Set([q.surname, q.nameKey].filter((v) => Boolean(v && v.length >= 2)))) {
+          parts.push(sql2`${patients.fullName} ILIKE ${s + "%"}`);
+        }
+        if (!parts.length) return [];
+        const where = q.excludeId ? and(or(...parts), sql2`${patients.id} <> ${q.excludeId}`) : or(...parts);
+        const rows = await db.select().from(patients).where(where).limit(30);
+        return rows.map(mapPatient);
+      }
+      async setEmergencyContact(tx, patientId, contact) {
+        if (contact === void 0) return;
+        await tx.delete(patientContacts).where(and(eq(patientContacts.patientId, patientId), eq(patientContacts.isEmergency, true)));
+        if (contact) {
+          await tx.insert(patientContacts).values({
+            patientId,
+            name: contact.name,
+            relation: contact.relation ?? null,
+            phone: contact.phone,
+            isEmergency: true
+          });
+        }
+      }
+      async mergePatients(sourceId, targetId) {
+        if (sourceId === targetId) return void 0;
+        return db.transaction(async (tx) => {
+          const [[source], [target]] = await Promise.all([
+            tx.select().from(patients).where(eq(patients.id, sourceId)).limit(1),
+            tx.select().from(patients).where(eq(patients.id, targetId)).limit(1)
+          ]);
+          if (!source || !target) return void 0;
+          const moved = await tx.update(orders).set({ patientId: targetId }).where(eq(orders.patientId, sourceId)).returning({ id: orders.id });
+          const [{ hasEmergency }] = await tx.select({ hasEmergency: sql2`count(*) > 0` }).from(patientContacts).where(and(eq(patientContacts.patientId, targetId), eq(patientContacts.isEmergency, true)));
+          const movedContacts = await tx.update(patientContacts).set({ patientId: targetId }).where(
+            hasEmergency ? and(eq(patientContacts.patientId, sourceId), eq(patientContacts.isEmergency, false)) : eq(patientContacts.patientId, sourceId)
+          ).returning({ id: patientContacts.id });
+          await tx.delete(patientContacts).where(eq(patientContacts.patientId, sourceId));
+          const fill = {};
+          for (const k of ["birthDate", "passport", "pinfl", "address", "gender", "age"]) {
+            if (target[k] == null && source[k] != null) fill[k] = source[k];
+          }
+          const takeChat = !target.telegramChatId && source.telegramChatId;
+          await tx.delete(patients).where(eq(patients.id, sourceId));
+          if (takeChat) {
+            fill.telegramChatId = source.telegramChatId;
+            fill.telegramLinkedAt = source.telegramLinkedAt;
+          }
+          if (Object.keys(fill).length) await tx.update(patients).set(fill).where(eq(patients.id, targetId));
+          return { orders: moved.length, contacts: movedContacts.length };
+        });
       }
       async getPatient(id) {
         const [row] = await db.select().from(patients).where(eq(patients.id, id)).limit(1);
@@ -1750,26 +1969,38 @@ var init_storage_pg = __esm({
         const [row] = await db.select().from(patients).where(eq(patients.telegramChatId, chatId)).limit(1);
         return row && mapPatient(row);
       }
-      async createPatient(input) {
+      async createPatient(input, actor) {
         const [row] = await db.insert(patients).values({
           fullName: input.fullName,
           phone: input.phone,
           address: input.address ?? null,
           age: input.age ?? null,
-          gender: input.gender ?? null
+          gender: input.gender ?? null,
+          birthDate: input.birthDate ?? null,
+          passport: input.passport ?? null,
+          pinfl: input.pinfl ?? null,
+          updatedBy: actor?.id ?? null
         }).returning();
+        await this.setEmergencyContact(db, row.id, input.emergencyContact);
         return mapPatient(row);
       }
-      async updatePatient(id, input) {
-        const patch = {};
+      async updatePatient(id, input, actor) {
+        const patch = {
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedBy: actor?.id ?? null
+        };
         if (input.fullName !== void 0) patch.fullName = input.fullName;
         if (input.phone !== void 0) patch.phone = input.phone;
         if (input.address !== void 0) patch.address = input.address ?? null;
         if (input.age !== void 0) patch.age = input.age ?? null;
         if (input.gender !== void 0) patch.gender = input.gender ?? null;
-        if (Object.keys(patch).length === 0) return this.getPatient(id);
+        if (input.birthDate !== void 0) patch.birthDate = input.birthDate ?? null;
+        if (input.passport !== void 0) patch.passport = input.passport ?? null;
+        if (input.pinfl !== void 0) patch.pinfl = input.pinfl ?? null;
         const [row] = await db.update(patients).set(patch).where(eq(patients.id, id)).returning();
-        return row && mapPatient(row);
+        if (!row) return void 0;
+        await this.setEmergencyContact(db, id, input.emergencyContact);
+        return mapPatient(row);
       }
       async deletePatient(id) {
         const [{ count }] = await db.select({ count: sql2`count(*)::int` }).from(orders).where(eq(orders.patientId, id));
@@ -1777,6 +2008,7 @@ var init_storage_pg = __esm({
           throw new Error("Bu bemorda buyurtmalar mavjud \u2014 avval buyurtmalarni o'chiring");
         }
         const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
+        if (rows.length) await db.delete(patientContacts).where(eq(patientContacts.patientId, id));
         return rows.length > 0;
       }
       // ---------------------------------------------------------------- tests
@@ -2518,6 +2750,7 @@ var init_db = __esm({
       doctors: [],
       security: null,
       patients: [],
+      patientContacts: [],
       tests: [],
       orders: [],
       orderTests: [],
@@ -2564,12 +2797,13 @@ function isWaiting(order) {
 function isReady(order) {
   return order.items.length > 0 && order.items.every((i) => i.result);
 }
-var digitsOf, copyRole, normalizeExpense, FileStorage;
+var digitsOf, copyRole, normalizePatient, normalizeExpense, FileStorage;
 var init_storage_file = __esm({
   "server/storage-file.ts"() {
     "use strict";
     init_tests_data();
     init_schema();
+    init_patient_identity();
     init_sample();
     init_db();
     init_password();
@@ -2577,6 +2811,14 @@ var init_storage_file = __esm({
     init_storage_types();
     digitsOf = (value) => (value ?? "").replace(/\D/g, "");
     copyRole = (r) => ({ ...r, permissions: [...r.permissions] });
+    normalizePatient = (p) => ({
+      ...p,
+      birthDate: p.birthDate ?? null,
+      passport: p.passport ?? null,
+      pinfl: p.pinfl ?? null,
+      updatedAt: p.updatedAt ?? null,
+      updatedBy: p.updatedBy ?? null
+    });
     normalizeExpense = (e) => ({
       note: null,
       createdBy: null,
@@ -2900,21 +3142,80 @@ var init_storage_file = __esm({
       // ------------------------------------------------------------- patients
       async listPatients(query = {}) {
         const search = query.search?.trim().toLowerCase();
-        let rows = [...this.db.patients];
+        let rows = this.db.patients.map(normalizePatient);
         if (search) {
           const wantedNumber = asNumberSearch(search);
           rows = rows.filter(
-            (p) => p.patientNumber === wantedNumber || contains(p.fullName, search) || contains(p.phone, search) || phoneContains(p.phone, search) || contains(p.address, search)
+            (p) => p.patientNumber === wantedNumber || contains(p.fullName, search) || contains(p.phone, search) || phoneContains(p.phone, search) || contains(p.address, search) || (p.passport ?? "").toLowerCase().includes(search.replace(/\s/g, "")) || search.replace(/\D/g, "").length >= 6 && (p.pinfl ?? "").includes(search.replace(/\D/g, ""))
           );
         }
         rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.patientNumber - a.patientNumber);
         const total = rows.length;
         const offset = query.offset ?? 0;
         const limit = query.limit ?? total;
-        return { items: rows.slice(offset, offset + limit), total };
+        const page = rows.slice(offset, offset + limit).map((p) => {
+          const visits = this.db.orders.filter((o) => o.patientId === p.id && o.status !== "cancelled");
+          const last = visits.reduce((m, o) => !m || o.createdAt > m ? o.createdAt : m, null);
+          return { ...p, lastVisitAt: last, visitCount: visits.length };
+        });
+        return { items: page, total };
       }
       async getPatient(id) {
-        return this.db.patients.find((p) => p.id === id);
+        const p = this.db.patients.find((x) => x.id === id);
+        return p && normalizePatient(p);
+      }
+      async getPatientDetails(id) {
+        const p = await this.getPatient(id);
+        if (!p) return void 0;
+        const contacts = this.db.patientContacts.filter((c) => c.patientId === id).map((c) => ({ ...c }));
+        return { ...p, contacts };
+      }
+      async findPatientCandidates(q) {
+        return this.db.patients.map(normalizePatient).filter((p) => p.id !== q.excludeId).filter(
+          (p) => q.pinfl && p.pinfl === q.pinfl || q.passport && p.passport === q.passport || q.phoneDigits?.length === 9 && nationalPhoneDigits(p.phone) === q.phoneDigits || q.nameKey && nameKey(p.fullName).startsWith(q.nameKey)
+        ).slice(0, 20);
+      }
+      /** Writes the emergency contact: replaced by a value, removed by null, kept by undefined. */
+      setEmergencyContact(patientId, contact) {
+        if (contact === void 0) return;
+        this.db.patientContacts = this.db.patientContacts.filter((c) => !(c.patientId === patientId && c.isEmergency));
+        if (contact) {
+          const row = {
+            id: randomUUID(),
+            patientId,
+            name: contact.name,
+            relation: contact.relation ?? null,
+            phone: contact.phone,
+            isEmergency: true,
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          this.db.patientContacts.push(row);
+        }
+      }
+      async mergePatients(sourceId, targetId) {
+        const source = this.db.patients.find((p) => p.id === sourceId);
+        const target = this.db.patients.find((p) => p.id === targetId);
+        if (!source || !target || source.id === target.id) return void 0;
+        let orders2 = 0;
+        for (const o of this.db.orders) if (o.patientId === sourceId) o.patientId = targetId, orders2++;
+        let contacts = 0;
+        for (const c of this.db.patientContacts) {
+          if (c.patientId !== sourceId) continue;
+          if (c.isEmergency && this.db.patientContacts.some((x) => x.patientId === targetId && x.isEmergency)) continue;
+          c.patientId = targetId;
+          contacts++;
+        }
+        this.db.patientContacts = this.db.patientContacts.filter((c) => c.patientId !== sourceId);
+        for (const k of ["birthDate", "passport", "pinfl", "address", "gender", "age"]) {
+          if (target[k] == null && source[k] != null) target[k] = source[k];
+        }
+        if (!target.telegramChatId && source.telegramChatId) {
+          target.telegramChatId = source.telegramChatId;
+          target.telegramLinkedAt = source.telegramLinkedAt;
+        }
+        this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
+        await this.persist();
+        return { orders: orders2, contacts };
       }
       async getPatientByPhone(phone) {
         const digits = nationalPhoneDigits(phone);
@@ -2924,7 +3225,7 @@ var init_storage_file = __esm({
       async getPatientByChatId(chatId) {
         return this.db.patients.find((p) => p.telegramChatId === chatId);
       }
-      async createPatient(input) {
+      async createPatient(input, actor) {
         this.db.counters.patientNumber += 1;
         const patient = {
           id: randomUUID(),
@@ -2934,24 +3235,38 @@ var init_storage_file = __esm({
           address: input.address ?? null,
           age: input.age ?? null,
           gender: input.gender ?? null,
+          birthDate: input.birthDate ?? null,
+          passport: input.passport ?? null,
+          pinfl: input.pinfl ?? null,
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: null,
+          updatedBy: actor?.id ?? null,
           telegramChatId: null,
           telegramLinkedAt: null
         };
         this.db.patients.push(patient);
+        this.setEmergencyContact(patient.id, input.emergencyContact);
         await this.persist();
-        return patient;
+        return { ...patient };
       }
-      async updatePatient(id, input) {
-        const patient = this.db.patients.find((p) => p.id === id);
-        if (!patient) return void 0;
+      async updatePatient(id, input, actor) {
+        const i = this.db.patients.findIndex((p) => p.id === id);
+        if (i === -1) return void 0;
+        const patient = normalizePatient(this.db.patients[i]);
         if (input.fullName !== void 0) patient.fullName = input.fullName;
         if (input.phone !== void 0) patient.phone = input.phone;
         if (input.address !== void 0) patient.address = input.address ?? null;
         if (input.age !== void 0) patient.age = input.age ?? null;
         if (input.gender !== void 0) patient.gender = input.gender ?? null;
+        if (input.birthDate !== void 0) patient.birthDate = input.birthDate ?? null;
+        if (input.passport !== void 0) patient.passport = input.passport ?? null;
+        if (input.pinfl !== void 0) patient.pinfl = input.pinfl ?? null;
+        patient.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        patient.updatedBy = actor?.id ?? null;
+        this.db.patients[i] = patient;
+        this.setEmergencyContact(id, input.emergencyContact);
         await this.persist();
-        return patient;
+        return { ...patient };
       }
       async deletePatient(id) {
         if (this.db.orders.some((o) => o.patientId === id)) {
@@ -2960,6 +3275,7 @@ var init_storage_file = __esm({
         const before = this.db.patients.length;
         this.db.patients = this.db.patients.filter((p) => p.id !== id);
         if (this.db.patients.length === before) return false;
+        this.db.patientContacts = this.db.patientContacts.filter((c) => c.patientId !== id);
         await this.persist();
         return true;
       }
@@ -4106,6 +4422,7 @@ function stamp() {
 }
 
 // server/routes.ts
+init_patient_identity();
 init_password();
 
 // server/telegram.ts
@@ -4538,11 +4855,58 @@ async function registerRoutes(app) {
     "/api/patients/:id",
     requirePermission("patients.read"),
     handle(async (req, res) => {
-      const patient = await storage.getPatient(req.params.id);
+      const patient = await storage.getPatientDetails(req.params.id);
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
       res.json(patient);
     })
   );
+  async function findDuplicates(input, excludeId) {
+    const typed = {
+      fullName: input.fullName ?? null,
+      phoneDigits: input.phone ? nationalPhoneDigits(input.phone) : null,
+      birthDate: input.birthDate ?? null,
+      passport: input.passport ?? null,
+      pinfl: input.pinfl ?? null
+    };
+    const surname = (input.fullName ?? "").trim().split(/\s+/)[0] || null;
+    const candidates = await storage.findPatientCandidates({
+      surname,
+      nameKey: nameKey(surname),
+      phoneDigits: typed.phoneDigits,
+      birthDate: typed.birthDate,
+      passport: typed.passport,
+      pinfl: typed.pinfl,
+      excludeId
+    });
+    const graded = [];
+    for (const patient of candidates) {
+      const match = compareIdentity(typed, {
+        fullName: patient.fullName,
+        phoneDigits: nationalPhoneDigits(patient.phone),
+        birthDate: patient.birthDate,
+        passport: patient.passport,
+        pinfl: patient.pinfl
+      });
+      if (match) graded.push({ patient, ...match });
+    }
+    return graded.sort((a, b) => Number(b.strength === "strong") - Number(a.strength === "strong") || b.reasons.length - a.reasons.length).slice(0, 5);
+  }
+  app.post(
+    "/api/patients/check-duplicates",
+    requirePermission("patients.create", "patients.update"),
+    handle(async (req, res) => {
+      const input = insertPatientSchema.pick({ fullName: true, phone: true, birthDate: true, passport: true, pinfl: true }).partial().safeParse(req.body);
+      const body = input.success ? input.data : {};
+      const excludeId = typeof req.body?.excludeId === "string" ? req.body.excludeId : void 0;
+      res.json(await findDuplicates(body, excludeId));
+    })
+  );
+  const withAge = (input) => input.birthDate ? { ...input, age: ageFromBirthDate(input.birthDate) } : input;
+  const duplicateResponse = (res, strong) => res.status(409).json({
+    code: "DUPLICATE_PATIENT",
+    message: `Bu bemor bazada bor bo'lishi mumkin: ${strong[0].patient.fullName} (\u2116${strong[0].patient.patientNumber}) \u2014 ${strong[0].reasons.join(", ")}`,
+    candidates: strong
+  });
   app.get(
     "/api/patients/:id/orders",
     requirePermission("orders.read"),
@@ -4555,9 +4919,19 @@ async function registerRoutes(app) {
     "/api/patients",
     requirePermission("patients.create"),
     handle(async (req, res) => {
-      const input = insertPatientSchema.parse(req.body);
-      const patient = await storage.createPatient(input);
-      await audit(req, "create", "patient", patient.id, `\u2116${patient.patientNumber} ${patient.fullName}`);
+      const input = withAge(insertPatientSchema.parse(req.body));
+      if (!input.allowDuplicate) {
+        const strong = (await findDuplicates(input)).filter((c) => c.strength === "strong");
+        if (strong.length) return duplicateResponse(res, strong);
+      }
+      const patient = await storage.createPatient(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "patient",
+        patient.id,
+        `\u2116${patient.patientNumber} ${patient.fullName}${input.allowDuplicate ? " (o'xshash bemor ogohlantirishi tasdiqlangan)" : ""}`
+      );
       res.status(201).json(await claimPendingContact(patient));
     })
   );
@@ -4565,11 +4939,60 @@ async function registerRoutes(app) {
     "/api/patients/:id",
     requirePermission("patients.update"),
     handle(async (req, res) => {
-      const input = insertPatientSchema.partial().parse(req.body);
-      const patient = await storage.updatePatient(req.params.id, input);
+      const input = withAge(insertPatientSchema.partial().parse(req.body));
+      const before = await storage.getPatient(req.params.id);
+      if (!before) return res.status(404).json({ message: "Bemor topilmadi" });
+      const idChanged = input.pinfl !== void 0 && input.pinfl !== before.pinfl || input.passport !== void 0 && input.passport !== before.passport;
+      if (idChanged && !input.allowDuplicate) {
+        const clash = (await findDuplicates({ pinfl: input.pinfl, passport: input.passport }, before.id)).filter(
+          (c) => c.strength === "strong"
+        );
+        if (clash.length) return duplicateResponse(res, clash);
+      }
+      const patient = await storage.updatePatient(req.params.id, input, actorOf(req));
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
-      await audit(req, "update", "patient", patient.id, `\u2116${patient.patientNumber} ${patient.fullName} tahrirlandi`);
+      const changes = [];
+      const fields = [
+        ["fullName", "F.I.Sh"],
+        ["phone", "telefon"],
+        ["birthDate", "tug'ilgan sana"],
+        ["gender", "jinsi"],
+        ["address", "manzil"],
+        ["passport", "pasport"],
+        ["pinfl", "JShShIR"]
+      ];
+      for (const [k, label] of fields) if ((before[k] ?? null) !== (patient[k] ?? null)) changes.push(label);
+      if (input.emergencyContact !== void 0) changes.push("favqulodda aloqa");
+      await audit(
+        req,
+        "update",
+        "patient",
+        patient.id,
+        `\u2116${patient.patientNumber} ${patient.fullName} \u2014 ${changes.length ? changes.join(", ") + " o'zgardi" : "tahrirlandi"}`
+      );
       res.json(await claimPendingContact(patient));
+    })
+  );
+  app.post(
+    "/api/patients/:id/merge",
+    requirePermission("patients.delete"),
+    handle(async (req, res) => {
+      const intoId = typeof req.body?.intoId === "string" ? req.body.intoId : "";
+      if (!intoId || intoId === req.params.id) {
+        return res.status(400).json({ message: "Qaysi bemorga birlashtirishni tanlang" });
+      }
+      const [source, target] = await Promise.all([storage.getPatient(req.params.id), storage.getPatient(intoId)]);
+      if (!source || !target) return res.status(404).json({ message: "Bemor topilmadi" });
+      const moved = await storage.mergePatients(source.id, target.id);
+      if (!moved) return res.status(404).json({ message: "Bemor topilmadi" });
+      await audit(
+        req,
+        "update",
+        "patient",
+        target.id,
+        `\u2116${source.patientNumber} ${source.fullName} kartasi \u2116${target.patientNumber} ${target.fullName} bilan birlashtirildi (${moved.orders} ta buyurtma, ${moved.contacts} ta aloqa ko'chirildi)`
+      );
+      res.json({ ...moved, patient: await storage.getPatientDetails(target.id) });
     })
   );
   app.delete(
@@ -4946,14 +5369,33 @@ async function registerRoutes(app) {
       csvHeaders(res, `bemorlar-${stamp()}.csv`);
       res.send(
         toCsv(
-          ["\u2116", "F.I.Sh", "Telefon", "Yosh", "Jinsi", "Manzil", "Telegram", "Ro'yxatdan o'tgan"],
+          [
+            "\u2116",
+            "F.I.Sh",
+            "Telefon",
+            "Tug'ilgan sana",
+            "Yosh",
+            "Jinsi",
+            "Manzil",
+            "Pasport",
+            "JShShIR",
+            "Tashriflar",
+            "Oxirgi tashrif",
+            "Telegram",
+            "Ro'yxatdan o'tgan"
+          ],
           items.map((p) => [
             p.patientNumber,
             p.fullName,
             p.phone,
-            p.age ?? "",
+            p.birthDate ?? "",
+            patientAge(p) ?? "",
             p.gender ?? "",
             p.address ?? "",
+            p.passport ?? "",
+            p.pinfl ?? "",
+            p.visitCount,
+            p.lastVisitAt ? localDay(p.lastVisitAt) : "",
             p.telegramChatId ? "ha" : "yo'q",
             localDay(p.createdAt)
           ])

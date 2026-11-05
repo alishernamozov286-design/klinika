@@ -625,3 +625,75 @@ describe("expenses: ledger rules", () => {
     expect(await storage.listExpensePayees()).toEqual(["A", "B"]);
   });
 });
+
+describe("patients: registry", () => {
+  const base = { fullName: "Aliyev Vali", phone: "+998 90 123 45 67", gender: "erkak" as const, age: null, address: null };
+
+  it("stores birth date, documents and the emergency contact", async () => {
+    const p = await storage.createPatient(
+      {
+        ...base,
+        birthDate: "1990-05-12",
+        passport: "AA1234567",
+        pinfl: "31205901234567",
+        emergencyContact: { name: "Aliyeva Malika", relation: "Onasi", phone: "+998 90 111 22 33" },
+      },
+      ACTOR,
+    );
+    const d = await storage.getPatientDetails(p.id);
+    expect(d).toMatchObject({ birthDate: "1990-05-12", passport: "AA1234567", pinfl: "31205901234567", updatedBy: ACTOR.id });
+    expect(d?.contacts).toHaveLength(1);
+    expect(d?.contacts[0]).toMatchObject({ name: "Aliyeva Malika", relation: "Onasi", isEmergency: true });
+  });
+
+  it("replaces the emergency contact, removes it with null, keeps it when absent", async () => {
+    const p = await storage.createPatient({ ...base, emergencyContact: { name: "A Bir", relation: null, phone: "+998 90 000 00 01" } });
+    await storage.updatePatient(p.id, { address: "Toshkent" });
+    expect((await storage.getPatientDetails(p.id))?.contacts).toHaveLength(1);
+    await storage.updatePatient(p.id, { emergencyContact: { name: "B Ikki", relation: null, phone: "+998 90 000 00 02" } });
+    expect((await storage.getPatientDetails(p.id))?.contacts.map((c) => c.name)).toEqual(["B Ikki"]);
+    await storage.updatePatient(p.id, { emergencyContact: null });
+    expect((await storage.getPatientDetails(p.id))?.contacts).toHaveLength(0);
+  });
+
+  it("lists the last visit and the number of visits, cancelled ones excluded", async () => {
+    const { patient } = await makeOrder(["1"]);
+    const second = await storage.createOrder({ patientId: patient.id, testIds: ["1"], discount: 0, paidAmount: 0 });
+    await storage.updateOrder(second.id, { status: "cancelled" });
+    const row = (await storage.listPatients()).items.find((p) => p.id === patient.id);
+    expect(row?.visitCount).toBe(1);
+    expect(row?.lastVisitAt).toBeTruthy();
+  });
+
+  it("finds candidates by document, phone or surname", async () => {
+    const p = await storage.createPatient({ ...base, pinfl: "31205901234567" });
+    expect((await storage.findPatientCandidates({ pinfl: "31205901234567" })).map((x) => x.id)).toEqual([p.id]);
+    expect((await storage.findPatientCandidates({ phoneDigits: "901234567" })).length).toBe(1);
+    expect((await storage.findPatientCandidates({ nameKey: "aliyev" })).length).toBe(1);
+    expect(await storage.findPatientCandidates({ phoneDigits: "901234567", excludeId: p.id })).toEqual([]);
+  });
+
+  it("merges a duplicate: orders move, gaps fill, the duplicate goes", async () => {
+    const real = await storage.createPatient({ ...base });
+    const dup = await storage.createPatient({
+      ...base,
+      fullName: "Aliev Vali",
+      birthDate: "1990-05-12",
+      emergencyContact: { name: "Aliyeva Malika", relation: null, phone: "+998 90 111 22 33" },
+    });
+    await storage.createOrder({ patientId: dup.id, testIds: ["1"], discount: 0, paidAmount: 0 });
+
+    const moved = await storage.mergePatients(dup.id, real.id);
+    expect(moved).toEqual({ orders: 1, contacts: 1 });
+    expect(await storage.getPatient(dup.id)).toBeUndefined();
+    const merged = await storage.getPatientDetails(real.id);
+    expect(merged?.birthDate).toBe("1990-05-12");
+    expect(merged?.contacts).toHaveLength(1);
+    expect((await storage.listOrders({ patientId: real.id })).total).toBe(1);
+  });
+
+  it("refuses to merge a card into itself", async () => {
+    const p = await storage.createPatient({ ...base });
+    expect(await storage.mergePatients(p.id, p.id)).toBeUndefined();
+  });
+});

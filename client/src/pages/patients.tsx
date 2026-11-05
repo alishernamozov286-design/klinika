@@ -4,6 +4,7 @@ import {
   CalendarClock,
   Database,
   FlaskConical,
+  GitMerge,
   History,
   Loader2,
   MoreVertical,
@@ -13,7 +14,9 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import type { OrderWithDetails, Patient } from "@shared/schema";
+import type { OrderWithDetails, Patient, PatientListItem } from "@shared/schema";
+import { patientAge } from "@shared/patient-identity";
+import { MergePatientDialog } from "@/components/merge-patient-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -64,16 +67,19 @@ const ResultTrend = lazy(() =>
 const PAGE_SIZE = 25;
 
 /** Shared by the Excel and PDF writers — see lib/export.ts. */
-const EXPORT_COLUMNS: ExportColumn<Patient>[] = [
+const EXPORT_COLUMNS: ExportColumn<PatientListItem>[] = [
   { header: "№", value: (p) => p.patientNumber, type: "number", width: 8 },
   { header: "F.I.Sh", value: (p) => p.fullName, width: 30 },
   // Kept as text: a phone number is an identifier, not a quantity, and Excel
   // would otherwise drop the leading +998 and render it in scientific notation.
   { header: "Telefon", value: (p) => formatPhone(p.phone, true), width: 20 },
-  { header: "Yosh", value: (p) => p.age ?? "", type: "number", width: 8 },
+  { header: "Tug'ilgan sana", value: (p) => (p.birthDate ? formatDate(p.birthDate) : ""), width: 14 },
+  { header: "Yosh", value: (p) => patientAge(p) ?? "", type: "number", width: 8 },
   { header: "Jinsi", value: (p) => (p.gender ? genderLabel(p.gender) : ""), width: 10 },
   { header: "Manzil", value: (p) => p.address ?? "", width: 30 },
   { header: "Telegram", value: (p) => (p.telegramChatId ? "Ulangan" : "Yo'q"), width: 12 },
+  { header: "Tashriflar", value: (p) => p.visitCount, type: "number", width: 10 },
+  { header: "Oxirgi tashrif", value: (p) => (p.lastVisitAt ? formatDate(p.lastVisitAt) : ""), width: 14 },
   { header: "Qo'shilgan", value: (p) => formatDate(p.createdAt), width: 14 },
 ];
 
@@ -88,13 +94,14 @@ export default function Patients() {
   const [orderFor, setOrderFor] = useState<Patient | null>(null);
   const [historyFor, setHistoryFor] = useState<Patient | null>(null);
   const [deleting, setDeleting] = useState<Patient | null>(null);
+  const [merging, setMerging] = useState<Patient | null>(null);
 
   const debouncedSearch = useDebounced(search.trim(), 300);
 
   // Page 3 of the old result set is meaningless once the query changes.
   useEffect(() => setPage(0), [debouncedSearch]);
 
-  const { data, isLoading, isFetching } = useQuery<{ items: Patient[]; total: number }>({
+  const { data, isLoading, isFetching } = useQuery<{ items: PatientListItem[]; total: number }>({
     queryKey: [
       `/api/patients?search=${encodeURIComponent(debouncedSearch)}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`,
     ],
@@ -128,7 +135,7 @@ export default function Patients() {
       <PageHeader
         eyebrow="Bemorlar bazasi"
         title="Bemorlar"
-        description="Qidiruv raqam, ism, telefon va manzil bo'yicha — server tomonda bajariladi"
+        description="Qidiruv: bemor raqami, ism, telefon, manzil, pasport yoki JShShIR"
         actions={
           <div className="flex items-center gap-2">
             {can("data.export") && (
@@ -224,7 +231,7 @@ export default function Patients() {
                   <TableHead className="hidden md:table-cell">Telegram</TableHead>
                   <TableHead className="hidden lg:table-cell">Yosh / Jinsi</TableHead>
                   <TableHead className="hidden xl:table-cell">Manzil</TableHead>
-                  <TableHead className="hidden md:table-cell">Qo'shilgan</TableHead>
+                  <TableHead className="hidden md:table-cell">Oxirgi tashrif</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
               </TableHeader>
@@ -256,13 +263,26 @@ export default function Patients() {
                       <TelegramBadge chatId={p.telegramChatId} />
                     </TableCell>
                     <TableCell className="hidden text-muted-foreground lg:table-cell">
-                      {ageGender(p.age, p.gender)}
+                      {ageGender(patientAge(p), p.gender)}
+                      {p.birthDate && <span className="block text-[11px] tabular">{formatDate(p.birthDate)}</span>}
                     </TableCell>
                     <TableCell className="hidden max-w-[240px] truncate text-muted-foreground xl:table-cell">
                       {p.address || "—"}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      <span className="tabular text-muted-foreground">{formatDate(p.createdAt)}</span>
+                      {p.lastVisitAt ? (
+                        <div className="text-sm">
+                          <span className="text-foreground">{timeAgo(p.lastVisitAt)}</span>
+                          <span className="block text-[11px] text-muted-foreground">
+                            {p.visitCount} ta tashrif
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          Tashrif yo'q
+                          <span className="block text-[11px] tabular">qo'shilgan {formatDate(p.createdAt)}</span>
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
@@ -294,6 +314,12 @@ export default function Patients() {
                                 Tahrirlash
                               </DropdownMenuItem>
                             </>
+                          )}
+                          {can("patients.delete") && (
+                            <DropdownMenuItem onClick={() => setMerging(p)} data-testid={`button-merge-${p.id}`}>
+                              <GitMerge className="mr-2 h-4 w-4" />
+                              Dublikatni birlashtirish
+                            </DropdownMenuItem>
                           )}
                           {can("patients.delete") && (
                             <DropdownMenuItem
@@ -330,6 +356,7 @@ export default function Patients() {
         presetPatient={orderFor}
       />
       <PatientHistoryDialog patient={historyFor} onClose={() => setHistoryFor(null)} />
+      <MergePatientDialog source={merging} onClose={() => setMerging(null)} />
       <ConfirmDialog
         open={Boolean(deleting)}
         onOpenChange={(o) => !o && setDeleting(null)}

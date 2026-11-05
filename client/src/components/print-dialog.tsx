@@ -4,7 +4,8 @@ import type { LabSettings, OrderWithDetails } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FLAG_LABELS, ageGender, formatDateTime, formatLongDate, formatPhone, money } from "@/lib/format";
+import { FLAG_LABELS, ageGender, formatDate, formatDateTime, formatLongDate, formatPhone, money } from "@/lib/format";
+import { patientAge } from "@shared/patient-identity";
 import { cn } from "@/lib/utils";
 
 /**
@@ -80,7 +81,11 @@ export function PrintDialog({
                   value={order.patient ? `#${order.patient.patientNumber}` : "—"}
                 />
                 <Field label="Telefon" value={formatPhone(order.patient?.phone)} />
-                <Field label="Yosh / Jinsi" value={ageGender(order.patient?.age, order.patient?.gender)} />
+                <Field label="Yosh / Jinsi" value={ageGender(patientAge(order.patient), order.patient?.gender)} />
+                {/* TZ §6.3: the blank carries the birth date. */}
+                {order.patient?.birthDate && (
+                  <Field label="Tug'ilgan sana" value={formatDate(order.patient.birthDate)} />
+                )}
                 <Field label="Qabul sanasi" value={formatLongDate(order.createdAt)} />
                 {order.completedAt && <Field label="Natija sanasi" value={formatDateTime(order.completedAt)} />}
                 {order.patient?.address && <Field label="Manzil" value={order.patient.address} />}

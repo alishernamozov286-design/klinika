@@ -9,6 +9,7 @@ import {
   labSettings,
   orderTests,
   orders,
+  patientContacts,
   patients,
   payments,
   roles,
@@ -45,6 +46,9 @@ import {
   type OrderTest,
   type OrderWithDetails,
   type Patient,
+  type PatientContact,
+  type PatientDetails,
+  type PatientListItem,
   type PublicUser,
   type RevenueReportData,
   type ResultFlag,
@@ -85,6 +89,7 @@ import {
   type IStorage,
   type OrderQuery,
   type Paged,
+  type PatientCandidateQuery,
   type PatientQuery,
   type ResultInput,
   resolveFlag,
@@ -104,7 +109,13 @@ const mapUser = (row: typeof users.$inferSelect): User => ({ ...row, createdAt: 
 const mapPatient = (row: typeof patients.$inferSelect): Patient => ({
   ...row,
   createdAt: iso(row.createdAt),
+  updatedAt: iso(row.updatedAt),
   telegramLinkedAt: iso(row.telegramLinkedAt),
+});
+
+const mapContact = (row: typeof patientContacts.$inferSelect): PatientContact => ({
+  ...row,
+  createdAt: iso(row.createdAt),
 });
 
 const mapOrder = (row: typeof orders.$inferSelect): Order => ({
@@ -516,7 +527,7 @@ export class PgStorage implements IStorage {
 
   // ------------------------------------------------------------- patients
 
-  async listPatients(query: PatientQuery = {}): Promise<Paged<Patient>> {
+  async listPatients(query: PatientQuery = {}): Promise<Paged<PatientListItem>> {
     const search = query.search?.trim();
     let where;
     if (search) {
@@ -534,11 +545,23 @@ export class PgStorage implements IStorage {
       // A bare number is the patient number itself: "14" or "#14".
       const numberMatch = search.match(/^#?\s*(\d{1,9})$/);
       if (numberMatch) parts.push(eq(patients.patientNumber, Number(numberMatch[1])));
+      // Documents: "AA1234567" or a JShShIR typed in full or in part.
+      const compact = search.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (compact.length >= 5) parts.push(sql`coalesce(${patients.passport}, '') LIKE ${"%" + compact + "%"}`);
+      if (digits.length >= 6) parts.push(sql`coalesce(${patients.pinfl}, '') LIKE ${"%" + digits + "%"}`);
       where = or(...parts);
     }
 
+    // Visit figures as correlated subqueries: one round trip, and they are
+    // only computed for the page being returned.
     let q = db
-      .select()
+      .select({
+        patient: patients,
+        lastVisitAt: sql<string | null>`(SELECT max(${orders.createdAt}) FROM ${orders}
+          WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
+        visitCount: sql<number>`(SELECT count(*)::int FROM ${orders}
+          WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
+      })
       .from(patients)
       .where(where)
       .orderBy(desc(patients.createdAt), desc(patients.patientNumber))
@@ -551,7 +574,108 @@ export class PgStorage implements IStorage {
       db.select({ count: sql<number>`count(*)::int` }).from(patients).where(where),
     ]);
 
-    return { items: rows.map(mapPatient), total: count };
+    return {
+      items: rows.map((r) => ({
+        ...mapPatient(r.patient),
+        lastVisitAt: r.lastVisitAt ? new Date(r.lastVisitAt).toISOString() : null,
+        visitCount: r.visitCount ?? 0,
+      })),
+      total: count,
+    };
+  }
+
+  async getPatientDetails(id: string): Promise<PatientDetails | undefined> {
+    const [[row], contacts] = await Promise.all([
+      db.select().from(patients).where(eq(patients.id, id)).limit(1),
+      db.select().from(patientContacts).where(eq(patientContacts.patientId, id)).orderBy(asc(patientContacts.createdAt)),
+    ]);
+    return row && { ...mapPatient(row), contacts: contacts.map(mapContact) };
+  }
+
+  async findPatientCandidates(q: PatientCandidateQuery): Promise<Patient[]> {
+    const parts = [];
+    if (q.pinfl) parts.push(eq(patients.pinfl, q.pinfl));
+    if (q.passport) parts.push(eq(patients.passport, q.passport));
+    if (q.phoneDigits?.length === 9) {
+      parts.push(sql`regexp_replace(${patients.phone}, '[^0-9]', '', 'g') LIKE ${"%" + q.phoneDigits}`);
+    }
+    // Surname prefix only — as typed, and in Latin for a name typed in
+    // Cyrillic. The exact comparison is compareIdentity's, on this short list.
+    for (const s of new Set([q.surname, q.nameKey].filter((v): v is string => Boolean(v && v.length >= 2)))) {
+      parts.push(sql`${patients.fullName} ILIKE ${s + "%"}`);
+    }
+    if (!parts.length) return [];
+    const where = q.excludeId ? and(or(...parts), sql`${patients.id} <> ${q.excludeId}`) : or(...parts);
+    const rows = await db.select().from(patients).where(where).limit(30);
+    return rows.map(mapPatient);
+  }
+
+  private async setEmergencyContact(
+    tx: typeof db,
+    patientId: string,
+    contact: InsertPatient["emergencyContact"],
+  ): Promise<void> {
+    if (contact === undefined) return;
+    await tx
+      .delete(patientContacts)
+      .where(and(eq(patientContacts.patientId, patientId), eq(patientContacts.isEmergency, true)));
+    if (contact) {
+      await tx.insert(patientContacts).values({
+        patientId,
+        name: contact.name,
+        relation: contact.relation ?? null,
+        phone: contact.phone,
+        isEmergency: true,
+      });
+    }
+  }
+
+  async mergePatients(sourceId: string, targetId: string): Promise<{ orders: number; contacts: number } | undefined> {
+    if (sourceId === targetId) return undefined;
+    return db.transaction(async (tx) => {
+      const [[source], [target]] = await Promise.all([
+        tx.select().from(patients).where(eq(patients.id, sourceId)).limit(1),
+        tx.select().from(patients).where(eq(patients.id, targetId)).limit(1),
+      ]);
+      if (!source || !target) return undefined;
+
+      const moved = await tx
+        .update(orders)
+        .set({ patientId: targetId })
+        .where(eq(orders.patientId, sourceId))
+        .returning({ id: orders.id });
+
+      // The real card keeps its own emergency contact if it has one.
+      const [{ hasEmergency }] = await tx
+        .select({ hasEmergency: sql<boolean>`count(*) > 0` })
+        .from(patientContacts)
+        .where(and(eq(patientContacts.patientId, targetId), eq(patientContacts.isEmergency, true)));
+      const movedContacts = await tx
+        .update(patientContacts)
+        .set({ patientId: targetId })
+        .where(
+          hasEmergency
+            ? and(eq(patientContacts.patientId, sourceId), eq(patientContacts.isEmergency, false))
+            : eq(patientContacts.patientId, sourceId),
+        )
+        .returning({ id: patientContacts.id });
+      await tx.delete(patientContacts).where(eq(patientContacts.patientId, sourceId));
+
+      // Fill gaps on the real card from the duplicate; never overwrite. The
+      // Telegram chat is released from the duplicate first: it is unique.
+      const fill: Partial<typeof patients.$inferInsert> = {};
+      for (const k of ["birthDate", "passport", "pinfl", "address", "gender", "age"] as const) {
+        if (target[k] == null && source[k] != null) (fill as Record<string, unknown>)[k] = source[k];
+      }
+      const takeChat = !target.telegramChatId && source.telegramChatId;
+      await tx.delete(patients).where(eq(patients.id, sourceId));
+      if (takeChat) {
+        fill.telegramChatId = source.telegramChatId;
+        fill.telegramLinkedAt = source.telegramLinkedAt;
+      }
+      if (Object.keys(fill).length) await tx.update(patients).set(fill).where(eq(patients.id, targetId));
+      return { orders: moved.length, contacts: movedContacts.length };
+    });
   }
 
   async getPatient(id: string): Promise<Patient | undefined> {
@@ -581,7 +705,7 @@ export class PgStorage implements IStorage {
     return row && mapPatient(row);
   }
 
-  async createPatient(input: InsertPatient): Promise<Patient> {
+  async createPatient(input: InsertPatient, actor?: Actor): Promise<Patient> {
     const [row] = await db
       .insert(patients)
       .values({
@@ -590,21 +714,33 @@ export class PgStorage implements IStorage {
         address: input.address ?? null,
         age: input.age ?? null,
         gender: input.gender ?? null,
+        birthDate: input.birthDate ?? null,
+        passport: input.passport ?? null,
+        pinfl: input.pinfl ?? null,
+        updatedBy: actor?.id ?? null,
       })
       .returning();
+    await this.setEmergencyContact(db, row.id, input.emergencyContact);
     return mapPatient(row);
   }
 
-  async updatePatient(id: string, input: Partial<InsertPatient>): Promise<Patient | undefined> {
-    const patch: Partial<typeof patients.$inferInsert> = {};
+  async updatePatient(id: string, input: Partial<InsertPatient>, actor?: Actor): Promise<Patient | undefined> {
+    const patch: Partial<typeof patients.$inferInsert> = {
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor?.id ?? null,
+    };
     if (input.fullName !== undefined) patch.fullName = input.fullName;
     if (input.phone !== undefined) patch.phone = input.phone;
     if (input.address !== undefined) patch.address = input.address ?? null;
     if (input.age !== undefined) patch.age = input.age ?? null;
     if (input.gender !== undefined) patch.gender = input.gender ?? null;
-    if (Object.keys(patch).length === 0) return this.getPatient(id);
+    if (input.birthDate !== undefined) patch.birthDate = input.birthDate ?? null;
+    if (input.passport !== undefined) patch.passport = input.passport ?? null;
+    if (input.pinfl !== undefined) patch.pinfl = input.pinfl ?? null;
     const [row] = await db.update(patients).set(patch).where(eq(patients.id, id)).returning();
-    return row && mapPatient(row);
+    if (!row) return undefined;
+    await this.setEmergencyContact(db, id, input.emergencyContact);
+    return mapPatient(row);
   }
 
   async deletePatient(id: string): Promise<boolean> {
@@ -617,6 +753,7 @@ export class PgStorage implements IStorage {
       throw new Error("Bu bemorda buyurtmalar mavjud — avval buyurtmalarni o'chiring");
     }
     const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
+    if (rows.length) await db.delete(patientContacts).where(eq(patientContacts.patientId, id));
     return rows.length > 0;
   }
 

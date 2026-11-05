@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { QrCode } from "@/components/qr-code";
 import { ageGender, formatDate } from "@/lib/format";
+import { patientAge } from "@shared/patient-identity";
 
 /**
  * The sticker that goes on the tube.
@@ -78,7 +79,7 @@ export function SampleLabelDialog({
                       {patient?.fullName ?? "—"}
                     </p>
                     <p className="text-[9px] leading-tight text-black/70">
-                      {ageGender(patient?.age, patient?.gender)}
+                      {ageGender(patientAge(patient), patient?.gender)}
                     </p>
                   </div>
 

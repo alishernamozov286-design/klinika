@@ -88,7 +88,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-05 kechqurun. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 19.5 → ≈26%** (ertalab ≈20%).
+> Holat 2026-11-05. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 21.5 → ≈28%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 70%
 
@@ -119,13 +119,13 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Yo'l-yo'lakay: `ApiError` (toast'larda xom JSON o'rniga toza xabar), `npm run db:upgrade` (barcha migratsiyalar ketma-ket).
 - [ ] **B1.8** Ikki bosqichli autentifikatsiya (`§12`): TOTP (Google Authenticator), ixtiyoriy, rol bo‘yicha majburiy qilish imkoni bilan.
 - [~] **B1.9** Bemor ID (`§4.2`): `patientNumber` bor. **Qoldi:** barcha yangi modullarda faqat shu ID orqali bog‘lanish (qabul mezoni 16.1).
-- [ ] **B1.10** Umumiy ustunlar (`§10`): mavjud jadvallarga `updatedAt` / `updatedBy` qo‘shish.
+- [~] **B1.10** Umumiy ustunlar (`§10`): `updatedAt`/`updatedBy` qo'shildi — roles, departments, doctors, expenses, patients. **Qoldi:** orders, tests, payments.
 
-### Bosqich 2: Registratura (`§4`, `§15.2`) 23%
+### Bosqich 2: Registratura (`§4`, `§15.2`) 41%
 
-- [~] **B2.1** Yangi bemor formasi (`§4.1.2`). Bor: F.I.Sh., jins, telefon, manzil. **Qoldi:** tug‘ilgan sana (yosh o‘rniga; yosh hisoblanadi), pasport/ID (ixtiyoriy), favqulodda aloqa (`patient_contacts` jadvali).
-- [ ] **B2.2** Takroriy bemorni aniqlash (`§4.2`): F.I.Sh. + tug‘ilgan sana / telefon / pasport bo‘yicha o‘xshashlarni ko‘rsatish, birlashtirish (merge) admin uchun.
-- [~] **B2.3** Bemorlar ro‘yxati (`§4.1.3`): ID, F.I.Sh., telefon bor. **Qoldi:** "oxirgi tashrif" ustuni.
+- [x] **B2.1** Yangi bemor formasi (`§4.1.2`): F.I.Sh., jins, telefon, manzil, tug'ilgan sana (yosh avtomatik; sana noma'lum bo'lsa taxminiy yosh), pasport/ID, JShShIR, favqulodda aloqa (`patient_contacts`). Migratsiya: `npm run db:patients`.
+- [x] **B2.2** Takroriy bemorni aniqlash (`§4.2`, `shared/patient-identity.ts`): yozish paytida tekshiruv; kuchli moslik (JShShIR, pasport, ism+telefon, ism+tug'ilgan sana — kirill/lotin farqisiz) saqlashni 409 bilan to'xtatadi, ro'yxatchi "shu bemor"ni tanlaydi yoki aniq tasdiqlaydi; kuchsiz moslik (faqat telefon/ism) faqat ogohlantiradi. Dublikat kartalarni birlashtirish (`patients.delete` ruxsati): buyurtmalar, aloqalar, Telegram ko'chadi, bo'sh maydonlar to'ldiriladi.
+- [x] **B2.3** Bemorlar ro'yxati (`§4.1.3`): ID, F.I.Sh., telefon, yosh/tug'ilgan sana, oxirgi tashrif va tashriflar soni; qidiruv pasport va JShShIR bo'yicha ham. ("Shaxsiy karta" — B2.4.)
 - [ ] **B2.4** Bemor shaxsiy kartasi (`§4.1.3`, `§4.2`): bitta sahifada barcha tashriflar, qabullar, tahlillar, to‘lovlar, statsionar tarixi.
 - [ ] **B2.5** `visits` (tashriflar, `§10`): har bir kelish bitta tashrif; buyurtma, qabul va to‘lovlar tashrifga bog‘lanadi.
 - [ ] **B2.6** Xizmatlar katalogi (`§4.1.5`): `services` (turi: shifokor ko‘rigi / laboratoriya / UZI / muolaja / boshqa, narx, bo‘lim). Lab `tests` katalogi shu tizimga ulanadi.
@@ -155,7 +155,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [x] **B4.4** Tahlil kiritish (`§6.1.4`): natija, birlik, referens, me'yor belgisi, izoh.
 - [ ] **B4.5** Natijalarni tasdiqlash (`§6.1.5`): laborant kiritadi → **lab mudiri** tekshiradi va tasdiqlaydi (yoki qaytaradi). Faqat tasdiqlangan natija blankaga va shifokorga chiqadi. Tasdiqlangandan keyin tuzatish versiya bilan.
 - [~] **B4.6** Tahlillar katalogi (`§6.2`): katalog bor. **Qoldi:** TZ'dagi 8 guruh bo‘yicha qayta tasniflash, namuna turi, sarf normasi (B5.6 uchun).
-- [~] **B4.7** Natija blankasi (`§6.3`): bor. **Qoldi:** klinika logotipi (yuklash), tug‘ilgan sana, namuna raqami, tasdiqlovchi mutaxassis, elektron tasdiqlash belgisi (QR orqali tekshirish).
+- [~] **B4.7** Natija blankasi (`§6.3`): bor; tug'ilgan sana va undan hisoblangan yosh qo'shildi. **Qoldi:** klinika logotipi (yuklash), namuna raqami, tasdiqlovchi mutaxassis, elektron tasdiqlash belgisi (QR orqali tekshirish).
 - [ ] **B4.8** Sifat nazorati (`§6.5`): nazorat materiallari, QC natijalari kiritish, Levey–Jennings grafigi, Westgard qoidalari (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x) bilan avtomatik ogohlantirish, kalibratsiya tarixi, analizator xizmat jurnali, laboratoriyalararo QC natijalari.
 - [ ] **B4.9** Analizatorlar ro‘yxati (`§6.4`, `lab_devices`): qurilmalar, xatolar jurnali.
 - [ ] **B4.10** Analizator integratsiyasi (`§6.4`): import API + lokal ko‘prik (D-4), namuna ID bo‘yicha moslashtirish, avtotekshiruv, takroriy natija nazorati, operator tasdig‘i. Protokol bo‘lmasa qo‘lda kiritish qoladi.
@@ -241,3 +241,4 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B1.5 · Bo'limlar va shifokorlar: jadvallar, API, Sozlamalar tablari, ish jadvali muharriri.
 - 2026-11-05 · B1.7 · Seans xavfsizligi: faolsizlik/umumiy muddat, ogohlantirish oynasi, faol seanslar ro'yxati, parol almashganda seanslarni yopish.
 - 2026-11-05 · B7.9 · Xarajatlar sahifasi to'liq; menyuda "Klinika" bo'limi (Shifokorlar, Bo'limlar, Xodimlar+Rollar alohida sahifalar); noma'lum /api yo'llari endi 404 JSON qaytaradi.
+- 2026-11-05 · B2.1–B2.3 · Bemor ma'lumotlari: tug'ilgan sana, hujjatlar, favqulodda aloqa, takroriy bemorni aniqlash va bloklash, kartalarni birlashtirish, oxirgi tashrif.
