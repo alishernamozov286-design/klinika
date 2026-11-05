@@ -11,6 +11,7 @@ import {
   orders,
   patientContacts,
   patients,
+  visits,
   payments,
   roles,
   samples,
@@ -46,6 +47,7 @@ import {
   type OrderTest,
   type OrderWithDetails,
   type Patient,
+  type PatientCard,
   type PatientContact,
   type PatientDetails,
   type PatientListItem,
@@ -77,6 +79,7 @@ import { LEGACY_ADMIN, SUPER_ADMIN, SYSTEM_ROLES, isPermission, type Permission 
 import {
   DEFAULT_SETTINGS,
   SEED_USERS,
+  buildPatientCard,
   sortRoles,
   type CreateRoleArgs,
   type SeedResult,
@@ -559,8 +562,10 @@ export class PgStorage implements IStorage {
         patient: patients,
         lastVisitAt: sql<string | null>`(SELECT max(${orders.createdAt}) FROM ${orders}
           WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
-        visitCount: sql<number>`(SELECT count(*)::int FROM ${orders}
-          WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
+        // A visit is a day at the clinic, however many orders it had.
+        visitCount: sql<number>`(SELECT count(DISTINCT coalesce(${orders.visitId},
+            ((${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
+          FROM ${orders} WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
       })
       .from(patients)
       .where(where)
@@ -590,6 +595,31 @@ export class PgStorage implements IStorage {
       db.select().from(patientContacts).where(eq(patientContacts.patientId, id)).orderBy(asc(patientContacts.createdAt)),
     ]);
     return row && { ...mapPatient(row), contacts: contacts.map(mapContact) };
+  }
+
+  async getPatientCard(id: string): Promise<PatientCard | undefined> {
+    const [details, list, visitRows, paymentRows] = await Promise.all([
+      this.getPatientDetails(id),
+      this.listOrders({ patientId: id }),
+      db.select().from(visits).where(eq(visits.patientId, id)),
+      db
+        .select({ payment: payments, orderNumber: orders.orderNumber })
+        .from(payments)
+        .innerJoin(orders, eq(orders.id, payments.orderId))
+        .where(eq(orders.patientId, id)),
+    ]);
+    if (!details) return undefined;
+    return buildPatientCard(
+      details,
+      list.items,
+      visitRows.map((v) => ({ ...v, createdAt: iso(v.createdAt) ?? v.createdAt })),
+      paymentRows.map((r) => ({
+        ...r.payment,
+        method: r.payment.method as Payment["method"],
+        createdAt: iso(r.payment.createdAt),
+        orderNumber: r.orderNumber,
+      })),
+    );
   }
 
   async findPatientCandidates(q: PatientCandidateQuery): Promise<Patient[]> {
@@ -660,6 +690,17 @@ export class PgStorage implements IStorage {
         )
         .returning({ id: patientContacts.id });
       await tx.delete(patientContacts).where(eq(patientContacts.patientId, sourceId));
+
+      // Visits: a day both cards have becomes one visit (the target's); the
+      // duplicate's other visits simply change owner.
+      await tx.execute(sql`
+        UPDATE ${orders} o SET visit_id = tv.id
+        FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+        WHERE sv.patient_id = ${sourceId} AND o.visit_id = sv.id`);
+      await tx.execute(sql`
+        DELETE FROM ${visits} sv USING ${visits} tv
+        WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
+      await tx.update(visits).set({ patientId: targetId }).where(eq(visits.patientId, sourceId));
 
       // Fill gaps on the real card from the duplicate; never overwrite. The
       // Telegram chat is released from the duplicate first: it is unique.
@@ -753,7 +794,10 @@ export class PgStorage implements IStorage {
       throw new Error("Bu bemorda buyurtmalar mavjud — avval buyurtmalarni o'chiring");
     }
     const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
-    if (rows.length) await db.delete(patientContacts).where(eq(patientContacts.patientId, id));
+    if (rows.length) {
+      await db.delete(patientContacts).where(eq(patientContacts.patientId, id));
+      await db.delete(visits).where(eq(visits.patientId, id));
+    }
     return rows.length > 0;
   }
 
@@ -987,10 +1031,20 @@ export class PgStorage implements IStorage {
 
     // One transaction, so an order never exists without its line items.
     const orderId = await db.transaction(async (tx) => {
+      // Today's visit for this patient, made on first use. ON CONFLICT with a
+      // no-op update so the existing row's id comes back too, and two
+      // registrars saving at once still end up on one visit.
+      const [visit] = await tx
+        .insert(visits)
+        .values({ patientId: input.patientId, visitDate: todayKey(), createdBy: input.createdBy ?? null })
+        .onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql`excluded.patient_id` } })
+        .returning({ id: visits.id });
+
       const [order] = await tx
         .insert(orders)
         .values({
           patientId: input.patientId,
+          visitId: visit.id,
           totalAmount: total,
           discount,
           paidAmount: opening,
@@ -1493,7 +1547,11 @@ export class PgStorage implements IStorage {
   }
 
   async listAudit(query: AuditQuery = {}): Promise<Paged<AuditEntry>> {
-    const where = query.entity ? eq(auditLog.entity, query.entity) : undefined;
+    const parts = [];
+    if (query.entity) parts.push(eq(auditLog.entity, query.entity));
+    if (query.entityId) parts.push(eq(auditLog.entityId, query.entityId));
+    if (query.action) parts.push(eq(auditLog.action, query.action));
+    const where = parts.length ? and(...parts) : undefined;
 
     let q = db.select().from(auditLog).where(where).orderBy(desc(auditLog.createdAt)).$dynamic();
     if (query.limit !== undefined) q = q.limit(query.limit);

@@ -460,10 +460,11 @@ __export(schema_exports, {
   updateRoleSchema: () => updateRoleSchema,
   updateSampleSchema: () => updateSampleSchema,
   updateUserSchema: () => updateUserSchema,
-  users: () => users
+  users: () => users,
+  visits: () => visits
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, index, json } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, index, json, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 function normalizeUzPhone(value) {
@@ -501,7 +502,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, patientContacts, tests, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, departments, doctors, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -682,12 +683,28 @@ var init_schema = __esm({
       referenceRange: text("reference_range"),
       isActive: boolean("is_active").notNull().default(true)
     });
+    visits = pgTable(
+      "visits",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        patientId: varchar("patient_id").notNull(),
+        /** The clinic's local calendar day, YYYY-MM-DD. */
+        visitDate: text("visit_date").notNull(),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by")
+      },
+      (t) => ({
+        patientDayIdx: uniqueIndex("UQ_visits_patient_day").on(t.patientId, t.visitDate)
+      })
+    );
     orders = pgTable("orders", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       // Human-facing receipt number. Postgres assigns it from an identity
       // sequence so concurrent registrars can never collide on the same number.
       orderNumber: integer("order_number").generatedByDefaultAsIdentity({ startWith: 1001 }).notNull(),
       patientId: varchar("patient_id").notNull(),
+      /** The visit this order belongs to; null only for rows older than visits. */
+      visitId: varchar("visit_id"),
       totalAmount: money("total_amount").notNull(),
       discount: money("discount").notNull().default(0),
       paidAmount: money("paid_amount").notNull().default(0),
@@ -1117,6 +1134,40 @@ function todayKey() {
 function resolveFlag(incoming, line, gender) {
   if (incoming.flag) return incoming.flag;
   return computeFlag(incoming.result, line.referenceRange, { gender });
+}
+function buildPatientCard(patient, orderList, visitList, payments2) {
+  const visitDate = new Map(visitList.map((v) => [v.id, v.visitDate]));
+  const groups = /* @__PURE__ */ new Map();
+  for (const order of orderList) {
+    const key = order.visitId ?? `day:${localDay(order.createdAt)}`;
+    const date = order.visitId && visitDate.get(order.visitId) || localDay(order.createdAt);
+    const g = groups.get(key) ?? { key, date, orders: [], billed: 0, paid: 0 };
+    g.orders.push(order);
+    if (order.status !== "cancelled") {
+      g.billed += order.totalAmount;
+      g.paid += order.paidAmount;
+    }
+    groups.set(key, g);
+  }
+  const visits2 = [...groups.values()].map((g) => ({ ...g, orders: g.orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) })).sort((a, b) => b.date.localeCompare(a.date));
+  const live = orderList.filter((o) => o.status !== "cancelled");
+  const billed = live.reduce((s, o) => s + o.totalAmount, 0);
+  const paid = live.reduce((s, o) => s + o.paidAmount, 0);
+  const times = orderList.map((o) => o.createdAt).sort();
+  return {
+    patient,
+    visits: visits2,
+    payments: [...payments2].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    totals: {
+      visits: visits2.filter((v) => v.orders.some((o) => o.status !== "cancelled")).length,
+      orders: orderList.length,
+      billed,
+      paid,
+      debt: Math.max(0, billed - paid),
+      firstVisitAt: times[0] ?? null,
+      lastVisitAt: times[times.length - 1] ?? null
+    }
+  };
 }
 function byActiveThenName(name) {
   return (a, b) => Number(b.isActive) - Number(a.isActive) || name(a).localeCompare(name(b));
@@ -1874,8 +1925,10 @@ var init_storage_pg = __esm({
           patient: patients,
           lastVisitAt: sql2`(SELECT max(${orders.createdAt}) FROM ${orders}
           WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`,
-          visitCount: sql2`(SELECT count(*)::int FROM ${orders}
-          WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`
+          // A visit is a day at the clinic, however many orders it had.
+          visitCount: sql2`(SELECT count(DISTINCT coalesce(${orders.visitId},
+            ((${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
+          FROM ${orders} WHERE ${orders.patientId} = ${patients.id} AND ${orders.status} <> 'cancelled')`
         }).from(patients).where(where).orderBy(desc(patients.createdAt), desc(patients.patientNumber)).$dynamic();
         if (query.limit !== void 0) q = q.limit(query.limit);
         if (query.offset) q = q.offset(query.offset);
@@ -1898,6 +1951,26 @@ var init_storage_pg = __esm({
           db.select().from(patientContacts).where(eq(patientContacts.patientId, id)).orderBy(asc(patientContacts.createdAt))
         ]);
         return row && { ...mapPatient(row), contacts: contacts.map(mapContact) };
+      }
+      async getPatientCard(id) {
+        const [details, list, visitRows, paymentRows] = await Promise.all([
+          this.getPatientDetails(id),
+          this.listOrders({ patientId: id }),
+          db.select().from(visits).where(eq(visits.patientId, id)),
+          db.select({ payment: payments, orderNumber: orders.orderNumber }).from(payments).innerJoin(orders, eq(orders.id, payments.orderId)).where(eq(orders.patientId, id))
+        ]);
+        if (!details) return void 0;
+        return buildPatientCard(
+          details,
+          list.items,
+          visitRows.map((v) => ({ ...v, createdAt: iso(v.createdAt) ?? v.createdAt })),
+          paymentRows.map((r) => ({
+            ...r.payment,
+            method: r.payment.method,
+            createdAt: iso(r.payment.createdAt),
+            orderNumber: r.orderNumber
+          }))
+        );
       }
       async findPatientCandidates(q) {
         const parts = [];
@@ -1941,6 +2014,14 @@ var init_storage_pg = __esm({
             hasEmergency ? and(eq(patientContacts.patientId, sourceId), eq(patientContacts.isEmergency, false)) : eq(patientContacts.patientId, sourceId)
           ).returning({ id: patientContacts.id });
           await tx.delete(patientContacts).where(eq(patientContacts.patientId, sourceId));
+          await tx.execute(sql2`
+        UPDATE ${orders} o SET visit_id = tv.id
+        FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+        WHERE sv.patient_id = ${sourceId} AND o.visit_id = sv.id`);
+          await tx.execute(sql2`
+        DELETE FROM ${visits} sv USING ${visits} tv
+        WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
+          await tx.update(visits).set({ patientId: targetId }).where(eq(visits.patientId, sourceId));
           const fill = {};
           for (const k of ["birthDate", "passport", "pinfl", "address", "gender", "age"]) {
             if (target[k] == null && source[k] != null) fill[k] = source[k];
@@ -2008,7 +2089,10 @@ var init_storage_pg = __esm({
           throw new Error("Bu bemorda buyurtmalar mavjud \u2014 avval buyurtmalarni o'chiring");
         }
         const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
-        if (rows.length) await db.delete(patientContacts).where(eq(patientContacts.patientId, id));
+        if (rows.length) {
+          await db.delete(patientContacts).where(eq(patientContacts.patientId, id));
+          await db.delete(visits).where(eq(visits.patientId, id));
+        }
         return rows.length > 0;
       }
       // ---------------------------------------------------------------- tests
@@ -2176,8 +2260,10 @@ var init_storage_pg = __esm({
         const total = subtotal - discount;
         const opening = Math.min(input.paidAmount, total);
         const orderId = await db.transaction(async (tx) => {
+          const [visit] = await tx.insert(visits).values({ patientId: input.patientId, visitDate: todayKey(), createdBy: input.createdBy ?? null }).onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql2`excluded.patient_id` } }).returning({ id: visits.id });
           const [order] = await tx.insert(orders).values({
             patientId: input.patientId,
+            visitId: visit.id,
             totalAmount: total,
             discount,
             paidAmount: opening,
@@ -2521,7 +2607,11 @@ var init_storage_pg = __esm({
         });
       }
       async listAudit(query = {}) {
-        const where = query.entity ? eq(auditLog.entity, query.entity) : void 0;
+        const parts = [];
+        if (query.entity) parts.push(eq(auditLog.entity, query.entity));
+        if (query.entityId) parts.push(eq(auditLog.entityId, query.entityId));
+        if (query.action) parts.push(eq(auditLog.action, query.action));
+        const where = parts.length ? and(...parts) : void 0;
         let q = db.select().from(auditLog).where(where).orderBy(desc(auditLog.createdAt)).$dynamic();
         if (query.limit !== void 0) q = q.limit(query.limit);
         if (query.offset) q = q.offset(query.offset);
@@ -2751,6 +2841,7 @@ var init_db = __esm({
       security: null,
       patients: [],
       patientContacts: [],
+      visits: [],
       tests: [],
       orders: [],
       orderTests: [],
@@ -2879,6 +2970,7 @@ var init_storage_file = __esm({
           createdUsers = SEED_USERS.length;
         }
         const numbered = this.backfillPatientNumbers();
+        const visited = this.backfillVisits();
         let createdRoles = 0;
         const now = (/* @__PURE__ */ new Date()).toISOString();
         for (const def of SYSTEM_ROLES) {
@@ -2902,7 +2994,7 @@ var init_storage_file = __esm({
             migratedAdmins++;
           }
         }
-        if (createdTests || createdUsers || numbered || createdRoles || migratedAdmins) await this.persist();
+        if (createdTests || createdUsers || numbered || createdRoles || migratedAdmins || visited) await this.persist();
         return { createdTests, createdUsers, createdRoles, migratedAdmins };
       }
       // ---------------------------------------------------------------- roles
@@ -3066,6 +3158,24 @@ var init_storage_file = __esm({
         await this.persist();
         return true;
       }
+      /** The patient's visit for `day`, created on first use. One per patient per day. */
+      ensureVisit(patientId, day, createdBy) {
+        const existing = this.db.visits.find((v) => v.patientId === patientId && v.visitDate === day);
+        if (existing) return existing;
+        const visit = { id: randomUUID(), patientId, visitDate: day, createdAt: (/* @__PURE__ */ new Date()).toISOString(), createdBy };
+        this.db.visits.push(visit);
+        return visit;
+      }
+      /** Orders from before visits existed get the visit of their own day. */
+      backfillVisits() {
+        let n = 0;
+        for (const o of this.db.orders) {
+          if (o.visitId) continue;
+          o.visitId = this.ensureVisit(o.patientId, localDay(o.createdAt), o.createdBy ?? null).id;
+          n++;
+        }
+        return n;
+      }
       /**
        * Gives a number to every patient saved before patientNumber existed, oldest
        * first, so the sequence still reads as the order people walked in. Returns
@@ -3154,9 +3264,10 @@ var init_storage_file = __esm({
         const offset = query.offset ?? 0;
         const limit = query.limit ?? total;
         const page = rows.slice(offset, offset + limit).map((p) => {
-          const visits = this.db.orders.filter((o) => o.patientId === p.id && o.status !== "cancelled");
-          const last = visits.reduce((m, o) => !m || o.createdAt > m ? o.createdAt : m, null);
-          return { ...p, lastVisitAt: last, visitCount: visits.length };
+          const live = this.db.orders.filter((o) => o.patientId === p.id && o.status !== "cancelled");
+          const last = live.reduce((m, o) => !m || o.createdAt > m ? o.createdAt : m, null);
+          const days = new Set(live.map((o) => o.visitId ?? localDay(o.createdAt)));
+          return { ...p, lastVisitAt: last, visitCount: days.size };
         });
         return { items: page, total };
       }
@@ -3169,6 +3280,15 @@ var init_storage_file = __esm({
         if (!p) return void 0;
         const contacts = this.db.patientContacts.filter((c) => c.patientId === id).map((c) => ({ ...c }));
         return { ...p, contacts };
+      }
+      async getPatientCard(id) {
+        const details = await this.getPatientDetails(id);
+        if (!details) return void 0;
+        const { items } = await this.listOrders({ patientId: id });
+        const numbers = new Map(items.map((o) => [o.id, o.orderNumber]));
+        const payments2 = this.db.payments.filter((p) => numbers.has(p.orderId)).map((p) => ({ ...p, orderNumber: numbers.get(p.orderId) }));
+        const visits2 = this.db.visits.filter((v) => v.patientId === id);
+        return buildPatientCard(details, items, visits2, payments2);
       }
       async findPatientCandidates(q) {
         return this.db.patients.map(normalizePatient).filter((p) => p.id !== q.excludeId).filter(
@@ -3206,6 +3326,15 @@ var init_storage_file = __esm({
           contacts++;
         }
         this.db.patientContacts = this.db.patientContacts.filter((c) => c.patientId !== sourceId);
+        for (const v of this.db.visits.filter((x) => x.patientId === sourceId)) {
+          const same = this.db.visits.find((x) => x.patientId === targetId && x.visitDate === v.visitDate);
+          if (same) {
+            for (const o of this.db.orders) if (o.visitId === v.id) o.visitId = same.id;
+            this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
+          } else {
+            v.patientId = targetId;
+          }
+        }
         for (const k of ["birthDate", "passport", "pinfl", "address", "gender", "age"]) {
           if (target[k] == null && source[k] != null) target[k] = source[k];
         }
@@ -3276,6 +3405,7 @@ var init_storage_file = __esm({
         this.db.patients = this.db.patients.filter((p) => p.id !== id);
         if (this.db.patients.length === before) return false;
         this.db.patientContacts = this.db.patientContacts.filter((c) => c.patientId !== id);
+        this.db.visits = this.db.visits.filter((v) => v.patientId !== id);
         await this.persist();
         return true;
       }
@@ -3403,6 +3533,7 @@ var init_storage_file = __esm({
           id: randomUUID(),
           orderNumber: this.db.counters.orderNumber,
           patientId: input.patientId,
+          visitId: this.ensureVisit(input.patientId, todayKey(), input.createdBy ?? null).id,
           totalAmount: total,
           discount,
           paidAmount: 0,
@@ -3781,6 +3912,8 @@ var init_storage_file = __esm({
       async listAudit(query = {}) {
         let rows = [...this.db.auditLog];
         if (query.entity) rows = rows.filter((e) => e.entity === query.entity);
+        if (query.entityId) rows = rows.filter((e) => e.entityId === query.entityId);
+        if (query.action) rows = rows.filter((e) => e.action === query.action);
         rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         const total = rows.length;
         const offset = query.offset ?? 0;
@@ -4860,6 +4993,48 @@ async function registerRoutes(app) {
       res.json(patient);
     })
   );
+  const VIEW_LOG_EVERY_MS = 10 * 6e4;
+  const lastViewLogged = /* @__PURE__ */ new Map();
+  async function logCardView(req, patient) {
+    const key = `${req.user.id}:${patient.id}`;
+    const now = Date.now();
+    if (now - (lastViewLogged.get(key) ?? 0) < VIEW_LOG_EVERY_MS) return;
+    lastViewLogged.set(key, now);
+    if (lastViewLogged.size > 2e4) lastViewLogged.clear();
+    await audit(req, "view", "patient", patient.id, `\u2116${patient.patientNumber} ${patient.fullName} kartasi ochildi`);
+  }
+  app.get(
+    "/api/patients/:id/card",
+    requirePermission("patients.read"),
+    handle(async (req, res) => {
+      const card = await storage.getPatientCard(req.params.id);
+      if (!card) return res.status(404).json({ message: "Bemor topilmadi" });
+      await logCardView(req, card.patient);
+      if (!hasPermission(req, "orders.read")) {
+        card.visits = [];
+        card.payments = [];
+      }
+      if (!hasPermission(req, "finance.view") && !hasPermission(req, "payments.create")) {
+        card.payments = [];
+        card.totals = { ...card.totals, billed: null, paid: null, debt: null };
+      }
+      res.json(card);
+    })
+  );
+  app.get(
+    "/api/patients/:id/access-log",
+    requirePermission("audit.read"),
+    handle(async (req, res) => {
+      res.json(
+        await storage.listAudit({
+          entity: "patient",
+          entityId: req.params.id,
+          limit: numberParam(req.query.limit, 100),
+          offset: numberParam(req.query.offset, 0)
+        })
+      );
+    })
+  );
   async function findDuplicates(input, excludeId) {
     const typed = {
       fullName: input.fullName ?? null,
@@ -5355,6 +5530,7 @@ async function registerRoutes(app) {
       res.json(
         await storage.listAudit({
           entity: stringParam(req.query.entity),
+          action: stringParam(req.query.action),
           limit: numberParam(req.query.limit, 50),
           offset: numberParam(req.query.offset, 0)
         })

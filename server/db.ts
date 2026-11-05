@@ -18,6 +18,7 @@ import type {
   TelegramContact,
   Test,
   User,
+  Visit,
 } from "@shared/schema";
 
 export type DbShape = {
@@ -28,6 +29,7 @@ export type DbShape = {
   security: SecuritySettings | null;
   patients: Patient[];
   patientContacts: PatientContact[];
+  visits: Visit[];
   tests: Test[];
   orders: Order[];
   orderTests: OrderTest[];
@@ -60,6 +62,7 @@ export const emptyDb = (): DbShape => ({
   security: null,
   patients: [],
   patientContacts: [],
+  visits: [],
   tests: [],
   orders: [],
   orderTests: [],

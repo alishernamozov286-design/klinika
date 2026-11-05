@@ -1,24 +1,22 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import {
-  CalendarClock,
   Database,
   FlaskConical,
   GitMerge,
-  History,
+  IdCard,
   Loader2,
   MoreVertical,
   Pencil,
   Trash2,
-  TrendingUp,
   UserPlus,
   Users,
 } from "lucide-react";
-import type { OrderWithDetails, Patient, PatientListItem } from "@shared/schema";
+import type { Patient, PatientListItem } from "@shared/schema";
 import { patientAge } from "@shared/patient-identity";
 import { MergePatientDialog } from "@/components/merge-patient-dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,18 +25,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Avatar,
   EmptyState,
-  Money,
   PageHeader,
   Pagination,
   PatientNumber,
   PhoneText,
-  StatusBadge,
   TableSkeleton,
   TelegramBadge,
 } from "@/components/ui-kit";
@@ -52,17 +45,13 @@ import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useDebounced } from "@/hooks/use-debounced";
-import { ageGender, formatDate, formatPhone, genderLabel, money, timeAgo } from "@/lib/format";
-
-/**
- * Lazy, and deliberately so: the trend chart pulls in the whole charting
- * library. Loading it with the patients list would put ~400 KB of Recharts in
- * front of every registrator on every page load, for a tab most of them open
- * rarely — the same reason /reports is code-split in App.tsx.
- */
-const ResultTrend = lazy(() =>
-  import("@/components/result-trend").then((m) => ({ default: m.ResultTrend })),
-);
+import {
+  ageGender,
+  formatDate,
+  formatPhone,
+  genderLabel,
+  timeAgo,
+} from "@/lib/format";
 
 const PAGE_SIZE = 25;
 
@@ -85,6 +74,7 @@ const EXPORT_COLUMNS: ExportColumn<PatientListItem>[] = [
 
 export default function Patients() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const { can } = useAuth();
 
   const [search, setSearch] = useState("");
@@ -92,7 +82,6 @@ export default function Patients() {
   const [dialogPatient, setDialogPatient] = useState<Patient | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [orderFor, setOrderFor] = useState<Patient | null>(null);
-  const [historyFor, setHistoryFor] = useState<Patient | null>(null);
   const [deleting, setDeleting] = useState<Patient | null>(null);
   const [merging, setMerging] = useState<Patient | null>(null);
 
@@ -244,7 +233,7 @@ export default function Patients() {
                     <TableCell>
                       <button
                         type="button"
-                        onClick={() => setHistoryFor(p)}
+                        onClick={() => setLocation(`/patients/${p.id}`)}
                         className="flex items-center gap-3 text-left"
                       >
                         <Avatar name={p.fullName} size="sm" />
@@ -292,9 +281,9 @@ export default function Patients() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-52">
-                          <DropdownMenuItem onClick={() => setHistoryFor(p)}>
-                            <History className="mr-2 h-4 w-4" />
-                            Tahlillar tarixi
+                          <DropdownMenuItem onClick={() => setLocation(`/patients/${p.id}`)}>
+                            <IdCard className="mr-2 h-4 w-4" />
+                            Bemor kartasi
                           </DropdownMenuItem>
                           {can("orders.create") && (
                             <DropdownMenuItem onClick={() => setOrderFor(p)}>
@@ -355,7 +344,6 @@ export default function Patients() {
         onOpenChange={(o) => !o && setOrderFor(null)}
         presetPatient={orderFor}
       />
-      <PatientHistoryDialog patient={historyFor} onClose={() => setHistoryFor(null)} />
       <MergePatientDialog source={merging} onClose={() => setMerging(null)} />
       <ConfirmDialog
         open={Boolean(deleting)}
@@ -371,136 +359,5 @@ export default function Patients() {
         isPending={deleteMutation.isPending}
       />
     </div>
-  );
-}
-
-/** A patient's visit history — every order they have ever placed. */
-function PatientHistoryDialog({ patient, onClose }: { patient: Patient | null; onClose: () => void }) {
-  const [tab, setTab] = useState<"visits" | "trend">("visits");
-
-  const { data, isLoading } = useQuery<{ items: OrderWithDetails[]; total: number }>({
-    queryKey: [`/api/patients/${patient?.id}/orders`],
-    enabled: Boolean(patient),
-  });
-
-  // A fresh patient starts on the visit list, whichever tab was left open.
-  useEffect(() => {
-    if (patient) setTab("visits");
-  }, [patient]);
-
-  const orders = data?.items ?? [];
-  const totalSpent = orders.reduce((sum, o) => sum + o.totalAmount, 0);
-
-  return (
-    <Dialog open={Boolean(patient)} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-0 p-0">
-        <DialogHeader className="p-6 pb-4">
-          <div className="flex items-center gap-3.5">
-            <Avatar name={patient?.fullName ?? "?"} size="lg" />
-            <div className="min-w-0">
-              <DialogTitle className="flex items-center gap-2">
-                <PatientNumber value={patient?.patientNumber} size="sm" />
-                <span className="truncate">{patient?.fullName}</span>
-              </DialogTitle>
-              <DialogDescription className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                <PhoneText value={patient?.phone} asLink={false} />
-                {patient?.age || patient?.gender ? (
-                  <>
-                    <span className="text-muted-foreground/50">·</span>
-                    <span>{ageGender(patient?.age, patient?.gender)}</span>
-                  </>
-                ) : null}
-              </DialogDescription>
-            </div>
-          </div>
-
-          {orders.length > 0 && (
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-xl border bg-muted/40 p-3">
-                <p className="text-xs text-muted-foreground">Tashriflar</p>
-                <p className="mt-0.5 text-lg font-bold tabular">{orders.length} ta</p>
-              </div>
-              <div className="rounded-xl border bg-muted/40 p-3">
-                <p className="text-xs text-muted-foreground">Jami to'lov</p>
-                <p className="mt-0.5 text-lg font-bold tabular">{money(totalSpent, false)}</p>
-              </div>
-            </div>
-          )}
-        </DialogHeader>
-
-        <Tabs value={tab} onValueChange={(v) => setTab(v as "visits" | "trend")} className="min-h-0 flex-1 flex flex-col">
-          <div className="border-t px-6 pt-3">
-            <TabsList>
-              <TabsTrigger value="visits" data-testid="tab-history-visits">
-                <History className="mr-1.5 h-3.5 w-3.5" />
-                Tashriflar
-              </TabsTrigger>
-              <TabsTrigger value="trend" data-testid="tab-history-trend">
-                <TrendingUp className="mr-1.5 h-3.5 w-3.5" />
-                Dinamika
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          <TabsContent value="trend" className="mt-0 min-h-0 flex-1">
-            <ScrollArea className="h-full">
-              {isLoading ? (
-                <TableSkeleton rows={3} />
-              ) : (
-                <Suspense fallback={<TableSkeleton rows={3} />}>
-                  <ResultTrend orders={orders} gender={patient?.gender} />
-                </Suspense>
-              )}
-            </ScrollArea>
-          </TabsContent>
-
-          <TabsContent value="visits" className="mt-0 min-h-0 flex-1">
-        <ScrollArea className="h-full">
-          {isLoading ? (
-            <TableSkeleton rows={3} />
-          ) : orders.length === 0 ? (
-            <EmptyState
-              icon={FlaskConical}
-              title="Tahlil tarixi bo'sh"
-              description="Bu bemor hali biror tahlil topshirmagan."
-            />
-          ) : (
-            <div className="divide-y">
-              {orders.map((order) => (
-                <div key={order.id} className="space-y-2.5 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-medium">
-                        Buyurtma <span className="tabular">#{order.orderNumber}</span>
-                      </p>
-                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <CalendarClock className="h-3 w-3" />
-                        <span className="tabular">{formatDate(order.createdAt)}</span>
-                        <span className="text-muted-foreground/50">·</span>
-                        {timeAgo(order.createdAt)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={order.status} />
-                      <Money value={order.totalAmount} className="font-semibold" />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {order.items.map((item) => (
-                      <Badge key={item.id} variant="secondary" className="font-normal">
-                        {item.testName}
-                        {item.result && <span className="ml-1.5 font-semibold tabular">{item.result}</span>}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-          </TabsContent>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
   );
 }

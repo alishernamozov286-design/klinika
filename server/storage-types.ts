@@ -23,7 +23,11 @@ import type {
   OrderStatus,
   OrderWithDetails,
   Paged,
+  Payment,
+  Visit,
   Patient,
+  PatientCard,
+  PatientCardVisit,
   PatientDetails,
   PatientListItem,
   PublicUser,
@@ -135,7 +139,13 @@ export type ExpenseQuery = {
   offset?: number;
 };
 
-export type AuditQuery = { entity?: string; limit?: number; offset?: number };
+export type AuditQuery = {
+  entity?: string;
+  entityId?: string;
+  action?: string;
+  limit?: number;
+  offset?: number;
+};
 
 export type AuditInput = {
   actor: Actor;
@@ -166,6 +176,54 @@ export const SEED_USERS: { username: string; password: string; fullName: string;
   // A two-word job title would come out as "Salom, administratori".
   { username: "admin", password: "admin123", fullName: "Administrator", role: SUPER_ADMIN },
 ];
+
+/**
+ * Assembles the patient card from the raw rows, the same way for both
+ * backends. Orders are grouped by their visit; orders older than visits fall
+ * back to their local day, so history before the visits table still reads as
+ * one entry per day.
+ */
+export function buildPatientCard(
+  patient: PatientDetails,
+  orderList: OrderWithDetails[],
+  visitList: Visit[],
+  payments: (Payment & { orderNumber: number })[],
+): PatientCard {
+  const visitDate = new Map(visitList.map((v) => [v.id, v.visitDate]));
+  const groups = new Map<string, PatientCardVisit>();
+  for (const order of orderList) {
+    const key = order.visitId ?? `day:${localDay(order.createdAt)}`;
+    const date = (order.visitId && visitDate.get(order.visitId)) || localDay(order.createdAt);
+    const g = groups.get(key) ?? { key, date, orders: [], billed: 0, paid: 0 };
+    g.orders.push(order);
+    if (order.status !== "cancelled") {
+      g.billed += order.totalAmount;
+      g.paid += order.paidAmount;
+    }
+    groups.set(key, g);
+  }
+  const visits = [...groups.values()]
+    .map((g) => ({ ...g, orders: g.orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const live = orderList.filter((o) => o.status !== "cancelled");
+  const billed = live.reduce((s, o) => s + o.totalAmount, 0);
+  const paid = live.reduce((s, o) => s + o.paidAmount, 0);
+  const times = orderList.map((o) => o.createdAt).sort();
+  return {
+    patient,
+    visits,
+    payments: [...payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    totals: {
+      visits: visits.filter((v) => v.orders.some((o) => o.status !== "cancelled")).length,
+      orders: orderList.length,
+      billed,
+      paid,
+      debt: Math.max(0, billed - paid),
+      firstVisitAt: times[0] ?? null,
+      lastVisitAt: times[times.length - 1] ?? null,
+    },
+  };
+}
 
 /** Active before inactive, then alphabetical — how every directory list reads. */
 export function byActiveThenName<T extends { isActive: boolean }>(name: (row: T) => string) {
@@ -245,6 +303,8 @@ export interface IStorage {
   listPatients(query?: PatientQuery): Promise<Paged<PatientListItem>>;
   /** The card with its contacts — what the edit form and the patient card load. */
   getPatientDetails(id: string): Promise<PatientDetails | undefined>;
+  /** The whole patient card: visits with their orders, the payment ledger, totals. */
+  getPatientCard(id: string): Promise<PatientCard | undefined>;
   /**
    * Patients who might be the person described: any one identity field in
    * common. Deliberately broad; shared/patient-identity grades the result.

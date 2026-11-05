@@ -34,6 +34,7 @@ import { ROUTE_ACCESS } from "@/lib/access";
 import Login from "@/pages/login";
 import Home from "@/pages/home";
 import Patients from "@/pages/patients";
+import PatientCard from "@/pages/patient-card";
 import Orders from "@/pages/orders";
 import Results from "@/pages/results";
 import NotFound from "@/pages/not-found";
@@ -70,6 +71,7 @@ function guarded(path: string, Page: React.ComponentType) {
 
 const HomePage = Home;
 const PatientsPage = guarded("/patients", Patients);
+const PatientCardPage = guarded("/patients", PatientCard);
 const OrdersPage = guarded("/orders", Orders);
 const ResultsPage = guarded("/results", Results);
 const ReportsPage = guarded("/reports", Reports);
@@ -89,6 +91,7 @@ function Router() {
         </Route>
         <Route path="/home" component={HomePage} />
         <Route path="/patients" component={PatientsPage} />
+        <Route path="/patients/:id" component={PatientCardPage} />
         <Route path="/orders" component={OrdersPage} />
         <Route path="/results" component={ResultsPage} />
         <Route path="/reports" component={ReportsPage} />
@@ -198,7 +201,7 @@ function Shell() {
             <nav className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
               <span className="hidden text-muted-foreground sm:inline">MedLab</span>
               <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground/60 sm:inline" />
-              <span className="truncate font-semibold">{PAGE_TITLES[location] ?? "Sahifa"}</span>
+              <span className="truncate font-semibold">{PAGE_TITLES[location] ?? (location.startsWith("/patients/") ? "Bemor kartasi" : "Sahifa")}</span>
             </nav>
 
             {/* The palette's own trigger — a shortcut nobody can see is a

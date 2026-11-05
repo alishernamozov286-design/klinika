@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, index, json } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, index, json, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { isPermission, type Permission } from "./permissions";
@@ -276,12 +276,35 @@ export const tests = pgTable("tests", {
   isActive: boolean("is_active").notNull().default(true),
 });
 
+/**
+ * A patient's arrival at the clinic (TZ §10 `visits`): one per patient per
+ * day. Everything done for them that day — lab orders now, appointments and
+ * services as those modules land — hangs off the visit, which is what the
+ * patient card's history is organised by.
+ */
+export const visits = pgTable(
+  "visits",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    patientId: varchar("patient_id").notNull(),
+    /** The clinic's local calendar day, YYYY-MM-DD. */
+    visitDate: text("visit_date").notNull(),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+  },
+  (t) => ({
+    patientDayIdx: uniqueIndex("UQ_visits_patient_day").on(t.patientId, t.visitDate),
+  }),
+);
+
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   // Human-facing receipt number. Postgres assigns it from an identity
   // sequence so concurrent registrars can never collide on the same number.
   orderNumber: integer("order_number").generatedByDefaultAsIdentity({ startWith: 1001 }).notNull(),
   patientId: varchar("patient_id").notNull(),
+  /** The visit this order belongs to; null only for rows older than visits. */
+  visitId: varchar("visit_id"),
   totalAmount: money("total_amount").notNull(),
   discount: money("discount").notNull().default(0),
   paidAmount: money("paid_amount").notNull().default(0),
@@ -506,6 +529,37 @@ export type PatientContact = typeof patientContacts.$inferSelect;
 
 /** A row of the patients list: the card plus when they were last here. */
 export type PatientListItem = Patient & { lastVisitAt: string | null; visitCount: number };
+
+export type Visit = typeof visits.$inferSelect;
+
+/** One day at the clinic, with what was done. */
+export type PatientCardVisit = {
+  /** The visit id, or "day:YYYY-MM-DD" for orders older than visits. */
+  key: string;
+  date: string;
+  orders: OrderWithDetails[];
+  billed: number;
+  paid: number;
+};
+
+/** Everything the patient card (TZ §4.1.3 "shaxsiy karta") shows, in one request. */
+export type PatientCard = {
+  patient: PatientDetails;
+  /** Newest first. */
+  visits: PatientCardVisit[];
+  /** The cash ledger across all their orders, newest first. */
+  payments: (Payment & { orderNumber: number })[];
+  totals: {
+    visits: number;
+    orders: number;
+    /** Cancelled orders excluded. Null when the viewer may not see money. */
+    billed: number | null;
+    paid: number | null;
+    debt: number | null;
+    firstVisitAt: string | null;
+    lastVisitAt: string | null;
+  };
+};
 
 /** One patient with everything the card screen and the edit form need. */
 export type PatientDetails = Patient & { contacts: PatientContact[] };

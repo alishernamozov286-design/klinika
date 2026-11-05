@@ -88,9 +88,9 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-05. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 21.5 → ≈28%**.
+> Holat 2026-11-05. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 24 → ≈32%**.
 
-### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 70%
+### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 80%
 
 - [x] **B1.1** Ma'lumotlar bazasi: PostgreSQL + Drizzle, fayl ombori zaxira varianti.
 - [x] **B1.2** Login va parol: scrypt xesh, brute-force blokirovka (username+IP), eskalatsiyali bloklash.
@@ -110,7 +110,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - UI: Sozlamalar → Bo'limlar (kartalar, namuna to'plam), Shifokorlar (jadval, filtr, ish jadvali muharriri va tayyor shablonlar).
   - Migratsiya: `npm run db:clinic`. Jadvallar yo'q bo'lsa ro'yxatlar bo'sh qaytadi, yozish 503 va tushunarli xabar beradi.
   - **B2.7 uchun eslatma:** qabullar shifokorga bog'langach `DELETE /api/doctors/:id` ni bloklash kerak (routes.ts dagi TODO).
-- [~] **B1.6** Audit jurnali (`§12`): barcha yozish amallari "nima o'zgardi" tafsiloti bilan yoziladi (xodim, rol, bo'lim, shifokor, seans, siyosat, xarajat, to'lov). Auditor rolida jurnalni filtr bilan ko'rish bor. **Qoldi:** tibbiy ma'lumotni *ko'rish* jurnali (kim, qachon, qaysi bemor kartasini ochdi) — bemor kartasi (B2.4) bilan birga.
+- [x] **B1.6** Audit jurnali (`§12`): barcha yozish amallari "nima o'zgardi" tafsiloti bilan; tibbiy ma'lumotni *ko'rish* ham yoziladi — bemor kartasi ochilganda (`view`, bir xodim + bir karta uchun 10 daqiqada bir marta). Kartada "Kirishlar tarixi" tabi (`audit.read`), jurnalda `entityId`/`action` filtrlari.
 - [x] **B1.7** Seans xavfsizligi (`§12`).
   - Server (`server/session-policy.ts`): har bir API so'rovida faolsizlik (standart 30 daq) va umumiy muddat (standart 12 soat) tekshiriladi; oshsa seans yopiladi va 401 `{code: SESSION_IDLE | SESSION_MAX}`. Eski seanslarga yangi soat beriladi (deploy paytida hech kim chiqarib yuborilmaydi).
   - Mijoz (`SessionGuard`): yopilishdan 1 daqiqa oldin teskari sanoqli ogohlantirish; faollik oynalar orasida `localStorage` orqali bo'lishiladi; faol ishlayotganda `/api/session/ping`. Har qanday 401 → tabdan chiqish va login sahifasida sabab.
@@ -121,13 +121,13 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [~] **B1.9** Bemor ID (`§4.2`): `patientNumber` bor. **Qoldi:** barcha yangi modullarda faqat shu ID orqali bog‘lanish (qabul mezoni 16.1).
 - [~] **B1.10** Umumiy ustunlar (`§10`): `updatedAt`/`updatedBy` qo'shildi — roles, departments, doctors, expenses, patients. **Qoldi:** orders, tests, payments.
 
-### Bosqich 2: Registratura (`§4`, `§15.2`) 41%
+### Bosqich 2: Registratura (`§4`, `§15.2`) 59%
 
 - [x] **B2.1** Yangi bemor formasi (`§4.1.2`): F.I.Sh., jins, telefon, manzil, tug'ilgan sana (yosh avtomatik; sana noma'lum bo'lsa taxminiy yosh), pasport/ID, JShShIR, favqulodda aloqa (`patient_contacts`). Migratsiya: `npm run db:patients`.
 - [x] **B2.2** Takroriy bemorni aniqlash (`§4.2`, `shared/patient-identity.ts`): yozish paytida tekshiruv; kuchli moslik (JShShIR, pasport, ism+telefon, ism+tug'ilgan sana — kirill/lotin farqisiz) saqlashni 409 bilan to'xtatadi, ro'yxatchi "shu bemor"ni tanlaydi yoki aniq tasdiqlaydi; kuchsiz moslik (faqat telefon/ism) faqat ogohlantiradi. Dublikat kartalarni birlashtirish (`patients.delete` ruxsati): buyurtmalar, aloqalar, Telegram ko'chadi, bo'sh maydonlar to'ldiriladi.
 - [x] **B2.3** Bemorlar ro'yxati (`§4.1.3`): ID, F.I.Sh., telefon, yosh/tug'ilgan sana, oxirgi tashrif va tashriflar soni; qidiruv pasport va JShShIR bo'yicha ham. ("Shaxsiy karta" — B2.4.)
-- [ ] **B2.4** Bemor shaxsiy kartasi (`§4.1.3`, `§4.2`): bitta sahifada barcha tashriflar, qabullar, tahlillar, to‘lovlar, statsionar tarixi.
-- [ ] **B2.5** `visits` (tashriflar, `§10`): har bir kelish bitta tashrif; buyurtma, qabul va to‘lovlar tashrifga bog‘lanadi.
+- [x] **B2.4** Bemor shaxsiy kartasi (`/patients/:id`, `§4.1.3`, `§4.2`): sarlavha (yosh, hujjatlar, Telegram), ko'rsatkichlar (tashriflar, oxirgi tashrif, jami, qarz), tablar — tashriflar xronologiyasi, natijalar dinamikasi, to'lovlar daftari, ma'lumotlar (aloqa, hujjatlar), kirishlar tarixi. Rol bo'yicha qisqartiriladi: `orders.read`siz buyurtmalar, moliya ruxsatisiz summalar ko'rinmaydi. Statsionar tarixi B6 bilan qo'shiladi.
+- [x] **B2.5** Tashriflar (`visits`, `§10`): bemor + kun uchun bitta tashrif (unique), buyurtma yaratilganda avtomatik (`ON CONFLICT`, parallel saqlashda ham bitta). Eski buyurtmalar migratsiyada kunlar bo'yicha bog'landi (`npm run db:visits`). Birlashtirishda bir kunlik tashriflar qo'shiladi. **Keyin:** qabul (B2.7) va xizmatlar (B2.6) ham tashrifga bog'lanadi.
 - [ ] **B2.6** Xizmatlar katalogi (`§4.1.5`): `services` (turi: shifokor ko‘rigi / laboratoriya / UZI / muolaja / boshqa, narx, bo‘lim). Lab `tests` katalogi shu tizimga ulanadi.
 - [ ] **B2.7** Navbat va qabul (`§4.1.4`): `appointments`: shifokor tanlash, qabul vaqti (shifokor jadvali bo‘yicha bo‘sh slotlar), navbat raqami (kunlik, shifokor bo‘yicha), holat (yozildi → keldi → qabulda → yakunlandi / kelmadi / bekor).
 - [ ] **B2.8** Shifokorga elektron yo‘llanma (`§4.2`): qabul yaratilganda shifokor kabinetida paydo bo‘ladi.
@@ -242,3 +242,4 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B1.7 · Seans xavfsizligi: faolsizlik/umumiy muddat, ogohlantirish oynasi, faol seanslar ro'yxati, parol almashganda seanslarni yopish.
 - 2026-11-05 · B7.9 · Xarajatlar sahifasi to'liq; menyuda "Klinika" bo'limi (Shifokorlar, Bo'limlar, Xodimlar+Rollar alohida sahifalar); noma'lum /api yo'llari endi 404 JSON qaytaradi.
 - 2026-11-05 · B2.1–B2.3 · Bemor ma'lumotlari: tug'ilgan sana, hujjatlar, favqulodda aloqa, takroriy bemorni aniqlash va bloklash, kartalarni birlashtirish, oxirgi tashrif.
+- 2026-11-05 · B2.4–B2.5, B1.6 · Bemor kartasi sahifasi, tashriflar jadvali, kartani ochish jurnali.

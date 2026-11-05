@@ -25,6 +25,7 @@ import type {
   OrderTest,
   OrderWithDetails,
   Patient,
+  PatientCard,
   PatientContact,
   PatientDetails,
   PatientListItem,
@@ -44,6 +45,7 @@ import type {
   UpdateSampleInput,
   UpdateUserInput,
   User,
+  Visit,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
 import { nameKey } from "@shared/patient-identity";
@@ -53,6 +55,7 @@ import { hashPassword } from "./password";
 import { LEGACY_ADMIN, SUPER_ADMIN, SYSTEM_ROLES } from "@shared/permissions";
 import {
   SEED_USERS,
+  buildPatientCard,
   byActiveThenName,
   sortRoles,
   type CreateRoleArgs,
@@ -191,6 +194,7 @@ export class FileStorage implements IStorage {
     }
 
     const numbered = this.backfillPatientNumbers();
+    const visited = this.backfillVisits();
 
     let createdRoles = 0;
     const now = new Date().toISOString();
@@ -217,7 +221,7 @@ export class FileStorage implements IStorage {
       }
     }
 
-    if (createdTests || createdUsers || numbered || createdRoles || migratedAdmins) await this.persist();
+    if (createdTests || createdUsers || numbered || createdRoles || migratedAdmins || visited) await this.persist();
     return { createdTests, createdUsers, createdRoles, migratedAdmins };
   }
 
@@ -409,6 +413,26 @@ export class FileStorage implements IStorage {
     return true;
   }
 
+  /** The patient's visit for `day`, created on first use. One per patient per day. */
+  private ensureVisit(patientId: string, day: string, createdBy: string | null): Visit {
+    const existing = this.db.visits.find((v) => v.patientId === patientId && v.visitDate === day);
+    if (existing) return existing;
+    const visit: Visit = { id: randomUUID(), patientId, visitDate: day, createdAt: new Date().toISOString(), createdBy };
+    this.db.visits.push(visit);
+    return visit;
+  }
+
+  /** Orders from before visits existed get the visit of their own day. */
+  private backfillVisits(): number {
+    let n = 0;
+    for (const o of this.db.orders) {
+      if (o.visitId) continue;
+      o.visitId = this.ensureVisit(o.patientId, localDay(o.createdAt), o.createdBy ?? null).id;
+      n++;
+    }
+    return n;
+  }
+
   /**
    * Gives a number to every patient saved before patientNumber existed, oldest
    * first, so the sequence still reads as the order people walked in. Returns
@@ -524,9 +548,11 @@ export class FileStorage implements IStorage {
     const offset = query.offset ?? 0;
     const limit = query.limit ?? total;
     const page = rows.slice(offset, offset + limit).map((p) => {
-      const visits = this.db.orders.filter((o) => o.patientId === p.id && o.status !== "cancelled");
-      const last = visits.reduce<string | null>((m, o) => (!m || o.createdAt > m ? o.createdAt : m), null);
-      return { ...p, lastVisitAt: last, visitCount: visits.length };
+      const live = this.db.orders.filter((o) => o.patientId === p.id && o.status !== "cancelled");
+      const last = live.reduce<string | null>((m, o) => (!m || o.createdAt > m ? o.createdAt : m), null);
+      // A visit is a day at the clinic, however many orders it had.
+      const days = new Set(live.map((o) => o.visitId ?? localDay(o.createdAt)));
+      return { ...p, lastVisitAt: last, visitCount: days.size };
     });
     return { items: page, total };
   }
@@ -541,6 +567,18 @@ export class FileStorage implements IStorage {
     if (!p) return undefined;
     const contacts = this.db.patientContacts.filter((c) => c.patientId === id).map((c) => ({ ...c }));
     return { ...p, contacts };
+  }
+
+  async getPatientCard(id: string): Promise<PatientCard | undefined> {
+    const details = await this.getPatientDetails(id);
+    if (!details) return undefined;
+    const { items } = await this.listOrders({ patientId: id });
+    const numbers = new Map(items.map((o) => [o.id, o.orderNumber]));
+    const payments = this.db.payments
+      .filter((p) => numbers.has(p.orderId))
+      .map((p) => ({ ...p, orderNumber: numbers.get(p.orderId)! }));
+    const visits = this.db.visits.filter((v) => v.patientId === id);
+    return buildPatientCard(details, items, visits, payments);
   }
 
   async findPatientCandidates(q: PatientCandidateQuery): Promise<Patient[]> {
@@ -590,6 +628,16 @@ export class FileStorage implements IStorage {
       contacts++;
     }
     this.db.patientContacts = this.db.patientContacts.filter((c) => c.patientId !== sourceId);
+    // Visits: a day both cards have becomes one visit; the rest move over.
+    for (const v of this.db.visits.filter((x) => x.patientId === sourceId)) {
+      const same = this.db.visits.find((x) => x.patientId === targetId && x.visitDate === v.visitDate);
+      if (same) {
+        for (const o of this.db.orders) if (o.visitId === v.id) o.visitId = same.id;
+        this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
+      } else {
+        v.patientId = targetId;
+      }
+    }
     // Fill gaps on the real card from the duplicate; never overwrite.
     for (const k of ["birthDate", "passport", "pinfl", "address", "gender", "age"] as const) {
       if (target[k] == null && source[k] != null) (target as Record<string, unknown>)[k] = source[k];
@@ -668,6 +716,7 @@ export class FileStorage implements IStorage {
     this.db.patients = this.db.patients.filter((p) => p.id !== id);
     if (this.db.patients.length === before) return false;
     this.db.patientContacts = this.db.patientContacts.filter((c) => c.patientId !== id);
+    this.db.visits = this.db.visits.filter((v) => v.patientId !== id);
     await this.persist();
     return true;
   }
@@ -830,6 +879,7 @@ export class FileStorage implements IStorage {
       id: randomUUID(),
       orderNumber: this.db.counters.orderNumber,
       patientId: input.patientId,
+      visitId: this.ensureVisit(input.patientId, todayKey(), input.createdBy ?? null).id,
       totalAmount: total,
       discount,
       paidAmount: 0, // set by syncPaid below, from the opening payment
@@ -1294,6 +1344,8 @@ export class FileStorage implements IStorage {
   async listAudit(query: AuditQuery = {}): Promise<Paged<AuditEntry>> {
     let rows = [...this.db.auditLog];
     if (query.entity) rows = rows.filter((e) => e.entity === query.entity);
+    if (query.entityId) rows = rows.filter((e) => e.entityId === query.entityId);
+    if (query.action) rows = rows.filter((e) => e.action === query.action);
     rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const total = rows.length;
     const offset = query.offset ?? 0;

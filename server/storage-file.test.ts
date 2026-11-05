@@ -697,3 +697,56 @@ describe("patients: registry", () => {
     expect(await storage.mergePatients(p.id, p.id)).toBeUndefined();
   });
 });
+
+describe("visits and the patient card", () => {
+  it("puts two orders on the same day into one visit", async () => {
+    const { patient, order } = await makeOrder(["1"]);
+    const second = await storage.createOrder({ patientId: patient.id, testIds: ["2"], discount: 0, paidAmount: 0 });
+    expect(order.visitId).toBeTruthy();
+    expect(second.visitId).toBe(order.visitId);
+    const row = (await storage.listPatients()).items.find((p) => p.id === patient.id);
+    expect(row?.visitCount).toBe(1);
+  });
+
+  it("builds the card: visits, ledger and totals", async () => {
+    const { patient, order } = await makeOrder(["1", "2"], 10000);
+    const card = await storage.getPatientCard(patient.id);
+    expect(card?.visits).toHaveLength(1);
+    expect(card?.visits[0].orders.map((o) => o.id)).toEqual([order.id]);
+    expect(card?.totals).toMatchObject({ visits: 1, orders: 1, billed: order.totalAmount, paid: 10000 });
+    expect(card?.totals.debt).toBe(order.totalAmount - 10000);
+    expect(card?.payments[0]).toMatchObject({ amount: 10000, orderNumber: order.orderNumber });
+  });
+
+  it("leaves cancelled orders out of the money and the visit count", async () => {
+    const { patient, order } = await makeOrder(["1"]);
+    await storage.updateOrder(order.id, { status: "cancelled" });
+    const card = await storage.getPatientCard(patient.id);
+    expect(card?.totals).toMatchObject({ visits: 0, orders: 1, billed: 0 });
+    expect(card?.visits[0].orders).toHaveLength(1);
+  });
+
+  it("returns undefined for an unknown patient", async () => {
+    expect(await storage.getPatientCard("nope")).toBeUndefined();
+  });
+
+  it("merging folds same-day visits into one", async () => {
+    const real = await storage.createPatient({ fullName: "Aliyev Vali", phone: "+998 90 123 45 67", gender: null, age: null, address: null });
+    const dup = await storage.createPatient({ fullName: "Aliev Vali", phone: "+998 90 123 45 67", gender: null, age: null, address: null });
+    const a = await storage.createOrder({ patientId: real.id, testIds: ["1"], discount: 0, paidAmount: 0 });
+    const b = await storage.createOrder({ patientId: dup.id, testIds: ["2"], discount: 0, paidAmount: 0 });
+    expect(a.visitId).not.toBe(b.visitId);
+    await storage.mergePatients(dup.id, real.id);
+    const card = await storage.getPatientCard(real.id);
+    expect(card?.visits).toHaveLength(1);
+    expect(card?.visits[0].orders).toHaveLength(2);
+  });
+
+  it("filters the audit log by record and action", async () => {
+    await storage.writeAudit({ actor: ACTOR, action: "view", entity: "patient", entityId: "p1", summary: "ochildi" });
+    await storage.writeAudit({ actor: ACTOR, action: "update", entity: "patient", entityId: "p1", summary: "o'zgardi" });
+    await storage.writeAudit({ actor: ACTOR, action: "view", entity: "patient", entityId: "p2", summary: "boshqa" });
+    expect((await storage.listAudit({ entity: "patient", entityId: "p1" })).total).toBe(2);
+    expect((await storage.listAudit({ entity: "patient", entityId: "p1", action: "view" })).total).toBe(1);
+  });
+});

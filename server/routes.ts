@@ -345,6 +345,63 @@ export async function registerRoutes(app: Express): Promise<void> {
   );
 
   /**
+   * TZ §12: "tibbiy ma'lumotlarga kirish tarixini saqlash". Opening a card is
+   * logged, once per person per card per ten minutes — enough to answer
+   * "who looked at this patient", without a row for every refresh.
+   */
+  const VIEW_LOG_EVERY_MS = 10 * 60_000;
+  const lastViewLogged = new Map<string, number>();
+  async function logCardView(req: Request, patient: { id: string; patientNumber: number; fullName: string }) {
+    const key = `${req.user!.id}:${patient.id}`;
+    const now = Date.now();
+    if (now - (lastViewLogged.get(key) ?? 0) < VIEW_LOG_EVERY_MS) return;
+    lastViewLogged.set(key, now);
+    if (lastViewLogged.size > 20_000) lastViewLogged.clear();
+    await audit(req, "view", "patient", patient.id, `№${patient.patientNumber} ${patient.fullName} kartasi ochildi`);
+  }
+
+  /**
+   * The patient card (TZ §4.1.3, §4.2): the person, every visit with what was
+   * done, and the money. Trimmed to the viewer's role: no orders without
+   * orders.read, no amounts without a finance permission.
+   */
+  app.get(
+    "/api/patients/:id/card",
+    requirePermission("patients.read"),
+    handle(async (req, res) => {
+      const card = await storage.getPatientCard(req.params.id);
+      if (!card) return res.status(404).json({ message: "Bemor topilmadi" });
+      await logCardView(req, card.patient);
+
+      if (!hasPermission(req, "orders.read")) {
+        card.visits = [];
+        card.payments = [];
+      }
+      if (!hasPermission(req, "finance.view") && !hasPermission(req, "payments.create")) {
+        card.payments = [];
+        card.totals = { ...card.totals, billed: null, paid: null, debt: null };
+      }
+      res.json(card);
+    }),
+  );
+
+  /** Who opened this card, and when — for the auditor. */
+  app.get(
+    "/api/patients/:id/access-log",
+    requirePermission("audit.read"),
+    handle(async (req, res) => {
+      res.json(
+        await storage.listAudit({
+          entity: "patient",
+          entityId: req.params.id,
+          limit: numberParam(req.query.limit, 100),
+          offset: numberParam(req.query.offset, 0),
+        }),
+      );
+    }),
+  );
+
+  /**
    * Graded possible duplicates of the person described (TZ §4.2). Strong
    * matches first; at most five, which is all a registrar will read.
    */
@@ -988,6 +1045,7 @@ export async function registerRoutes(app: Express): Promise<void> {
       res.json(
         await storage.listAudit({
           entity: stringParam(req.query.entity),
+          action: stringParam(req.query.action),
           limit: numberParam(req.query.limit, 50),
           offset: numberParam(req.query.offset, 0),
         }),
