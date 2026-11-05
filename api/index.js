@@ -3648,6 +3648,13 @@ function enforceSessionPolicy() {
       const now = Date.now();
       const meta = req.session.meta;
       if (!meta) {
+        const cookie = req.session.cookie;
+        const legacy = legacyLastSeen({
+          cookie: { expires: cookie.expires ? cookie.expires.toISOString() : null, originalMaxAge: cookie.originalMaxAge }
+        });
+        if (legacy !== null && now - legacy > sessionIdleMinutes * 6e4) {
+          return endSession(req, res, "SESSION_IDLE");
+        }
         stampSession(req);
         return next();
       }
@@ -3662,6 +3669,11 @@ function enforceSessionPolicy() {
       next(err);
     }
   };
+}
+function legacyLastSeen(sess) {
+  const expires = sess.cookie?.expires ? Date.parse(sess.cookie.expires) : NaN;
+  const maxAge = sess.cookie?.originalMaxAge;
+  return Number.isFinite(expires) && typeof maxAge === "number" ? expires - maxAge : null;
 }
 var publicSessionId = (sid) => createHash("sha256").update(sid).digest("hex").slice(0, 16);
 async function rawSessionsOf(store, pool3, userId) {
@@ -3685,7 +3697,8 @@ async function listUserSessions(store, pool3, userId, currentSid) {
   const live = [];
   for (const { sid, sess } of await rawSessionsOf(store, pool3, userId)) {
     const m = sess.meta;
-    const stale = m && (now - m.lastSeen > sessionIdleMinutes * 6e4 || now - m.createdAt > sessionMaxHours * 36e5);
+    const legacy = m ? null : legacyLastSeen(sess);
+    const stale = m ? now - m.lastSeen > sessionIdleMinutes * 6e4 || now - m.createdAt > sessionMaxHours * 36e5 : legacy !== null && now - legacy > sessionIdleMinutes * 6e4;
     if (stale && sid !== currentSid) {
       await destroy(store, sid);
       continue;
@@ -3696,7 +3709,7 @@ async function listUserSessions(store, pool3, userId, currentSid) {
       ip: m?.ip ?? null,
       userAgent: m?.userAgent ?? null,
       createdAt: m ? new Date(m.createdAt).toISOString() : null,
-      lastSeen: m ? new Date(m.lastSeen).toISOString() : null
+      lastSeen: m ? new Date(m.lastSeen).toISOString() : legacy ? new Date(legacy).toISOString() : null
     });
   }
   return live.sort((a, b) => Number(b.current) - Number(a.current) || (b.lastSeen ?? "").localeCompare(a.lastSeen ?? ""));

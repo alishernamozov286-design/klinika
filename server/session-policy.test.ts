@@ -13,8 +13,14 @@ const { enforceSessionPolicy, invalidateSessionPolicy, publicSessionId } = await
 const MIN = 60_000;
 const START = new Date("2026-11-05T08:00:00Z").getTime();
 
-function fakeRequest(meta?: { createdAt: number; lastSeen: number }) {
-  const session: Record<string, unknown> = { meta: meta ? { ...meta, ip: null, userAgent: null } : undefined };
+function fakeRequest(
+  meta?: { createdAt: number; lastSeen: number },
+  cookie: { expires?: Date; originalMaxAge?: number } = {},
+) {
+  const session: Record<string, unknown> = {
+    meta: meta ? { ...meta, ip: null, userAgent: null } : undefined,
+    cookie,
+  };
   session.destroy = (cb: () => void) => cb();
   const req = {
     isAuthenticated: () => true,
@@ -40,8 +46,11 @@ function fakeRequest(meta?: { createdAt: number; lastSeen: number }) {
   return { req, res, session };
 }
 
-async function run(meta?: { createdAt: number; lastSeen: number }) {
-  const { req, res, session } = fakeRequest(meta);
+async function run(
+  meta?: { createdAt: number; lastSeen: number },
+  cookie?: { expires?: Date; originalMaxAge?: number },
+) {
+  const { req, res, session } = fakeRequest(meta, cookie);
   const next = vi.fn();
   await enforceSessionPolicy()(req as never, res as never, next);
   return { res, next, session };
@@ -78,6 +87,22 @@ describe("enforceSessionPolicy", () => {
     const { next, session } = await run(undefined);
     expect(next).toHaveBeenCalled();
     expect(session.meta).toMatchObject({ createdAt: START, lastSeen: START, ip: "10.0.0.5" });
+  });
+
+  it("lets a pre-release session used recently carry on, judged by its cookie", async () => {
+    const YEAR = 365 * 24 * 60 * MIN;
+    const { next } = await run(undefined, { expires: new Date(START - 5 * MIN + YEAR), originalMaxAge: YEAR });
+    expect(next).toHaveBeenCalled();
+  });
+
+  it("ends a pre-release session left idle for weeks instead of reviving it", async () => {
+    const YEAR = 365 * 24 * 60 * MIN;
+    const { next, res } = await run(undefined, {
+      expires: new Date(START - 30 * 24 * 60 * MIN + YEAR),
+      originalMaxAge: YEAR,
+    });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.body).toMatchObject({ code: "SESSION_IDLE" });
   });
 
   it("refreshes lastSeen, but not on every request", async () => {

@@ -88,9 +88,19 @@ export function enforceSessionPolicy() {
       const now = Date.now();
       const meta = req.session.meta;
 
-      // A session from before this release has no clock yet; start one now
-      // rather than throwing everyone out on deploy.
+      // A session from before this release has no clock. Its cookie does:
+      // with rolling cookies the stored expiry is "last request + maxAge"
+      // (express-session only re-rolls it when the response goes out, so here
+      // it is still the stored value). Someone active a minute ago keeps
+      // working; a session left open since last month is ended like any other.
       if (!meta) {
+        const cookie = req.session.cookie;
+        const legacy = legacyLastSeen({
+          cookie: { expires: cookie.expires ? cookie.expires.toISOString() : null, originalMaxAge: cookie.originalMaxAge },
+        });
+        if (legacy !== null && now - legacy > sessionIdleMinutes * 60_000) {
+          return endSession(req, res, "SESSION_IDLE");
+        }
         stampSession(req);
         return next();
       }
@@ -110,7 +120,22 @@ export function enforceSessionPolicy() {
 
 // ------------------------------------------------------------ device list
 
-type RawSession = { passport?: { user?: string }; meta?: NonNullable<Express.Request["session"]["meta"]> };
+type RawSession = {
+  passport?: { user?: string };
+  meta?: NonNullable<Express.Request["session"]["meta"]>;
+  cookie?: { expires?: string | null; originalMaxAge?: number | null };
+};
+
+/**
+ * When a session from before B1.7 (no meta) was last used. With `rolling`
+ * cookies the stored expiry is "last request + maxAge", so it can be worked
+ * back out — both to show it and to apply the idle limit to such sessions.
+ */
+function legacyLastSeen(sess: RawSession): number | null {
+  const expires = sess.cookie?.expires ? Date.parse(sess.cookie.expires) : NaN;
+  const maxAge = sess.cookie?.originalMaxAge;
+  return Number.isFinite(expires) && typeof maxAge === "number" ? expires - maxAge : null;
+}
 
 /** The id shown to the client. The real session id is a bearer secret and stays here. */
 export const publicSessionId = (sid: string) => createHash("sha256").update(sid).digest("hex").slice(0, 16);
@@ -159,8 +184,10 @@ export async function listUserSessions(
   const live: ActiveSession[] = [];
   for (const { sid, sess } of await rawSessionsOf(store, pool, userId)) {
     const m = sess.meta;
-    const stale =
-      m && (now - m.lastSeen > sessionIdleMinutes * 60_000 || now - m.createdAt > sessionMaxHours * 3_600_000);
+    const legacy = m ? null : legacyLastSeen(sess);
+    const stale = m
+      ? now - m.lastSeen > sessionIdleMinutes * 60_000 || now - m.createdAt > sessionMaxHours * 3_600_000
+      : legacy !== null && now - legacy > sessionIdleMinutes * 60_000;
     if (stale && sid !== currentSid) {
       await destroy(store, sid);
       continue;
@@ -171,7 +198,11 @@ export async function listUserSessions(
       ip: m?.ip ?? null,
       userAgent: m?.userAgent ?? null,
       createdAt: m ? new Date(m.createdAt).toISOString() : null,
-      lastSeen: m ? new Date(m.lastSeen).toISOString() : null,
+      lastSeen: m
+        ? new Date(m.lastSeen).toISOString()
+        : legacy
+          ? new Date(legacy).toISOString()
+          : null,
     });
   }
   return live.sort((a, b) => Number(b.current) - Number(a.current) || (b.lastSeen ?? "").localeCompare(a.lastSeen ?? ""));
