@@ -219,7 +219,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Natija kartaga biriktirilgan: ko'rik oynasida yo'llanma qatorida tasdiqlangan qiymatlar (me'yordan tashqarisi rangli), tibbiy kartada lab natijalari. Tasdiqlanmagan qiymat shifokorga ko'rinmaydi.
   - `notifications` jadvali — umumiy (B8.1 WebSocket shu qatorlarni yuboradi). API: `GET /api/notifications`, `POST /api/notifications/:id/read`, `POST /api/notifications/read-all` — faqat o'ziniki.
   - UI: yuqori paneldagi qo'ng'iroqcha (o'qilmaganlar soni, 30 s polling), shifokor kabinetida "Yangi tahlil natijalari" (bosilsa ko'rik oynasi ochiladi va o'qilgan bo'ladi).
-  - Migratsiya: `npm run db:notifications` (`db:upgrade` ichida). Jadvalsiz bazada qo'ng'iroqcha bo'sh, boshqa hech narsa buzilmaydi. Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi, **hali bajarilmagan**.
+  - Migratsiya: `npm run db:notifications` (`db:upgrade` ichida). Jadvalsiz bazada qo'ng'iroqcha bo'sh, boshqa hech narsa buzilmaydi. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06).
   - Testlar: `storage-file.test.ts` (3 ta), TZ §2 asosiy oqimi bo'yicha 18 ta API E2E (registratura → shifokor → yo'llanma → kassa → laborant → mudiri → shifokor), brauzerda shifokor tomoni.
 
 ### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 50%
@@ -237,7 +237,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Navbatlar: Kiritish (bo'sh yoki qaytarilgan qator), Tasdiqlash (kiritilgan, tekshirilmagan), Tayyor (hammasi tasdiqlangan). Buyurtma ikki navbatda bo'lishi mumkin. Mudiri "Tasdiqlash" navbatida ochadi.
   - Ruxsatlar: `results.verify`, `results.amend` (lab mudiri). Audit: `verify`, `return`, `amend`.
   - Eski natijalar: migratsiya ustunlarni birinchi marta qo'shganda ularni "Tasdiqlash joriy etilishidan oldingi natija" deb belgilaydi (o'ylab topilgan tasdiqlovchi yo'q); keyingi ishga tushirishlar ularga tegmaydi. Fayl omborida `backfillVerification`.
-  - Migratsiya: `npm run db:results` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart.** Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi, **hali bajarilmagan**.
+  - Migratsiya: `npm run db:results` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart.** Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06): 1 ta eski natija belgilandi, lab mudiriga ruxsatlar qo'shildi.
   - Testlar: `shared/lab-verification.test.ts`, `storage-file.test.ts` (8 ta), 22 ta API E2E, brauzerda mudiri yo'li (navbat → qaytarish → tasdiqlash → blanka).
 - [~] **B4.6** Tahlillar katalogi (`§6.2`): katalog bor. **Qoldi:** TZ'dagi 8 guruh bo‘yicha qayta tasniflash, namuna turi, sarf normasi (B5.6 uchun).
 - [~] **B4.7** Natija blankasi (`§6.3`): bor; tug'ilgan sana, yosh, namuna raqami, tasdiqlovchi mutaxassis va elektron tasdiqlash belgisi (B4.5). **Qoldi:** klinika logotipi (yuklash), QR orqali tekshirish.
