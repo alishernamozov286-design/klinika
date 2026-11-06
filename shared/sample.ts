@@ -7,6 +7,7 @@
  * decide which buttons to show, which is why they live in shared/.
  */
 import { SAMPLE_STATUS_LABELS, type Sample, type SampleStatus } from "./schema";
+import type { SampleType } from "./lab-catalogue";
 
 /**
  * The barcode printed on the tube.
@@ -27,6 +28,26 @@ export function sampleBarcode(orderNumber: number): string {
 }
 
 /**
+ * One letter per specimen, appended to the order's code for each container
+ * (B4.3): "LAB-1042-E" is that order's EDTA tube. A letter rather than a
+ * running number, so editing the order's tests never renumbers a tube that is
+ * already labelled.
+ */
+export const TUBE_LETTERS: Record<SampleType, string> = {
+  qon_edta: "E",
+  qon_zardob: "Z",
+  qon_sitrat: "S",
+  siydik: "U",
+  najas: "N",
+  surtma: "T",
+  boshqa: "X",
+};
+
+export function tubeBarcode(orderNumber: number, sampleType: SampleType): string {
+  return `${sampleBarcode(orderNumber)}-${TUBE_LETTERS[sampleType]}`;
+}
+
+/**
  * Reads a scanned or typed string back to an order number.
  *
  * Deliberately forgiving about the things a barcode wedge and a tired hand
@@ -38,7 +59,9 @@ export function parseBarcode(value: string | null | undefined): number | null {
   const raw = (value ?? "").trim().toUpperCase();
   if (!raw) return null;
 
-  const match = raw.match(new RegExp(`^(?:${BARCODE_PREFIX}[-\\s]?)?(\\d{1,9})$`));
+  // A tube's letter ("-E") is accepted and ignored: every tube leads to its
+  // order. The separator is required, so a typo like "LAB-12x" is still refused.
+  const match = raw.match(new RegExp(`^(?:${BARCODE_PREFIX}[-\\s]?)?(\\d{1,9})(?:[-\\s][EZSUNTX])?$`));
   if (!match) return null;
 
   const n = Number(match[1]);

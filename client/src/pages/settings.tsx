@@ -86,6 +86,9 @@ import {
 import { MfaPanel, MfaPolicyPanel } from "@/components/mfa-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { IcdPanel } from "@/components/icd-panel";
+import { TubeDot } from "@/components/lab-ui";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SAMPLE_TYPES, TEST_GROUPS, TEST_GROUP_LABELS, TUBES, classifyTest, type TestGroup } from "@shared/lab-catalogue";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -405,7 +408,9 @@ type TestFormValues = z.input<typeof testFormSchema>;
 /** The price list, as handed to a partner clinic — see lib/export.ts. */
 const TEST_EXPORT_COLUMNS: ExportColumn<Test>[] = [
   { header: "Tahlil nomi", value: (t) => t.name, width: 34 },
+  { header: "Guruh (TZ)", value: (t) => TEST_GROUP_LABELS[t.group], width: 20 },
   { header: "Kategoriya", value: (t) => t.category, width: 22 },
+  { header: "Namuna", value: (t) => TUBES[t.sampleType]?.label ?? "", width: 14 },
   { header: "Me'yoriy oraliq", value: (t) => t.referenceRange ?? "", width: 18 },
   { header: "Birlik", value: (t) => t.unit ?? "", width: 12 },
   { header: "Holat", value: (t) => (t.isActive ? "Faol" : "O'chirilgan"), width: 14 },
@@ -418,14 +423,22 @@ function TestsPanel() {
   const [editing, setEditing] = useState<Test | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<Test | null>(null);
+  const [group, setGroup] = useState<TestGroup | "all">("all");
 
   const { data: tests = [], isLoading } = useQuery<Test[]>({ queryKey: ["/api/tests?all=1"] });
 
+  const groupCounts = useMemo(() => {
+    const counts = new Map<TestGroup, number>();
+    for (const t of tests) counts.set(t.group, (counts.get(t.group) ?? 0) + 1);
+    return counts;
+  }, [tests]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return tests;
-    return tests.filter((t) => t.name.toLowerCase().includes(q) || t.category.toLowerCase().includes(q));
-  }, [tests, search]);
+    return tests.filter(
+      (t) => (group === "all" || t.group === group) && (!q || t.name.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)),
+    );
+  }, [tests, search, group]);
 
   const categories = useMemo(
     () => Array.from(new Set(tests.map((t) => t.category))).sort(),
@@ -434,8 +447,19 @@ function TestsPanel() {
 
   const form = useForm<TestFormValues>({
     resolver: zodResolver(testFormSchema),
-    defaultValues: { name: "", price: 0, category: "", unit: "", referenceRange: "", isActive: true },
+    defaultValues: { name: "", price: 0, category: "", group: "boshqa", sampleType: "qon_zardob", unit: "", referenceRange: "", isActive: true },
   });
+  // A new test's group and specimen are suggested from its name and heading
+  // until the user picks them; an existing test keeps what it has.
+  const [classTouched, setClassTouched] = useState(false);
+  const watchedName = form.watch("name");
+  const watchedCategory = form.watch("category");
+  useEffect(() => {
+    if (!dialogOpen || editing || classTouched) return;
+    const c = classifyTest({ name: watchedName ?? "", category: watchedCategory ?? "" });
+    form.setValue("group", c.group);
+    form.setValue("sampleType", c.sampleType);
+  }, [watchedName, watchedCategory, dialogOpen, editing, classTouched, form]);
 
   useEffect(() => {
     if (!dialogOpen) return;
@@ -443,10 +467,13 @@ function TestsPanel() {
       name: editing?.name ?? "",
       price: editing?.price ?? 0,
       category: editing?.category ?? categories[0] ?? "",
+      group: editing?.group ?? "boshqa",
+      sampleType: editing?.sampleType ?? "qon_zardob",
       unit: editing?.unit ?? "",
       referenceRange: editing?.referenceRange ?? "",
       isActive: editing?.isActive ?? true,
     });
+    setClassTouched(false);
   }, [dialogOpen, editing, categories, form]);
 
   const saveMutation = useMutation({
@@ -525,18 +552,41 @@ function TestsPanel() {
         </div>
       </div>
 
+      {/* TZ §6.2: the eight groups, plus what none of them covers. */}
+      <div className="flex flex-wrap gap-1.5" data-testid="test-group-filter">
+        {(["all", ...TEST_GROUPS] as const).map((g) => {
+          const count = g === "all" ? tests.length : (groupCounts.get(g) ?? 0);
+          if (g !== "all" && count === 0) return null;
+          return (
+            <button
+              key={g}
+              type="button"
+              onClick={() => setGroup(g)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                group === g ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:border-primary/40",
+              )}
+              data-testid={`filter-group-${g}`}
+            >
+              {g === "all" ? "Hammasi" : TEST_GROUP_LABELS[g]} <span className="tabular opacity-70">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="card-premium overflow-hidden">
         {isLoading ? (
           <TableSkeleton />
         ) : filtered.length === 0 ? (
-          <EmptyState icon={FlaskConical} title="Tahlil topilmadi" description="Qidiruv so'zini o'zgartiring." />
+          <EmptyState icon={FlaskConical} title="Tahlil topilmadi" description="Qidiruv so'zini yoki guruhni o'zgartiring." />
         ) : (
           <div className="overflow-x-auto">
             <Table className="table-premium">
               <TableHeader>
                 <TableRow>
                   <TableHead>Nomi</TableHead>
-                  <TableHead className="hidden md:table-cell">Kategoriya</TableHead>
+                  <TableHead className="hidden md:table-cell">Guruh · kategoriya</TableHead>
+                  <TableHead className="hidden sm:table-cell">Namuna</TableHead>
                   <TableHead className="hidden lg:table-cell">Me'yor</TableHead>
                   <TableHead className="text-right">Narx</TableHead>
                   <TableHead className="w-20 text-center">Faol</TableHead>
@@ -550,7 +600,11 @@ function TestsPanel() {
                       {t.name}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      <Badge variant="secondary" className="font-normal">{t.category}</Badge>
+                      <p className="text-sm font-medium">{TEST_GROUP_LABELS[t.group]}</p>
+                      <p className="text-xs text-muted-foreground">{t.category}</p>
+                    </TableCell>
+                    <TableCell className="hidden text-sm sm:table-cell">
+                      <TubeDot type={t.sampleType} />
                     </TableCell>
                     <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
                       {t.referenceRange ? `${t.referenceRange}${t.unit ? ` ${t.unit}` : ""}` : "—"}
@@ -657,6 +711,71 @@ function TestsPanel() {
                           data-testid="input-test-price"
                         />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="group"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Guruh (TZ §6.2)</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={(v) => {
+                          setClassTouched(true);
+                          field.onChange(v);
+                        }}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-test-group">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {TEST_GROUPS.map((g) => (
+                            <SelectItem key={g} value={g}>
+                              {TEST_GROUP_LABELS[g]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="sampleType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Namuna va probirka</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={(v) => {
+                          setClassTouched(true);
+                          field.onChange(v);
+                        }}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-test-sample-type">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {SAMPLE_TYPES.map((s) => (
+                            <SelectItem key={s} value={s}>
+                              <TubeDot type={s} label={false} className="mr-2" />
+                              {TUBES[s].label}
+                              <span className="text-muted-foreground"> · {TUBES[s].container}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}

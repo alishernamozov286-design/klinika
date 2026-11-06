@@ -110,6 +110,7 @@ import {
 } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { referralStage } from "@shared/referral";
+import { classifyTest } from "@shared/lab-catalogue";
 import { ICD_SOURCE, normalizeIcdCode } from "@shared/icd10";
 import { amendProblem, pickForVerification } from "./lab-rules";
 import { BLOCKING_TABLES, patientHistoryProblem, type BlockingTable } from "@shared/patient-links";
@@ -170,6 +171,8 @@ const mapUser = (row: typeof users.$inferSelect): User => ({
 
 const mapTest = (row: typeof tests.$inferSelect): Test => ({
   ...row,
+  group: row.group as Test["group"],
+  sampleType: row.sampleType as Test["sampleType"],
   createdAt: iso(row.createdAt),
   updatedAt: iso(row.updatedAt),
 });
@@ -497,6 +500,7 @@ export class PgStorage implements IStorage {
           name: t.name,
           price: t.price,
           category: t.category,
+          ...classifyTest(t),
           unit: ref?.unit ?? null,
           referenceRange: ref?.referenceRange ?? null,
           isActive: true,
@@ -1401,7 +1405,7 @@ export class PgStorage implements IStorage {
   }
 
   async createReferrals(input: NewReferrals, actor: Actor): Promise<ReferralWithDetails[]> {
-    const selected = input.kind === "lab" ? await db.select().from(tests).where(inArray(tests.id, input.testIds)) : [];
+    const selected = input.kind === "lab" ? (await db.select().from(tests).where(inArray(tests.id, input.testIds))).map(mapTest) : [];
     if (input.kind === "lab" && selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
 
     const ids = await db.transaction(async (tx) => {
@@ -2051,6 +2055,8 @@ export class PgStorage implements IStorage {
         name: input.name,
         price: input.price,
         category: input.category,
+        group: input.group,
+        sampleType: input.sampleType,
         unit: input.unit ?? null,
         referenceRange: input.referenceRange ?? null,
         isActive: input.isActive ?? true,
@@ -2065,6 +2071,8 @@ export class PgStorage implements IStorage {
     if (input.name !== undefined) patch.name = input.name;
     if (input.price !== undefined) patch.price = input.price;
     if (input.category !== undefined) patch.category = input.category;
+    if (input.group !== undefined) patch.group = input.group;
+    if (input.sampleType !== undefined) patch.sampleType = input.sampleType;
     if (input.unit !== undefined) patch.unit = input.unit ?? null;
     if (input.referenceRange !== undefined) patch.referenceRange = input.referenceRange ?? null;
     if (input.isActive !== undefined) patch.isActive = input.isActive;
@@ -2278,7 +2286,7 @@ export class PgStorage implements IStorage {
     const patient = await this.getPatient(input.patientId);
     if (!patient) throw new Error("Bemor topilmadi");
 
-    const selected = await db.select().from(tests).where(inArray(tests.id, input.testIds));
+    const selected = (await db.select().from(tests).where(inArray(tests.id, input.testIds))).map(mapTest);
     if (selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
 
     // One transaction, so an order never exists without its line items.
@@ -2330,6 +2338,7 @@ export class PgStorage implements IStorage {
           price: t.price,
           unit: t.unit,
           referenceRange: t.referenceRange,
+          sampleType: t.sampleType,
         })),
       );
 
@@ -2430,6 +2439,7 @@ export class PgStorage implements IStorage {
             price: t.price,
             unit: t.unit,
             referenceRange: t.referenceRange,
+            sampleType: t.sampleType,
           })),
         );
       }
@@ -2680,11 +2690,16 @@ export class PgStorage implements IStorage {
         patch.receivedAt = null;
         patch.receivedBy = null;
         patch.receivedByName = null;
+        patch.quality = null;
+        patch.qualityNote = null;
         break;
       case "qabul_qilindi":
         patch.receivedAt = now;
         patch.receivedBy = actor.id;
         patch.receivedByName = actor.name;
+        // TZ §6.1.3: quality is judged on reception; unstated means fine.
+        patch.quality = input.quality ?? "yaxshi";
+        patch.qualityNote = input.qualityNote?.trim() || null;
         break;
       case "kutilmoqda":
         patch.collectedAt = null;
@@ -2693,6 +2708,8 @@ export class PgStorage implements IStorage {
         patch.receivedAt = null;
         patch.receivedBy = null;
         patch.receivedByName = null;
+        patch.quality = null;
+        patch.qualityNote = null;
         break;
       case "rad_etildi":
         patch.rejectedAt = now;

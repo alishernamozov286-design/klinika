@@ -486,6 +486,62 @@ var init_patient_identity = __esm({
   }
 });
 
+// shared/lab-catalogue.ts
+function classifyTest(input) {
+  const name = input.name.toLowerCase();
+  const cat = input.category.toLowerCase();
+  let group;
+  if (has(name, "glikgemoglobin", "hba1c", "insulin", "s-peptid", "c-peptid")) group = "diabet";
+  else if (has(name, "at-tpo", "anti-tpo", "at-tg", "anti-tg")) group = "immunologiya";
+  else if (has(name, "d-dimer", "qon ivish", "protrombin", "fibrinogen", "trombo-test", "mno", "achtv")) group = "koagulologiya";
+  else if (has(cat, "gematolog")) group = "gematologiya";
+  else if (has(cat, "koagul", "qon ivish")) group = "koagulologiya";
+  else if (has(cat, "umumiy klinika") || has(name, "siydik") && !has(cat, "biokim")) group = "siydik";
+  else if (has(cat, "kaprolog", "koprolog") || has(name, "ahlat", "najas")) group = "boshqa";
+  else if (has(cat, "gormon", "reproduktiv", "ixla")) group = "gormonlar";
+  else if (has(cat, "allergiya", "onkomarker", "yallig", "immun")) group = "immunologiya";
+  else if (has(cat, "infeksiya", "gepatolog", "gelmint", "ptsr", "pcr", "covid", "ekspress", "jinsiy", "zoonoz", "pulmanolog", "ovqat hazm")) {
+    group = "infeksiyalar";
+  } else if (has(cat, "biokim", "kardiolog", "suv-tuz", "elektrolit")) group = "biokimyo";
+  else group = "boshqa";
+  let sampleType;
+  if (has(name, "surtma", "mazok")) sampleType = "surtma";
+  else if (group === "siydik" || has(name, "siydik")) sampleType = "siydik";
+  else if (group === "boshqa" && has(cat, "kaprolog", "koprolog") || has(name, "ahlat", "najas")) sampleType = "najas";
+  else if (group === "koagulologiya") sampleType = "qon_sitrat";
+  else if (group === "gematologiya" || has(name, "glikgemoglobin", "hba1c") || has(cat, "ptsr", "pcr")) sampleType = "qon_edta";
+  else sampleType = "qon_zardob";
+  return { group, sampleType };
+}
+var TEST_GROUPS, SAMPLE_TYPES, SAMPLE_QUALITIES, SAMPLE_QUALITY_LABELS, has;
+var init_lab_catalogue = __esm({
+  "shared/lab-catalogue.ts"() {
+    "use strict";
+    TEST_GROUPS = [
+      "gematologiya",
+      "biokimyo",
+      "gormonlar",
+      "immunologiya",
+      "koagulologiya",
+      "diabet",
+      "infeksiyalar",
+      "siydik",
+      "boshqa"
+    ];
+    SAMPLE_TYPES = ["qon_edta", "qon_zardob", "qon_sitrat", "siydik", "najas", "surtma", "boshqa"];
+    SAMPLE_QUALITIES = ["yaxshi", "gemoliz", "lipemiya", "ikterik", "laxta", "kam_hajm"];
+    SAMPLE_QUALITY_LABELS = {
+      yaxshi: "Yaxshi",
+      gemoliz: "Gemoliz",
+      lipemiya: "Lipemiya",
+      ikterik: "Ikterik",
+      laxta: "Laxtalangan",
+      kam_hajm: "Hajm yetarli emas"
+    };
+    has = (text2, ...needles) => needles.some((n) => text2.includes(n));
+  }
+});
+
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
@@ -649,6 +705,7 @@ var init_schema = __esm({
     "use strict";
     init_permissions();
     init_patient_identity();
+    init_lab_catalogue();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
     ORDER_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
@@ -1114,6 +1171,10 @@ var init_schema = __esm({
       name: text("name").notNull(),
       price: money("price").notNull(),
       category: text("category").notNull(),
+      /** One of the eight TZ §6.2 groups (shared/lab-catalogue.ts); `category` stays the clinic's finer heading. */
+      group: text("group").notNull().default("boshqa"),
+      /** What is drawn and into which container (B4.3). */
+      sampleType: text("sample_type").notNull().default("qon_zardob"),
       unit: text("unit"),
       referenceRange: text("reference_range"),
       isActive: boolean("is_active").notNull().default(true),
@@ -1174,6 +1235,8 @@ var init_schema = __esm({
       price: money("price").notNull(),
       unit: text("unit"),
       referenceRange: text("reference_range"),
+      /** Snapshot like the price: the tube this line was drawn into (B4.3). Null on older lines. */
+      sampleType: text("sample_type"),
       result: text("result"),
       flag: text("flag"),
       notes: text("notes"),
@@ -1244,6 +1307,9 @@ var init_schema = __esm({
         rejectedByName: text("rejected_by_name"),
         rejectReason: text("reject_reason"),
         rejectNote: text("reject_note"),
+        /** Quality judged on reception (TZ §6.1.3 "namuna sifati"); null until received. */
+        quality: text("quality"),
+        qualityNote: text("quality_note"),
         createdAt: isoTimestamp("created_at").defaultNow().notNull()
       },
       // Every order screen loads its sample by orderId; the barcode index backs
@@ -1370,6 +1436,8 @@ var init_schema = __esm({
       name: z.string().trim().min(2, "Tahlil nomini kiriting"),
       price: z.coerce.number().int().min(0, "Narx manfiy bo'lmasligi kerak"),
       category: z.string().trim().min(2, "Kategoriyani tanlang"),
+      group: z.enum(TEST_GROUPS, { errorMap: () => ({ message: "Guruhni tanlang" }) }),
+      sampleType: z.enum(SAMPLE_TYPES, { errorMap: () => ({ message: "Namuna turini tanlang" }) }),
       unit: z.string().trim().nullish(),
       referenceRange: z.string().trim().nullish(),
       isActive: z.boolean().default(true)
@@ -1401,7 +1469,10 @@ var init_schema = __esm({
     updateSampleSchema = z.object({
       status: z.enum(SAMPLE_STATUSES),
       rejectReason: z.enum(SAMPLE_REJECT_REASONS).nullish(),
-      rejectNote: z.string().trim().max(300).nullish()
+      rejectNote: z.string().trim().max(300).nullish(),
+      /** On reception only; "yaxshi" when not given. */
+      quality: z.enum(SAMPLE_QUALITIES).nullish(),
+      qualityNote: z.string().trim().max(300).nullish()
     }).refine((v) => v.status !== "rad_etildi" || Boolean(v.rejectReason), {
       message: "Rad etish sababini tanlang",
       path: ["rejectReason"]
@@ -2155,7 +2226,7 @@ function sampleBarcode(orderNumber) {
 function parseBarcode(value) {
   const raw = (value ?? "").trim().toUpperCase();
   if (!raw) return null;
-  const match = raw.match(new RegExp(`^(?:${BARCODE_PREFIX}[-\\s]?)?(\\d{1,9})$`));
+  const match = raw.match(new RegExp(`^(?:${BARCODE_PREFIX}[-\\s]?)?(\\d{1,9})(?:[-\\s][EZSUNTX])?$`));
   if (!match) return null;
   const n = Number(match[1]);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
@@ -2642,6 +2713,7 @@ var init_storage_pg = __esm({
     init_schema();
     init_sample();
     init_referral();
+    init_lab_catalogue();
     init_icd10();
     init_lab_rules();
     init_patient_links();
@@ -2660,6 +2732,8 @@ var init_storage_pg = __esm({
     });
     mapTest = (row) => ({
       ...row,
+      group: row.group,
+      sampleType: row.sampleType,
       createdAt: iso(row.createdAt),
       updatedAt: iso(row.updatedAt)
     });
@@ -2873,6 +2947,7 @@ var init_storage_pg = __esm({
               name: t.name,
               price: t.price,
               category: t.category,
+              ...classifyTest(t),
               unit: ref?.unit ?? null,
               referenceRange: ref?.referenceRange ?? null,
               isActive: true
@@ -3518,7 +3593,7 @@ var init_storage_pg = __esm({
         });
       }
       async createReferrals(input, actor) {
-        const selected = input.kind === "lab" ? await db.select().from(tests).where(inArray(tests.id, input.testIds)) : [];
+        const selected = input.kind === "lab" ? (await db.select().from(tests).where(inArray(tests.id, input.testIds))).map(mapTest) : [];
         if (input.kind === "lab" && selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
         const ids = await db.transaction(async (tx) => {
           const origin = {
@@ -3981,6 +4056,8 @@ var init_storage_pg = __esm({
           name: input.name,
           price: input.price,
           category: input.category,
+          group: input.group,
+          sampleType: input.sampleType,
           unit: input.unit ?? null,
           referenceRange: input.referenceRange ?? null,
           isActive: input.isActive ?? true,
@@ -3993,6 +4070,8 @@ var init_storage_pg = __esm({
         if (input.name !== void 0) patch.name = input.name;
         if (input.price !== void 0) patch.price = input.price;
         if (input.category !== void 0) patch.category = input.category;
+        if (input.group !== void 0) patch.group = input.group;
+        if (input.sampleType !== void 0) patch.sampleType = input.sampleType;
         if (input.unit !== void 0) patch.unit = input.unit ?? null;
         if (input.referenceRange !== void 0) patch.referenceRange = input.referenceRange ?? null;
         if (input.isActive !== void 0) patch.isActive = input.isActive;
@@ -4145,7 +4224,7 @@ var init_storage_pg = __esm({
       async createOrder(input) {
         const patient = await this.getPatient(input.patientId);
         if (!patient) throw new Error("Bemor topilmadi");
-        const selected = await db.select().from(tests).where(inArray(tests.id, input.testIds));
+        const selected = (await db.select().from(tests).where(inArray(tests.id, input.testIds))).map(mapTest);
         if (selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
         const orderId = await db.transaction((tx) => this.insertOrderTx(tx, input, selected, null));
         return await this.getOrder(orderId);
@@ -4181,7 +4260,8 @@ var init_storage_pg = __esm({
               testName: t.name,
               price: t.price,
               unit: t.unit,
-              referenceRange: t.referenceRange
+              referenceRange: t.referenceRange,
+              sampleType: t.sampleType
             }))
           );
           await tx.insert(samples).values({
@@ -4252,7 +4332,8 @@ var init_storage_pg = __esm({
                 testName: t.name,
                 price: t.price,
                 unit: t.unit,
-                referenceRange: t.referenceRange
+                referenceRange: t.referenceRange,
+                sampleType: t.sampleType
               }))
             );
           }
@@ -4419,11 +4500,15 @@ var init_storage_pg = __esm({
             patch.receivedAt = null;
             patch.receivedBy = null;
             patch.receivedByName = null;
+            patch.quality = null;
+            patch.qualityNote = null;
             break;
           case "qabul_qilindi":
             patch.receivedAt = now;
             patch.receivedBy = actor.id;
             patch.receivedByName = actor.name;
+            patch.quality = input.quality ?? "yaxshi";
+            patch.qualityNote = input.qualityNote?.trim() || null;
             break;
           case "kutilmoqda":
             patch.collectedAt = null;
@@ -4432,6 +4517,8 @@ var init_storage_pg = __esm({
             patch.receivedAt = null;
             patch.receivedBy = null;
             patch.receivedByName = null;
+            patch.quality = null;
+            patch.qualityNote = null;
             break;
           case "rad_etildi":
             patch.rejectedAt = now;
@@ -4967,6 +5054,7 @@ var init_storage_file = __esm({
     init_sample();
     init_patient_links();
     init_referral();
+    init_lab_catalogue();
     init_icd10();
     init_lab_verification();
     init_lab_rules();
@@ -5032,6 +5120,7 @@ var init_storage_file = __esm({
               name: t.name,
               price: t.price,
               category: t.category,
+              ...classifyTest(t),
               unit: ref?.unit ?? null,
               referenceRange: ref?.referenceRange ?? null,
               isActive: true,
@@ -6210,6 +6299,8 @@ var init_storage_file = __esm({
           name: input.name,
           price: input.price,
           category: input.category,
+          group: input.group,
+          sampleType: input.sampleType,
           unit: input.unit ?? null,
           referenceRange: input.referenceRange ?? null,
           isActive: input.isActive ?? true,
@@ -6225,7 +6316,7 @@ var init_storage_file = __esm({
       async updateTest(id, input, actor) {
         const test = this.db.tests.find((t) => t.id === id);
         if (!test) return void 0;
-        const fields = ["name", "price", "category", "unit", "referenceRange", "isActive"];
+        const fields = ["name", "price", "category", "group", "sampleType", "unit", "referenceRange", "isActive"];
         if (fields.some((k) => input[k] !== void 0)) {
           test.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
           test.updatedBy = actor.id;
@@ -6233,6 +6324,8 @@ var init_storage_file = __esm({
         if (input.name !== void 0) test.name = input.name;
         if (input.price !== void 0) test.price = input.price;
         if (input.category !== void 0) test.category = input.category;
+        if (input.group !== void 0) test.group = input.group;
+        if (input.sampleType !== void 0) test.sampleType = input.sampleType;
         if (input.unit !== void 0) test.unit = input.unit ?? null;
         if (input.referenceRange !== void 0) test.referenceRange = input.referenceRange ?? null;
         if (input.isActive !== void 0) test.isActive = input.isActive;
@@ -6368,6 +6461,8 @@ var init_storage_file = __esm({
           rejectedByName: null,
           rejectReason: null,
           rejectNote: null,
+          quality: null,
+          qualityNote: null,
           createdAt: now
         });
         const opening = Math.min(input.paidAmount, total);
@@ -6394,6 +6489,7 @@ var init_storage_file = __esm({
             price: t.price,
             unit: t.unit,
             referenceRange: t.referenceRange,
+            sampleType: t.sampleType,
             result: null,
             flag: null,
             notes: null,
@@ -6464,6 +6560,7 @@ var init_storage_file = __esm({
             price: t.price,
             unit: t.unit,
             referenceRange: t.referenceRange,
+            sampleType: t.sampleType,
             result: null,
             flag: null,
             notes: null,
@@ -6620,11 +6717,15 @@ var init_storage_file = __esm({
             sample.receivedAt = null;
             sample.receivedBy = null;
             sample.receivedByName = null;
+            sample.quality = null;
+            sample.qualityNote = null;
             break;
           case "qabul_qilindi":
             sample.receivedAt = now;
             sample.receivedBy = actor.id;
             sample.receivedByName = actor.name;
+            sample.quality = input.quality ?? "yaxshi";
+            sample.qualityNote = input.qualityNote?.trim() || null;
             break;
           case "kutilmoqda":
             sample.collectedAt = null;
@@ -6633,6 +6734,8 @@ var init_storage_file = __esm({
             sample.receivedAt = null;
             sample.receivedBy = null;
             sample.receivedByName = null;
+            sample.quality = null;
+            sample.qualityNote = null;
             break;
           case "rad_etildi":
             sample.rejectedAt = now;
@@ -8485,6 +8588,7 @@ function registerClinicRoutes(app) {
 
 // server/routes.ts
 init_lab_verification();
+init_lab_catalogue();
 
 // server/result-delivery.ts
 init_lab_verification();
@@ -9803,7 +9907,7 @@ async function registerRoutes(app) {
       if (!result) return res.status(404).json({ message: "Namuna topilmadi" });
       if ("error" in result) return res.status(409).json({ message: result.error });
       const { sample, order } = result;
-      const detail = input.status === "rad_etildi" ? `rad etildi \u2014 ${sample.rejectReason}` : SAMPLE_STATUS_LABELS[sample.status];
+      const detail = input.status === "rad_etildi" ? `rad etildi \u2014 ${sample.rejectReason}` : input.status === "qabul_qilindi" && sample.quality ? `${SAMPLE_STATUS_LABELS[sample.status]}, sifati: ${SAMPLE_QUALITY_LABELS[sample.quality] ?? sample.quality}${sample.qualityNote ? ` (${sample.qualityNote})` : ""}` : SAMPLE_STATUS_LABELS[sample.status];
       await audit(req, "sample", "order", order.id, `#${order.orderNumber} namuna: ${detail}`);
       res.json(order);
     })

@@ -1708,3 +1708,48 @@ describe("MKB-10 catalogue and coded diagnoses (B3.4)", () => {
     expect(v1.finalDiagnosisCode).toBe("I10");
   });
 });
+
+describe("lab catalogue groups and specimens (B4.6, B4.3)", () => {
+  it("classifies the seed catalogue into TZ groups and specimens", async () => {
+    const tests = await storage.listTests();
+    const t = new Map(tests.map((x) => [x.id, x]));
+    expect(t.get("1")).toMatchObject({ group: "gematologiya", sampleType: "qon_edta" });
+    expect(t.get("44")).toMatchObject({ group: "diabet", sampleType: "qon_edta" });
+    expect(t.get("45")).toMatchObject({ group: "koagulologiya", sampleType: "qon_sitrat" });
+    expect(t.get("6")).toMatchObject({ group: "siydik", sampleType: "siydik" });
+  });
+
+  it("stores and edits a test's group and specimen", async () => {
+    const created = await storage.createTest(
+      { name: "Vitamin B12", price: 90000, category: "Vitaminlar", group: "biokimyo", sampleType: "qon_zardob", isActive: true },
+      ACTOR,
+    );
+    expect(created).toMatchObject({ group: "biokimyo", sampleType: "qon_zardob" });
+    const edited = await storage.updateTest(created.id, { group: "immunologiya" }, ACTOR);
+    expect(edited).toMatchObject({ group: "immunologiya", sampleType: "qon_zardob" });
+  });
+
+  it("order lines keep the specimen they were drawn into, even if the catalogue changes", async () => {
+    const { order } = await makeOrder(["1", "22", "6"]);
+    expect(order.items.map((i) => i.sampleType).sort()).toEqual(["qon_edta", "qon_zardob", "siydik"]);
+    await storage.updateTest("22", { sampleType: "qon_edta" }, ACTOR);
+    const again = await storage.getOrder(order.id);
+    expect(again!.items.find((i) => i.testId === "22")!.sampleType).toBe("qon_zardob");
+  });
+
+  it("records the specimen quality on reception and clears it on a step back", async () => {
+    const { order } = await makeOrder(["3"]);
+    await storage.updateSampleStatus(order.id, { status: "olindi" }, ACTOR);
+    const got = await storage.updateSampleStatus(order.id, { status: "qabul_qilindi", quality: "gemoliz", qualityNote: "yengil" }, ACTOR);
+    expect(got && "sample" in got && got.sample).toMatchObject({ quality: "gemoliz", qualityNote: "yengil" });
+    const back = await storage.updateSampleStatus(order.id, { status: "olindi" }, ACTOR);
+    expect(back && "sample" in back && back.sample).toMatchObject({ quality: null, qualityNote: null });
+    const plain = await storage.updateSampleStatus(order.id, { status: "qabul_qilindi" }, ACTOR);
+    expect(plain && "sample" in plain && plain.sample.quality).toBe("yaxshi");
+  });
+
+  it("a tube's own code finds its order", async () => {
+    const { order } = await makeOrder(["1"]);
+    expect((await storage.getOrderByBarcode(`LAB-${order.orderNumber}-E`))?.id).toBe(order.id);
+  });
+});

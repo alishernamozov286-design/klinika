@@ -13,6 +13,8 @@ import {
   canTransition,
   nextStatuses,
   parseBarcode,
+  tubeBarcode,
+  TUBE_LETTERS,
   resultsNeedWarning,
   resultsWarning,
   sampleBarcode,
@@ -36,6 +38,16 @@ describe("sampleBarcode / parseBarcode", () => {
     expect(parseBarcode("  lab-1042 \n")).toBe(1042);
     expect(parseBarcode("LAB 1042")).toBe(1042);
     expect(parseBarcode("LAB1042")).toBe(1042);
+  });
+
+  it("gives each container its own code that still leads to the order (B4.3)", () => {
+    expect(tubeBarcode(1042, "qon_edta")).toBe("LAB-1042-E");
+    expect(tubeBarcode(1042, "siydik")).toBe("LAB-1042-U");
+    expect(parseBarcode("LAB-1042-E")).toBe(1042);
+    expect(parseBarcode("lab-1042-z")).toBe(1042);
+    expect(parseBarcode("LAB-1042-Q")).toBeNull(); // not a tube letter
+    expect(parseBarcode("LAB-1042E")).toBeNull(); // the separator is required
+    expect(new Set(Object.values(TUBE_LETTERS)).size).toBe(Object.keys(TUBE_LETTERS).length);
   });
 
   it("accepts a bare number, which is what people type", () => {

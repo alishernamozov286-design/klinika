@@ -73,6 +73,7 @@ import { nextQueueNumber } from "@shared/appointment";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { patientHistoryProblem } from "@shared/patient-links";
 import { referralStage } from "@shared/referral";
+import { classifyTest } from "@shared/lab-catalogue";
 import { ICD_SOURCE, normalizeIcdCode, parseNsiIcd10, type IcdRow } from "@shared/icd10";
 import { readFileSync } from "fs";
 import path from "path";
@@ -221,6 +222,7 @@ export class FileStorage implements IStorage {
           name: t.name,
           price: t.price,
           category: t.category,
+          ...classifyTest(t),
           unit: ref?.unit ?? null,
           referenceRange: ref?.referenceRange ?? null,
           isActive: true,
@@ -1610,6 +1612,8 @@ export class FileStorage implements IStorage {
       name: input.name,
       price: input.price,
       category: input.category,
+      group: input.group,
+      sampleType: input.sampleType,
       unit: input.unit ?? null,
       referenceRange: input.referenceRange ?? null,
       isActive: input.isActive ?? true,
@@ -1626,7 +1630,7 @@ export class FileStorage implements IStorage {
   async updateTest(id: string, input: Partial<InsertTest>, actor: Actor): Promise<Test | undefined> {
     const test = this.db.tests.find((t) => t.id === id);
     if (!test) return undefined;
-    const fields = ["name", "price", "category", "unit", "referenceRange", "isActive"] as const;
+    const fields = ["name", "price", "category", "group", "sampleType", "unit", "referenceRange", "isActive"] as const;
     if (fields.some((k) => input[k] !== undefined)) {
       test.updatedAt = new Date().toISOString();
       test.updatedBy = actor.id;
@@ -1634,6 +1638,8 @@ export class FileStorage implements IStorage {
     if (input.name !== undefined) test.name = input.name;
     if (input.price !== undefined) test.price = input.price;
     if (input.category !== undefined) test.category = input.category;
+    if (input.group !== undefined) test.group = input.group;
+    if (input.sampleType !== undefined) test.sampleType = input.sampleType;
     if (input.unit !== undefined) test.unit = input.unit ?? null;
     if (input.referenceRange !== undefined) test.referenceRange = input.referenceRange ?? null;
     if (input.isActive !== undefined) test.isActive = input.isActive;
@@ -1803,6 +1809,8 @@ export class FileStorage implements IStorage {
       rejectedByName: null,
       rejectReason: null,
       rejectNote: null,
+      quality: null,
+      qualityNote: null,
       createdAt: now,
     });
 
@@ -1834,6 +1842,7 @@ export class FileStorage implements IStorage {
         price: t.price,
         unit: t.unit,
         referenceRange: t.referenceRange,
+        sampleType: t.sampleType,
         result: null,
         flag: null,
         notes: null,
@@ -1923,6 +1932,7 @@ export class FileStorage implements IStorage {
         price: t.price,
         unit: t.unit,
         referenceRange: t.referenceRange,
+        sampleType: t.sampleType,
         result: null,
         flag: null,
         notes: null,
@@ -2123,11 +2133,15 @@ export class FileStorage implements IStorage {
         sample.receivedAt = null;
         sample.receivedBy = null;
         sample.receivedByName = null;
+        sample.quality = null;
+        sample.qualityNote = null;
         break;
       case "qabul_qilindi":
         sample.receivedAt = now;
         sample.receivedBy = actor.id;
         sample.receivedByName = actor.name;
+        sample.quality = input.quality ?? "yaxshi";
+        sample.qualityNote = input.qualityNote?.trim() || null;
         break;
       case "kutilmoqda":
         sample.collectedAt = null;
@@ -2136,6 +2150,8 @@ export class FileStorage implements IStorage {
         sample.receivedAt = null;
         sample.receivedBy = null;
         sample.receivedByName = null;
+        sample.quality = null;
+        sample.qualityNote = null;
         break;
       case "rad_etildi":
         sample.rejectedAt = now;

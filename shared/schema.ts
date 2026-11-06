@@ -4,6 +4,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { isPermission, type Permission } from "./permissions";
 import { normalizePassport, normalizePinfl } from "./patient-identity";
+import { SAMPLE_QUALITIES, SAMPLE_TYPES, TEST_GROUPS, type SampleType, type TestGroup } from "./lab-catalogue";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -704,6 +705,10 @@ export const tests = pgTable("tests", {
   name: text("name").notNull(),
   price: money("price").notNull(),
   category: text("category").notNull(),
+  /** One of the eight TZ §6.2 groups (shared/lab-catalogue.ts); `category` stays the clinic's finer heading. */
+  group: text("group").notNull().default("boshqa"),
+  /** What is drawn and into which container (B4.3). */
+  sampleType: text("sample_type").notNull().default("qon_zardob"),
   unit: text("unit"),
   referenceRange: text("reference_range"),
   isActive: boolean("is_active").notNull().default(true),
@@ -773,6 +778,8 @@ export const orderTests = pgTable("order_tests", {
   price: money("price").notNull(),
   unit: text("unit"),
   referenceRange: text("reference_range"),
+  /** Snapshot like the price: the tube this line was drawn into (B4.3). Null on older lines. */
+  sampleType: text("sample_type"),
   result: text("result"),
   flag: text("flag"),
   notes: text("notes"),
@@ -865,6 +872,10 @@ export const samples = pgTable(
     rejectedByName: text("rejected_by_name"),
     rejectReason: text("reject_reason"),
     rejectNote: text("reject_note"),
+
+    /** Quality judged on reception (TZ §6.1.3 "namuna sifati"); null until received. */
+    quality: text("quality"),
+    qualityNote: text("quality_note"),
 
     createdAt: isoTimestamp("created_at").defaultNow().notNull(),
   },
@@ -1331,7 +1342,7 @@ export type ExaminationData = {
   canRefer: boolean;
 };
 
-export type Test = typeof tests.$inferSelect;
+export type Test = Omit<typeof tests.$inferSelect, "group" | "sampleType"> & { group: TestGroup; sampleType: SampleType };
 
 // `status` and `flag` are plain text columns; narrow them for the app.
 export type Order = Omit<typeof orders.$inferSelect, "status"> & { status: OrderStatus };
@@ -1531,6 +1542,8 @@ export const insertTestSchema = createInsertSchema(tests)
     name: z.string().trim().min(2, "Tahlil nomini kiriting"),
     price: z.coerce.number().int().min(0, "Narx manfiy bo'lmasligi kerak"),
     category: z.string().trim().min(2, "Kategoriyani tanlang"),
+    group: z.enum(TEST_GROUPS, { errorMap: () => ({ message: "Guruhni tanlang" }) }),
+    sampleType: z.enum(SAMPLE_TYPES, { errorMap: () => ({ message: "Namuna turini tanlang" }) }),
     unit: z.string().trim().nullish(),
     referenceRange: z.string().trim().nullish(),
     isActive: z.boolean().default(true),
@@ -1588,6 +1601,9 @@ export const updateSampleSchema = z
     status: z.enum(SAMPLE_STATUSES),
     rejectReason: z.enum(SAMPLE_REJECT_REASONS).nullish(),
     rejectNote: z.string().trim().max(300).nullish(),
+    /** On reception only; "yaxshi" when not given. */
+    quality: z.enum(SAMPLE_QUALITIES).nullish(),
+    qualityNote: z.string().trim().max(300).nullish(),
   })
   .refine((v) => v.status !== "rad_etildi" || Boolean(v.rejectReason), {
     message: "Rad etish sababini tanlang",

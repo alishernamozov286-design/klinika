@@ -748,6 +748,11 @@
   body.printing-label .label-surface * {
     break-inside: avoid;
   }
+
+  /* One label per container (B4.3): each on its own sticker. */
+  body.printing-label .label-surface + .label-surface {
+    break-before: page;
+  }
 }
 
 /**

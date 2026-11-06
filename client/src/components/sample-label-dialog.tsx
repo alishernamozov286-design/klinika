@@ -2,24 +2,25 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
 import type { LabSettings, OrderWithDetails } from "@shared/schema";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { QrCode } from "@/components/qr-code";
-import { ageGender, formatDate } from "@/lib/format";
+import { TUBES, tubesFor } from "@shared/lab-catalogue";
+import { tubeBarcode } from "@shared/sample";
 import { patientAge } from "@shared/patient-identity";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Code128 } from "@/components/barcode";
+import { ageGender, formatDate } from "@/lib/format";
 
 /**
- * The sticker that goes on the tube.
+ * The stickers that go on the containers (B4.3, TZ §6.1.3 "probirkani
+ * belgilash").
  *
- * Printed separately from the result blank because it is a different physical
- * object on different stock — a 58×30mm thermal label, not A4 — and because it
- * is produced at a different moment: the label is needed at the draw, the
- * blank only once results exist.
+ * One label per container the order needs — EDTA, serum, urine… — each with
+ * its own Code 128 code (TZ §2): the order's code plus the specimen letter,
+ * "LAB-1042-E". Scanning any of them opens the order. The cap colour runs
+ * down the left edge so a mislabelled tube is visible in the rack.
  *
- * What is on it is deliberately minimal. A label has room for about four
- * things before they stop being readable at arm's length in a rack, and the
- * four that matter are the code a scanner reads, the same code in digits for
- * when the scan fails, who the tube belongs to, and the date.
+ * A label is a 58×30 mm thermal sticker, not A4, and is needed at the draw,
+ * long before any result — hence its own dialog and its own page size.
  */
 export function SampleLabelDialog({
   open,
@@ -47,12 +48,16 @@ export function SampleLabelDialog({
 
   const sample = order.sample;
   const patient = order.patient;
+  const tubes = tubesFor(order.items);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-md">
         <DialogHeader className="no-print">
-          <DialogTitle>Namuna yorlig'i</DialogTitle>
+          <DialogTitle>Probirka yorliqlari</DialogTitle>
+          <DialogDescription>
+            {tubes.length} ta idish · har biriga alohida yorliq. Skanerlanganda buyurtma #{order.orderNumber} ochiladi.
+          </DialogDescription>
         </DialogHeader>
 
         {!sample ? (
@@ -61,39 +66,39 @@ export function SampleLabelDialog({
           </p>
         ) : (
           <>
-            <div className="no-print flex justify-center py-2">
-              {/* Rendered at label scale so what is on screen is what comes out
-                  of the printer, rather than a preview that looks fine and a
-                  sticker that does not fit. */}
-              <div
-                className="label-surface flex gap-3 rounded border bg-white p-3 text-black"
-                style={{ width: "58mm", minHeight: "30mm" }}
-              >
-                <div className="qr-print shrink-0 bg-white">
-                  <QrCode value={sample.barcode} size={72} level="M" />
-                </div>
-
-                <div className="flex min-w-0 flex-col justify-between py-0.5">
-                  <div className="min-w-0">
-                    <p className="truncate text-[11px] font-bold leading-tight">
-                      {patient?.fullName ?? "—"}
-                    </p>
-                    <p className="text-[9px] leading-tight text-black/70">
-                      {ageGender(patientAge(patient), patient?.gender)}
-                    </p>
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="font-mono text-[13px] font-bold leading-none tracking-tight">
-                      {sample.barcode}
-                    </p>
-                    <p className="mt-0.5 text-[9px] leading-tight text-black/70">
+            {/* Rendered at label scale, so what is on screen is what comes out
+                of the printer rather than a preview that looks fine and a
+                sticker that does not fit. */}
+            <div className="flex max-h-[60vh] flex-col items-center gap-3 overflow-y-auto py-1">
+              {tubes.map((t) => {
+                const code = tubeBarcode(order.orderNumber, t.sampleType);
+                const tube = TUBES[t.sampleType];
+                return (
+                  <div
+                    key={t.sampleType}
+                    className="label-surface relative flex flex-col overflow-hidden rounded border bg-white py-1.5 pl-3 pr-2 text-black"
+                    style={{ width: "58mm", height: "30mm" }}
+                    data-testid={`label-${t.sampleType}`}
+                  >
+                    {/* The cap colour, down the edge. */}
+                    <span className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: tube.color }} aria-hidden />
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="truncate text-[10px] font-bold leading-tight">{patient?.fullName ?? "—"}</p>
+                      <p className="shrink-0 text-[8px] leading-tight">{ageGender(patientAge(patient), patient?.gender)}</p>
+                    </div>
+                    <Code128 value={code} className="mt-1 h-[11mm] w-full" />
+                    <div className="mt-0.5 flex items-baseline justify-between gap-2">
+                      <p className="font-mono text-[11px] font-bold leading-none tracking-tight">{code}</p>
+                      <p className="shrink-0 text-[8px] font-semibold leading-none">{tube.label}</p>
+                    </div>
+                    <p className="mt-0.5 truncate text-[7.5px] leading-tight text-black/70">
                       {formatDate(order.createdAt)}
-                      {settings?.labName ? ` · ${settings.labName}` : ""}
+                      {patient ? ` · #${patient.patientNumber}` : ""}
+                      {settings?.labName ? ` · ${settings.labName}` : ""} · {t.tests.join(", ")}
                     </p>
                   </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
 
             <DialogFooter className="no-print">
@@ -102,7 +107,7 @@ export function SampleLabelDialog({
               </Button>
               <Button onClick={() => window.print()} data-testid="button-print-label">
                 <Printer className="mr-2 h-4 w-4" />
-                Chop etish
+                Chop etish ({tubes.length})
               </Button>
             </DialogFooter>
           </>

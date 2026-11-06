@@ -8,7 +8,9 @@ import {
   type SampleRejectReason,
   type SampleStatus,
 } from "@shared/schema";
-import { nextStatuses, resultsWarning } from "@shared/sample";
+import { nextStatuses, resultsWarning, tubeBarcode } from "@shared/sample";
+import { SAMPLE_QUALITIES, SAMPLE_QUALITY_LABELS, TUBES, tubesFor, type SampleQuality } from "@shared/lab-catalogue";
+import { TubeDot } from "@/components/lab-ui";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,18 +49,26 @@ export function SamplePanel({ order }: { order: OrderWithDetails }) {
   const { toast } = useToast();
   const { can } = useAuth();
   const [rejecting, setRejecting] = useState(false);
+  const [receiving, setReceiving] = useState(false);
   const [labelling, setLabelling] = useState(false);
 
   const sample = order.sample;
 
   const mutation = useMutation({
-    mutationFn: async (payload: { status: SampleStatus; rejectReason?: string; rejectNote?: string }) => {
+    mutationFn: async (payload: {
+      status: SampleStatus;
+      rejectReason?: string;
+      rejectNote?: string;
+      quality?: SampleQuality;
+      qualityNote?: string;
+    }) => {
       const res = await apiRequest("PATCH", `/api/orders/${order.id}/sample`, payload);
       return (await res.json()) as OrderWithDetails;
     },
     onSuccess: (_data, vars) => {
       invalidateApi("/api/orders", "/api/stats");
       setRejecting(false);
+      setReceiving(false);
       toast({ title: `Namuna: ${SAMPLE_STATUS_LABELS[vars.status].toLowerCase()}` });
     },
     onError: (err: Error) => {
@@ -72,6 +82,9 @@ export function SamplePanel({ order }: { order: OrderWithDetails }) {
   // Rejection gets its own dialog, so it is filtered out of the inline row.
   const steps = nextStatuses(sample.status).filter((s) => s !== "rad_etildi");
   const canReject = editable && nextStatuses(sample.status).includes("rad_etildi");
+  // TZ §6.1.3: which containers this order needs, each with its own code.
+  const orderNumber = order.orderNumber;
+  const tubes = tubesFor(order.items);
 
   return (
     <div>
@@ -98,6 +111,19 @@ export function SamplePanel({ order }: { order: OrderWithDetails }) {
           </Button>
         </div>
 
+        {tubes.length > 0 && (
+          <ul className="mt-2.5 space-y-1.5" data-testid="list-sample-tubes">
+            {tubes.map((t) => (
+              <li key={t.sampleType} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                <TubeDot type={t.sampleType} className="font-medium" />
+                <span className="text-muted-foreground">{TUBES[t.sampleType].container}</span>
+                <span className="font-mono text-[11px] text-muted-foreground">{tubeBarcode(orderNumber, t.sampleType)}</span>
+                <span className="basis-full truncate pl-4 text-[11px] text-muted-foreground/80">{t.tests.join(", ")}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
         {/* The audit trail in plain words. Each line appears only once its step
             has happened, so the panel reads as a history rather than a form. */}
         <dl className="mt-2.5 space-y-1 text-xs text-muted-foreground">
@@ -113,6 +139,18 @@ export function SamplePanel({ order }: { order: OrderWithDetails }) {
               <dt>Qabul qilindi:</dt>
               <dd className="tabular text-foreground/80">{formatDateTime(sample.receivedAt)}</dd>
               {sample.receivedByName && <dd>· {sample.receivedByName}</dd>}
+              {sample.quality && (
+                <dd
+                  className={cn(
+                    "basis-full font-medium",
+                    sample.quality === "yaxshi" ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-300",
+                  )}
+                  data-testid="text-sample-quality"
+                >
+                  Sifati: {SAMPLE_QUALITY_LABELS[sample.quality as SampleQuality] ?? sample.quality}
+                  {sample.qualityNote ? ` — ${sample.qualityNote}` : ""}
+                </dd>
+              )}
             </div>
           )}
           {sample.rejectedAt && (
@@ -141,7 +179,8 @@ export function SamplePanel({ order }: { order: OrderWithDetails }) {
                   size="sm"
                   variant={isUndo ? "ghost" : "default"}
                   disabled={mutation.isPending}
-                  onClick={() => mutation.mutate({ status: next })}
+                  // Reception asks for the specimen's quality first (TZ §6.1.3).
+                  onClick={() => (next === "qabul_qilindi" ? setReceiving(true) : mutation.mutate({ status: next }))}
                   data-testid={`button-sample-${next}`}
                 >
                   <action.icon className="mr-1.5 h-3.5 w-3.5" />
@@ -177,8 +216,111 @@ export function SamplePanel({ order }: { order: OrderWithDetails }) {
         }
       />
 
+      <ReceiveDialog
+        open={receiving}
+        onOpenChange={setReceiving}
+        barcode={sample.barcode}
+        pending={mutation.isPending}
+        onConfirm={(quality, note) => mutation.mutate({ status: "qabul_qilindi", quality, qualityNote: note || undefined })}
+      />
+
       <SampleLabelDialog open={labelling} onOpenChange={setLabelling} order={order} />
     </div>
+  );
+}
+
+/**
+ * Reception: the laborant looks at the specimen and records its quality
+ * (TZ §6.1.3 "namuna sifati"). A flawed specimen may still be accepted — a
+ * slightly haemolysed tube is often usable — and the flag then travels with
+ * the order; one that cannot be used is rejected instead.
+ */
+function ReceiveDialog({
+  open,
+  onOpenChange,
+  barcode,
+  pending,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  barcode: string;
+  pending: boolean;
+  onConfirm: (quality: SampleQuality, note: string) => void;
+}) {
+  const [quality, setQuality] = useState<SampleQuality>("yaxshi");
+  const [note, setNote] = useState("");
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        onOpenChange(next);
+        if (!next) {
+          setQuality("yaxshi");
+          setNote("");
+        }
+      }}
+    >
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Check className="h-4 w-4 text-emerald-600" />
+            Namunani qabul qilish
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            <span className="font-mono font-semibold text-foreground">{barcode}</span> laboratoriyaga qabul qilinadi. Namuna sifatini belgilang.
+          </p>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Namuna sifati">
+            {SAMPLE_QUALITIES.map((q) => (
+              <button
+                key={q}
+                type="button"
+                role="radio"
+                aria-checked={quality === q}
+                onClick={() => setQuality(q)}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                  quality === q
+                    ? q === "yaxshi"
+                      ? "border-emerald-500/50 bg-emerald-500/10 font-medium text-emerald-800 dark:text-emerald-300"
+                      : "border-amber-500/50 bg-amber-500/10 font-medium text-amber-800 dark:text-amber-300"
+                    : "hover:bg-muted",
+                )}
+                data-testid={`quality-${q}`}
+              >
+                {SAMPLE_QUALITY_LABELS[q]}
+              </button>
+            ))}
+          </div>
+          {quality !== "yaxshi" && (
+            <div className="space-y-2">
+              <Label htmlFor="quality-note">Izoh</Label>
+              <Textarea
+                id="quality-note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={300}
+                rows={2}
+                placeholder="Masalan: yengil gemoliz, kaliy natijasiga ta'sir qilishi mumkin"
+                data-testid="input-quality-note"
+              />
+              <p className="text-xs text-muted-foreground">Namuna ishlatib bo'lmaydigan darajada bo'lsa, qabul qilmasdan rad eting.</p>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Bekor qilish
+          </Button>
+          <Button disabled={pending} onClick={() => onConfirm(quality, note.trim())} data-testid="button-confirm-receive">
+            <Check className="mr-1.5 h-4 w-4" />
+            Qabul qilish
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

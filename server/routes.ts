@@ -115,6 +115,7 @@ import {
 import { actorOf, audit, emptyIfMissing, handle, logPatientView, numberParam, stringParam } from "./route-helpers";
 import { registerClinicRoutes } from "./routes-clinic";
 import { isOrderReleased } from "@shared/lab-verification";
+import { SAMPLE_QUALITY_LABELS, type SampleQuality } from "@shared/lab-catalogue";
 import { notifyOrderingDoctor } from "./result-delivery";
 import { registerMedicalRoutes } from "./routes-medical";
 
@@ -1223,7 +1224,11 @@ export async function registerRoutes(app: Express): Promise<void> {
 
       const { sample, order } = result;
       const detail =
-        input.status === "rad_etildi" ? `rad etildi — ${sample.rejectReason}` : SAMPLE_STATUS_LABELS[sample.status];
+        input.status === "rad_etildi"
+          ? `rad etildi — ${sample.rejectReason}`
+          : input.status === "qabul_qilindi" && sample.quality
+            ? `${SAMPLE_STATUS_LABELS[sample.status]}, sifati: ${SAMPLE_QUALITY_LABELS[sample.quality as SampleQuality] ?? sample.quality}${sample.qualityNote ? ` (${sample.qualityNote})` : ""}`
+            : SAMPLE_STATUS_LABELS[sample.status];
       await audit(req, "sample", "order", order.id, `#${order.orderNumber} namuna: ${detail}`);
 
       res.json(order);
