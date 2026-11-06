@@ -97,7 +97,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 37 → ≈49%**.
+> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 38 → ≈50%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -175,7 +175,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Bosh sahifada (`appointments.read` egalari uchun) "Registratura · Bugungi kun" paneli: 5 ta ko'rsatkich, qabulga kelganlar (qabuldagi, so'ng kelish tartibida), navbatdagilar (vaqt bo'yicha, kechikayotganlar belgilanadi, to'g'ridan-to'g'ri "Keldi"), yangi bemorlar, to'lov holati (to'liq / qisman / to'lanmagan). Kechikish server soati bo'yicha. 20 s da yangilanadi va amallardan keyin darhol invalidatsiya qilinadi.
   - Hisoblash qoidalari `shared/reception.ts` da (test bilan). "To'lov holati" hozircha lab buyurtmalari bo'yicha. Qabul to'lovlari B7.1 (umumiy hisobvaraq) bilan qo'shiladi.
 
-### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 61%
+### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 72%
 
 - [x] **B3.1** Shifokor kabineti (`§5.1.1`): bugungi qabul, kutayotganlar, qabul qilinganlar, tugallanmagan kartalar. Navbatdan bemorni "chaqirish".
   - `/cabinet` ("Mening kabinetim"): statistika, qabuldagi bemor kartasi (o'tgan vaqt, bemor kartasiga havola, yakunlash, navbatga qaytarish), "Keyingi bemorni chaqirish" (`POST /api/cabinet/call-next`: kelganlardan eng erta yozilgan), kutayotganlar (qancha kutayotgani bilan), yozilganlar, qabul qilinganlar, kun bo'yicha ko'rish.
@@ -212,7 +212,11 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Tuzatish bitta tranzaksiyada bajariladi (`FOR UPDATE`): joriy matn `medical_record_versions` ga yoziladi (kim, qachon, sabab; versiya raqami takrorlanmas), yangi matn keyingi versiya bo'lib tuzatuvchi nomidan tasdiqlanadi. Sabab majburiy, o'zgarishsiz tuzatish rad etiladi. Audit qaysi maydonlar o'zgarganini yozadi.
   - UI: "Tuzatish kiritish" (o'zgargan maydonlar belgilanadi), "Tarix" dialogi (joriy va barcha oldingi versiyalar).
   - "Imzolash" — tizim ichidagi tasdiqlash (kim, qachon). Elektron raqamli imzo (ERI) TZ'da talab qilinmagan.
-- [ ] **B3.8** Ko‘rik xulosasi PDF (`§5.2`).
+- [x] **B3.8** Ko‘rik xulosasi PDF (`§5.2`).
+  - Faqat tasdiqlangan ko'rik yozuvidan (qoralama 409). `GET /api/records/:id/summary` (`records.read`) bitta so'rovda: yozuv, qabul, faol allergiyalar, shu qabul yo'llanmalari (bekor qilinganlarsiz) tasdiqlangan natijalari bilan, klinika rekvizitlari. Har bir chiqarish auditga yoziladi (`export`, "ko'rik xulosasi chiqarildi").
+  - PDF `client/src/lib/visit-summary-pdf.ts` (jspdf + Roboto, kirill harflari ham): klinika sarlavhasi, bemor bloki (ID, tug'ilgan sana/yosh, jinsi, qabul, shifokor, xona), allergiyalar qizil, ko'rikning to'ldirilgan maydonlari, yo'llanmalar va natijalar jadvali (me'yordan tashqarisi rangli), shifokor imzosi, elektron tasdiq belgisi (kim, qachon, versiya), tuzatilgan nusxa izohi, har sahifada pastki qism va sahifa raqami. Uzun matn sahifalar bo'ylab o'tadi.
+  - Bitta tuzilish: dialog aynan shu PDF faylni ko'rsatadi, chop etadi va yuklab beradi (`xulosa-<bemorID>-<sana>.pdf`). Tugmalar: ko'rik oynasida "Xulosa", tibbiy kartada tasdiqlangan ko'rik ostida "Xulosa (PDF)".
+  - Testlar: `visit-summary-pdf.test.ts` (bir sahifa, ko'p sahifa, fayl nomi), 8 ta API E2E (qoralama, ruxsatlar, audit), brauzerda dialog. PDF real ma'lumot bilan rasmga aylantirib ko'zdan kechirildi.
 - [x] **B3.9** Natija shifokorga (`§11`, qabul mezoni 16.4): lab natijasi tasdiqlangach buyurtma bergan shifokorga bildirishnoma va kartaga biriktirish.
   - Yo'llanma bo'yicha buyurtma to'liq tasdiqlanganda (B4.5) yo'llanma bergan shifokorga bildirishnoma (`server/result-delivery.ts`): bemor, yo'llanma va buyurtma raqami, tahlillar, me'yordan tashqaridagilar ("muhim" belgisi). Bir marta (`dedupe_key`), qayta tasdiqlash takrorlamaydi. Tasdiqdan keyingi tuzatish alohida "Natija tuzatildi: eski → yangi" xabari bilan.
   - Bildirishnoma tasdiqlashni hech qachon buzmaydi (xatosi faqat logga yoziladi); serverless'da javobdan oldin kutiladi.
@@ -331,6 +335,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B1.8 · Ikki bosqichli autentifikatsiya: TOTP, zaxira kodlar, rol bo'yicha majburiylik, admin reset, qulf bilan bog'langan kod xatolari.
 - 2026-11-05 · B2.6–B2.8, B3.1 · Xizmatlar katalogi va narxlar ro'yxati, qabulga yozish (bo'sh vaqtlar, navbat raqami, poyga himoyasi), navbat sahifasi, shifokor kabineti, qabullar bemor kartasi va tashriflarida. Yo'l-yo'lakay: route yordamchilari `route-helpers.ts` ga chiqarildi.
 - 2026-11-06 · B3.3, B3.7, B3.2 (qisman) · Ko'rik oynasi (avtosaqlash, revision to'qnashuvi himoyasi), tasdiqlash va versiyali tuzatish, elektron tibbiy karta (allergiyalar, tashxislar tarixi, lab natijalari), kabinetda tugallanmagan kartalar. Yo'l-yo'lakay: navbat va kabinet ekranlari eskirgan keshni ko'rsatardi (global `refetchOnMount: false`), tuzatildi.
+- 2026-11-06 · B3.8 · Ko'rik xulosasi PDF: faqat tasdiqlangan yozuvdan, allergiyalar, yo'llanmalar va tasdiqlangan natijalar bilan, elektron tasdiq belgisi; bitta PDF ham ko'rinish, ham chop etish, ham yuklab olish; chiqarish auditga yoziladi.
 - 2026-11-06 · B3.9 · Natija shifokorga: to'liq tasdiqlangan yo'llanma buyurtmasi haqida shifokorga bir martalik bildirishnoma (me'yordan tashqarisi belgilangan), tuzatish haqida alohida xabar; qo'ng'iroqcha, kabinetdagi "Yangi tahlil natijalari", ko'rik oynasida qiymatlar. 16.4 yopildi.
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.

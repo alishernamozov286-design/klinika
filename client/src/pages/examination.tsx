@@ -54,6 +54,7 @@ import {
 } from "@/components/medical-record";
 import { useAppointmentStatus } from "@/components/appointment-actions";
 import { ExaminationReferrals } from "@/components/referrals";
+import { VisitSummaryDialog } from "@/components/visit-summary-dialog";
 import { ApiError, apiRequest, invalidateApi, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -292,6 +293,7 @@ function RecordEditor({
   const { toast } = useToast();
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [amending, setAmending] = useState(false);
+  const [summaryOf, setSummaryOf] = useState<string | null>(null);
 
   if (record.status === "signed" && !amending) {
     return (
@@ -301,6 +303,10 @@ function RecordEditor({
         description={`${record.doctorName} · ${record.specialty}`}
         action={
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => setSummaryOf(record.id)} data-testid="button-visit-summary">
+              <FileText className="mr-1.5 h-3.5 w-3.5" />
+              Xulosa
+            </Button>
             {record.version > 1 && (
               <Button size="sm" variant="ghost" onClick={() => setVersionsOpen(true)} data-testid="button-record-history" aria-label="Tarix">
                 <History className="h-3.5 w-3.5 sm:mr-1.5" />
@@ -322,6 +328,7 @@ function RecordEditor({
           <RecordSignature record={record} />
         </div>
         <RecordVersionsDialog record={versionsOpen ? record : null} onOpenChange={setVersionsOpen} />
+        <VisitSummaryDialog recordId={summaryOf} onOpenChange={(o) => !o && setSummaryOf(null)} />
         {appointmentStatus === "in_progress" && canWrite && <FinishAppointment appointment={appointment} onFinished={onFinished} />}
       </SectionCard>
     );

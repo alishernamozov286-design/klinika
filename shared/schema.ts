@@ -1246,6 +1246,21 @@ export type MedicalCard = {
   referrals: ReferralWithDetails[] | null;
 };
 
+/**
+ * Everything the visit summary (ko'rik xulosasi, TZ §5.2; B3.8) prints, in one
+ * request: the signed record, the visit, active allergies, the referrals of
+ * this visit with their verified results, and the clinic's letterhead.
+ */
+export type VisitSummary = {
+  record: MedicalRecordWithDetails;
+  appointment: AppointmentWithDetails | null;
+  allergies: PatientAllergy[];
+  referrals: ReferralWithDetails[];
+  clinic: LabSettings;
+  generatedAt: string;
+  generatedBy: string;
+};
+
 /** The examination window's data in one request. */
 export type ExaminationData = {
   appointment: AppointmentWithDetails;

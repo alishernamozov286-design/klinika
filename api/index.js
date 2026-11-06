@@ -8405,6 +8405,41 @@ function registerMedicalRoutes(app) {
     })
   );
   app.get(
+    "/api/records/:id/summary",
+    requirePermission("records.read"),
+    handle(async (req, res) => {
+      const record = await storage.getRecord(req.params.id);
+      if (!record || !visibleTo(req)(record)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      if (record.status !== "signed") {
+        return res.status(409).json({ message: "Xulosa faqat tasdiqlangan ko'rik yozuvidan chiqariladi" });
+      }
+      const [appointment, allergies, referrals2, clinic] = await Promise.all([
+        storage.getAppointment(record.appointmentId),
+        storage.listAllergies(record.patientId).catch((e) => emptyIfMissing(e, [])),
+        storage.listReferrals({ appointmentId: record.appointmentId }).catch((e) => emptyIfMissing(e, [])),
+        storage.getSettings()
+      ]);
+      const summary = {
+        record,
+        appointment: appointment ?? null,
+        allergies: allergies.filter((a) => a.isActive),
+        // A cancelled referral is not part of what the patient was told to do.
+        referrals: referrals2.filter((r) => r.status !== "cancelled"),
+        clinic,
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        generatedBy: req.user.fullName
+      };
+      await audit(
+        req,
+        "export",
+        "record",
+        record.id,
+        `${patientLabel2(record)} \u2014 ko'rik xulosasi chiqarildi (${record.date}, ${record.doctorName}, v${record.version})`
+      );
+      res.json(summary);
+    })
+  );
+  app.get(
     "/api/patients/:id/medical",
     requirePermission("records.read"),
     handle(async (req, res) => {

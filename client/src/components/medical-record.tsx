@@ -10,6 +10,7 @@ import {
   ClipboardList,
   FileClock,
   FileSignature,
+  FileText,
   FlaskConical,
   History,
   Loader2,
@@ -41,6 +42,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatDateTime, formatDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ReferralList } from "@/components/referrals";
+import { VisitSummaryDialog } from "@/components/visit-summary-dialog";
 
 // ------------------------------------------------------------------ status
 
@@ -441,6 +443,7 @@ export function MedicalCardPanel({ patientId }: { patientId: string }) {
   });
   const [versionsOf, setVersionsOf] = useState<MedicalRecordWithDetails | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [summaryOf, setSummaryOf] = useState<string | null>(null);
 
   if (isLoading || !data) {
     return (
@@ -489,6 +492,12 @@ export function MedicalCardPanel({ patientId }: { patientId: string }) {
                         <RecordReadView record={r} />
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <RecordSignature record={r} />
+                          {r.status === "signed" && (
+                            <Button size="sm" variant="outline" onClick={() => setSummaryOf(r.id)} data-testid={`button-summary-${r.id}`}>
+                              <FileText className="mr-1.5 h-3.5 w-3.5" />
+                              Xulosa (PDF)
+                            </Button>
+                          )}
                           {r.version > 1 && (
                             <Button size="sm" variant="ghost" onClick={() => setVersionsOf(r)}>
                               <History className="mr-1.5 h-3.5 w-3.5" />
@@ -524,6 +533,7 @@ export function MedicalCardPanel({ patientId }: { patientId: string }) {
       )}
 
       <RecordVersionsDialog record={versionsOf} onOpenChange={(o) => !o && setVersionsOf(null)} />
+      <VisitSummaryDialog recordId={summaryOf} onOpenChange={(o) => !o && setSummaryOf(null)} />
     </div>
   );
 }
