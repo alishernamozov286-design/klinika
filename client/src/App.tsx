@@ -56,6 +56,9 @@ const SettingsPage = lazy(() => import("@/pages/settings"));
 const Staff = lazy(() => import("@/pages/staff"));
 const Doctors = lazy(() => import("@/pages/doctors"));
 const Departments = lazy(() => import("@/pages/departments"));
+const Services = lazy(() => import("@/pages/services"));
+const Queue = lazy(() => import("@/pages/queue"));
+const Cabinet = lazy(() => import("@/pages/cabinet"));
 
 /**
  * Wraps a page in its ROUTE_ACCESS rule. Typing the URL of a screen the role
@@ -80,6 +83,9 @@ const ExpensesPage = guarded("/expenses", Expenses);
 const StaffPage = guarded("/staff", Staff);
 const DoctorsPage = guarded("/doctors", Doctors);
 const DepartmentsPage = guarded("/departments", Departments);
+const ServicesPage = guarded("/services", Services);
+const QueuePage = guarded("/queue", Queue);
+const CabinetPage = guarded("/cabinet", Cabinet);
 
 function Router() {
   return (
@@ -100,6 +106,9 @@ function Router() {
         <Route path="/staff" component={StaffPage} />
         <Route path="/doctors" component={DoctorsPage} />
         <Route path="/departments" component={DepartmentsPage} />
+        <Route path="/services" component={ServicesPage} />
+        <Route path="/queue" component={QueuePage} />
+        <Route path="/cabinet" component={CabinetPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route component={NotFound} />
       </Switch>
@@ -117,6 +126,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/staff": "Xodimlar",
   "/doctors": "Shifokorlar",
   "/departments": "Bo'limlar",
+  "/services": "Xizmatlar",
+  "/queue": "Navbat",
+  "/cabinet": "Kabinet",
   "/settings": "Sozlamalar",
 };
 

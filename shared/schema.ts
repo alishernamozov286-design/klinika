@@ -117,6 +117,45 @@ export const DEPARTMENT_KIND_LABELS: Record<DepartmentKind, string> = {
   boshqa: "Boshqa",
 };
 
+/**
+ * The clinic's paid services (TZ §4.1.5): "Shifokor ko'rigi. Laboratoriya.
+ * UZI. Muolajalar. Boshqa xizmatlar."
+ *
+ * Laboratory tests are not rows here: they already have their own catalogue
+ * (`tests`, with units and reference ranges). The price list joins the two —
+ * see PriceListItem — so the lab keeps one place to maintain its prices.
+ */
+export const SERVICE_KINDS = ["konsultatsiya", "uzi", "muolaja", "boshqa"] as const;
+export type ServiceKind = (typeof SERVICE_KINDS)[number];
+
+/** Every kind the price list shows, lab tests included. */
+export type PriceListKind = ServiceKind | "laboratoriya";
+
+export const SERVICE_KIND_LABELS: Record<PriceListKind, string> = {
+  konsultatsiya: "Shifokor ko'rigi",
+  laboratoriya: "Laboratoriya",
+  uzi: "UZI",
+  muolaja: "Muolaja",
+  boshqa: "Boshqa",
+};
+
+/**
+ * Appointment lifecycle (TZ §4.1.4 "qabul holati"):
+ * yozildi → keldi → qabulda → yakunlandi, or kelmadi / bekor qilindi.
+ * Which move is allowed, and for whom, lives in shared/appointment.ts.
+ */
+export const APPOINTMENT_STATUSES = ["scheduled", "arrived", "in_progress", "completed", "no_show", "cancelled"] as const;
+export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
+
+export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
+  scheduled: "Yozildi",
+  arrived: "Keldi",
+  in_progress: "Qabulda",
+  completed: "Yakunlandi",
+  no_show: "Kelmadi",
+  cancelled: "Bekor qilindi",
+};
+
 /** ISO weekday numbers, Monday first. */
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 export const WEEKDAY_SHORT: Record<number, string> = { 1: "Du", 2: "Se", 3: "Ch", 4: "Pa", 5: "Ju", 6: "Sh", 7: "Ya" };
@@ -243,6 +282,82 @@ export const doctors = pgTable(
     updatedBy: varchar("updated_by"),
   },
   (t) => ({ departmentIdx: index("IDX_doctors_department").on(t.departmentId) }),
+);
+
+/** The service catalogue (TZ §4.1.5, B2.6). Lab tests stay in `tests`. */
+export const services = pgTable(
+  "services",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    kind: text("kind").notNull().default("konsultatsiya"),
+    /** Which department provides it; null for clinic-wide services. */
+    departmentId: varchar("department_id"),
+    price: money("price").notNull().default(0),
+    /** How long it takes, when that matters for scheduling. */
+    durationMinutes: integer("duration_minutes"),
+    description: text("description"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+  },
+  (t) => ({ departmentIdx: index("IDX_services_department").on(t.departmentId) }),
+);
+
+/**
+ * Appointments and the queue (TZ §4.1.4, §10 `appointments`; B2.7).
+ *
+ * Times are the clinic's wall clock — a calendar day and "HH:MM" — exactly as
+ * the doctor's weekly timetable is written. A timestamp would have to guess a
+ * time zone; "Tuesday 09:20 with Dr. X" means the same on every server.
+ *
+ * Never deleted: a booking that did not happen is cancelled (with a reason)
+ * or marked as a no-show, and stays in the patient's history.
+ */
+export const appointments = pgTable(
+  "appointments",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    patientId: varchar("patient_id").notNull(),
+    doctorId: varchar("doctor_id").notNull(),
+    serviceId: varchar("service_id"),
+    /** Set when the patient arrives: the day's visit (B2.5) this belongs to. */
+    visitId: varchar("visit_id"),
+    /** YYYY-MM-DD, clinic calendar. */
+    date: text("date").notNull(),
+    /** HH:MM, clinic wall clock. */
+    startTime: text("start_time").notNull(),
+    durationMinutes: integer("duration_minutes").notNull(),
+    /** The ticket number: per doctor, per day, in order of booking. */
+    queueNumber: integer("queue_number").notNull(),
+    status: text("status").notNull().default("scheduled"),
+    /** Price at booking time — a later price change does not rewrite it. */
+    price: money("price").notNull().default(0),
+    /** Why the patient is coming, as told to the registrar. */
+    reason: text("reason"),
+    arrivedAt: isoTimestamp("arrived_at"),
+    startedAt: isoTimestamp("started_at"),
+    completedAt: isoTimestamp("completed_at"),
+    cancelledAt: isoTimestamp("cancelled_at"),
+    cancelledBy: varchar("cancelled_by"),
+    cancelReason: text("cancel_reason"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+  },
+  (t) => ({
+    dayIdx: index("IDX_appointments_date_doctor").on(t.date, t.doctorId),
+    patientIdx: index("IDX_appointments_patient").on(t.patientId),
+    queueIdx: uniqueIndex("UQ_appointments_queue").on(t.doctorId, t.date, t.queueNumber),
+    // One live booking per doctor per start time — the database is the last
+    // word when two registrars take the same slot at the same moment.
+    slotIdx: uniqueIndex("UQ_appointments_slot")
+      .on(t.doctorId, t.date, t.startTime)
+      .where(sql`status NOT IN ('cancelled', 'no_show')`),
+  }),
 );
 
 export const patients = pgTable("patients", {
@@ -591,6 +706,8 @@ export type PatientCardVisit = {
   key: string;
   date: string;
   orders: OrderWithDetails[];
+  /** Doctor appointments the patient attended that day (B2.7). */
+  appointments: AppointmentWithDetails[];
   billed: number;
   paid: number;
 };
@@ -635,6 +752,69 @@ export type DoctorWithDetails = Doctor & {
   username: string;
   userActive: boolean;
   departmentName: string | null;
+};
+
+export type Service = Omit<typeof services.$inferSelect, "kind"> & { kind: ServiceKind };
+export type ServiceWithDetails = Service & { departmentName: string | null; appointmentCount: number };
+
+/** One line of the clinic price list (TZ §9.1 "Xizmatlar narxlari"): a service or a lab test. */
+export type PriceListItem = {
+  source: "service" | "test";
+  id: string;
+  name: string;
+  kind: PriceListKind;
+  /** Department for services, lab category for tests. */
+  group: string | null;
+  price: number;
+  isActive: boolean;
+};
+
+export type Appointment = Omit<typeof appointments.$inferSelect, "status"> & { status: AppointmentStatus };
+
+/** An appointment with the names every screen shows next to it. */
+export type AppointmentWithDetails = Appointment & {
+  patientNumber: number;
+  patientName: string;
+  patientPhone: string;
+  patientBirthDate: string | null;
+  patientAge: number | null;
+  patientGender: string | null;
+  doctorName: string;
+  doctorUserId: string;
+  specialty: string;
+  room: string | null;
+  departmentName: string | null;
+  serviceName: string | null;
+};
+
+/** One cell of the booking grid. */
+export type AppointmentSlot = {
+  startTime: string;
+  endTime: string;
+  /** Free to book: inside the timetable, not taken, not already over. */
+  available: boolean;
+  /** Why not, when it is not. */
+  reason?: "taken" | "past";
+  /** The booking holding it, for the registrar's tooltip. */
+  takenBy?: { appointmentId: string; patientName: string; queueNumber: number };
+};
+
+export type DoctorDaySlots = {
+  doctorId: string;
+  date: string;
+  /** False when the doctor does not work that weekday (or the profile is paused). */
+  works: boolean;
+  slotMinutes: number;
+  slots: AppointmentSlot[];
+};
+
+/** The doctor's cabinet for one day (TZ §5.1.1). */
+export type DoctorCabinet = {
+  doctor: DoctorWithDetails;
+  date: string;
+  appointments: AppointmentWithDetails[];
+  /** Started on an earlier day and never finished. */
+  unfinished: AppointmentWithDetails[];
 };
 
 export type Test = typeof tests.$inferSelect;
@@ -1085,6 +1265,73 @@ export type InsertDepartment = z.infer<typeof insertDepartmentSchema>;
 export type UpdateDepartmentInput = z.infer<typeof updateDepartmentSchema>;
 export type InsertDoctor = z.infer<typeof insertDoctorSchema>;
 export type UpdateDoctorInput = z.infer<typeof updateDoctorSchema>;
+
+export const insertServiceSchema = z.object({
+  name: z.string().trim().min(2, "Xizmat nomini kiriting").max(120, "Nom juda uzun"),
+  kind: z.enum(SERVICE_KINDS, { errorMap: () => ({ message: "Xizmat turini tanlang" }) }),
+  departmentId: z
+    .string()
+    .min(1)
+    .nullish()
+    .transform((v) => v || null),
+  price: z.coerce.number().int("Narx butun son bo'lishi kerak").min(0, "Narx manfiy bo'lmasligi kerak").max(100_000_000, "Narx juda katta"),
+  durationMinutes: z.coerce
+    .number()
+    .int()
+    .min(5, "Kamida 5 daqiqa")
+    .max(480, "Ko'pi bilan 8 soat")
+    .nullish()
+    .transform((v) => v ?? null),
+  description: z
+    .string()
+    .trim()
+    .max(300, "Tavsif juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+  isActive: z.boolean().default(true),
+});
+export const updateServiceSchema = insertServiceSchema.partial();
+export type InsertService = z.infer<typeof insertServiceSchema>;
+export type UpdateServiceInput = z.infer<typeof updateServiceSchema>;
+
+const dayString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Sanani YYYY-MM-DD ko'rinishida kiriting");
+
+export const createAppointmentSchema = z.object({
+  patientId: z.string().min(1, "Bemorni tanlang"),
+  doctorId: z.string().min(1, "Shifokorni tanlang"),
+  serviceId: z
+    .string()
+    .min(1)
+    .nullish()
+    .transform((v) => v || null),
+  date: dayString,
+  startTime: timeOfDay,
+  reason: z
+    .string()
+    .trim()
+    .max(300, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+});
+export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
+
+/** Moving a booking: another day, time, doctor or service. Only while it is still "yozildi". */
+export const rescheduleAppointmentSchema = createAppointmentSchema.omit({ patientId: true }).partial().refine(
+  (v) => Object.values(v).some((x) => x !== undefined),
+  "O'zgartirish uchun ma'lumot yo'q",
+);
+export type RescheduleAppointmentInput = z.infer<typeof rescheduleAppointmentSchema>;
+
+export const appointmentStatusSchema = z.object({
+  status: z.enum(APPOINTMENT_STATUSES),
+  reason: z
+    .string()
+    .trim()
+    .max(300, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+});
+export type AppointmentStatusInput = z.infer<typeof appointmentStatusSchema>;
 
 /**
  * Session policy (TZ §12: "faol bo'lmagan seanslarni yopish").

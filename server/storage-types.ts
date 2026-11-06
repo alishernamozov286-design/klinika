@@ -48,6 +48,14 @@ import type {
   UpdateUserInput,
   User,
   UserMfa,
+  Appointment,
+  AppointmentStatus,
+  AppointmentWithDetails,
+  CreateAppointmentInput,
+  InsertService,
+  Service,
+  ServiceWithDetails,
+  UpdateServiceInput,
 } from "@shared/schema";
 
 /** Local (not UTC) calendar day — the lab's own day is what reports count. */
@@ -127,6 +135,43 @@ export function resolveFlag(
 /** Who is performing the write — carried into payments, expenses and the log. */
 export type Actor = { id: string | null; name: string };
 
+/**
+ * A write refused because of what is already in the database — a slot taken
+ * a moment ago, a status someone else just changed. Routes answer it with 409.
+ */
+export class StorageConflict extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StorageConflict";
+  }
+}
+
+export type AppointmentQuery = {
+  /** One day (YYYY-MM-DD). */
+  date?: string;
+  /** Strictly before this day — the cabinet's "never finished" list. */
+  beforeDate?: string;
+  doctorId?: string;
+  patientId?: string;
+  statuses?: AppointmentStatus[];
+  limit?: number;
+};
+
+/** What the storage layer needs to place a booking; the route has already priced it. */
+export type NewAppointment = CreateAppointmentInput & { durationMinutes: number; price: number };
+
+/**
+ * Re-checked inside the write, under a per-doctor-per-day lock, against the
+ * doctor's bookings for that day. Returns why the booking cannot be made.
+ */
+export type BookingCheck = (dayBookings: Appointment[]) => string | null;
+
+export type AppointmentStatusChange = {
+  from: AppointmentStatus;
+  to: AppointmentStatus;
+  reason?: string | null;
+};
+
 export type ExpenseQuery = {
   from?: string;
   to?: string;
@@ -184,18 +229,32 @@ export const SEED_USERS: { username: string; password: string; fullName: string;
  * back to their local day, so history before the visits table still reads as
  * one entry per day.
  */
+/** An appointment the patient actually came to — the ones that make a visit. */
+export const ATTENDED_STATUSES: readonly AppointmentStatus[] = ["arrived", "in_progress", "completed"];
+
 export function buildPatientCard(
   patient: PatientDetails,
   orderList: OrderWithDetails[],
   visitList: Visit[],
   payments: (Payment & { orderNumber: number })[],
+  appointmentList: AppointmentWithDetails[] = [],
 ): PatientCard {
   const visitDate = new Map(visitList.map((v) => [v.id, v.visitDate]));
   const groups = new Map<string, PatientCardVisit>();
+  // A day with a doctor's appointment is a visit even without a lab order;
+  // with one, both land on the same visit (the check-in shares it).
+  const attended = appointmentList.filter((a) => ATTENDED_STATUSES.includes(a.status));
+  for (const a of attended) {
+    const key = a.visitId ?? `day:${a.date}`;
+    const date = (a.visitId && visitDate.get(a.visitId)) || a.date;
+    const g = groups.get(key) ?? { key, date, orders: [], appointments: [], billed: 0, paid: 0 };
+    g.appointments.push(a);
+    groups.set(key, g);
+  }
   for (const order of orderList) {
     const key = order.visitId ?? `day:${localDay(order.createdAt)}`;
     const date = (order.visitId && visitDate.get(order.visitId)) || localDay(order.createdAt);
-    const g = groups.get(key) ?? { key, date, orders: [], billed: 0, paid: 0 };
+    const g = groups.get(key) ?? { key, date, orders: [], appointments: [], billed: 0, paid: 0 };
     g.orders.push(order);
     if (order.status !== "cancelled") {
       g.billed += order.totalAmount;
@@ -204,18 +263,25 @@ export function buildPatientCard(
     groups.set(key, g);
   }
   const visits = [...groups.values()]
-    .map((g) => ({ ...g, orders: g.orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) }))
+    .map((g) => ({
+      ...g,
+      orders: g.orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      appointments: g.appointments.sort((a, b) => a.startTime.localeCompare(b.startTime)),
+    }))
     .sort((a, b) => b.date.localeCompare(a.date));
   const live = orderList.filter((o) => o.status !== "cancelled");
   const billed = live.reduce((s, o) => s + o.totalAmount, 0);
   const paid = live.reduce((s, o) => s + o.paidAmount, 0);
-  const times = orderList.map((o) => o.createdAt).sort();
+  const times = [
+    ...orderList.map((o) => o.createdAt),
+    ...attended.map((a) => a.arrivedAt ?? a.createdAt),
+  ].sort();
   return {
     patient,
     visits,
     payments: [...payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     totals: {
-      visits: visits.filter((v) => v.orders.some((o) => o.status !== "cancelled")).length,
+      visits: visits.filter((v) => v.appointments.length > 0 || v.orders.some((o) => o.status !== "cancelled")).length,
       orders: orderList.length,
       billed,
       paid,
@@ -300,6 +366,44 @@ export interface IStorage {
    */
   setLockState(userId: string, state: LockState): Promise<void>;
 
+  // --- services (B2.6, TZ §4.1.5)
+
+  listServices(opts?: { activeOnly?: boolean }): Promise<ServiceWithDetails[]>;
+  getService(id: string): Promise<Service | undefined>;
+  createService(input: InsertService, actor: Actor): Promise<ServiceWithDetails>;
+  updateService(id: string, input: UpdateServiceInput, actor: Actor): Promise<ServiceWithDetails | undefined>;
+  /** Only for a service no appointment has used; the route checks. */
+  deleteService(id: string): Promise<boolean>;
+
+  // --- appointments (B2.7, TZ §4.1.4)
+
+  listAppointments(query: AppointmentQuery): Promise<AppointmentWithDetails[]>;
+  getAppointment(id: string): Promise<AppointmentWithDetails | undefined>;
+  /**
+   * Books a slot and issues the day's next ticket number for that doctor.
+   * `check` runs under a lock with the doctor's bookings for the day; a
+   * non-null answer aborts with StorageConflict.
+   */
+  createAppointment(input: NewAppointment, actor: Actor, check: BookingCheck): Promise<AppointmentWithDetails>;
+  /**
+   * Moves a still-"scheduled" booking. A new doctor or day gets a new ticket
+   * number. StorageConflict when the slot is gone or the status moved on.
+   */
+  rescheduleAppointment(
+    id: string,
+    patch: { doctorId: string; date: string; startTime: string; durationMinutes: number; serviceId: string | null; price: number; reason: string | null },
+    actor: Actor,
+    check: BookingCheck,
+  ): Promise<AppointmentWithDetails>;
+  /**
+   * Applies one status move — only if the appointment is still in `from`, so
+   * two people pressing buttons at once cannot both win. Arrival attaches
+   * the patient's visit for today. StorageConflict when the status moved on.
+   */
+  setAppointmentStatus(id: string, change: AppointmentStatusChange, actor: Actor): Promise<AppointmentWithDetails>;
+  /** Any appointment at all — a doctor with history is deactivated, not deleted. */
+  doctorHasAppointments(doctorId: string): Promise<boolean>;
+
   // --- two-factor sign-in (B1.8, TZ §12). Secrets arrive already encrypted.
 
   /** False until `npm run db:mfa` has created the table (Postgres only). */
@@ -338,7 +442,10 @@ export interface IStorage {
    * Folds a duplicate card into the real one: its orders, contacts and
    * Telegram link move over, the empty duplicate is removed. Returns what moved.
    */
-  mergePatients(sourceId: string, targetId: string): Promise<{ orders: number; contacts: number } | undefined>;
+  mergePatients(
+    sourceId: string,
+    targetId: string,
+  ): Promise<{ orders: number; contacts: number; appointments: number } | undefined>;
   getPatient(id: string): Promise<Patient | undefined>;
   /** Matched on the 9 national digits, so formatting never blocks a match. */
   getPatientByPhone(phone: string): Promise<Patient | undefined>;

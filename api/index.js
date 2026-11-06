@@ -26,11 +26,12 @@ var init_permissions = __esm({
     "use strict";
     PERMISSION_GROUPS = [
       { key: "patients", label: "Bemorlar", description: "Bemorlar bazasi va shaxsiy kartalar" },
+      { key: "appointments", label: "Navbat va qabul", description: "Shifokor qabuliga yozish, navbat va shifokor kabineti" },
       { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
       { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
       { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
       { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
-      { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar va shifokorlar" },
+      { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar, shifokorlar va xizmatlar" },
       { key: "system", label: "Tizim", description: "Sozlamalar, xodimlar, rollar va xavfsizlik" }
     ];
     PERMISSION_GROUP_LABEL = Object.fromEntries(
@@ -57,6 +58,21 @@ var init_permissions = __esm({
         label: "O'chirish",
         description: "Bemorni bazadan butunlay o'chirish",
         sensitive: true
+      },
+      "appointments.read": {
+        group: "appointments",
+        label: "Ko'rish",
+        description: "Barcha shifokorlar navbati va qabullar jadvalini ko'rish"
+      },
+      "appointments.manage": {
+        group: "appointments",
+        label: "Qabulga yozish",
+        description: `Qabulga yozish, "keldi" deb belgilash, ko'chirish va bekor qilish`
+      },
+      "appointments.serve": {
+        group: "appointments",
+        label: "Qabul o'tkazish",
+        description: "Shifokor kabineti: o'z navbatidagi bemorni chaqirish va qabulni yakunlash"
       },
       "orders.read": {
         group: "orders",
@@ -157,6 +173,11 @@ var init_permissions = __esm({
         label: "Shifokorlar",
         description: "Shifokor profili: mutaxassislik, kabinet, qabul narxi va ish jadvali"
       },
+      "services.manage": {
+        group: "clinic",
+        label: "Xizmatlar katalogi",
+        description: "Xizmatlar (ko'rik, UZI, muolaja) va ularning narxlarini boshqarish"
+      },
       "settings.manage": {
         group: "system",
         label: "Klinika sozlamalari",
@@ -203,6 +224,8 @@ var init_permissions = __esm({
         permissions: [
           "departments.manage",
           "doctors.manage",
+          "services.manage",
+          "appointments.read",
           "patients.read",
           "orders.read",
           "orders.cancel",
@@ -222,6 +245,8 @@ var init_permissions = __esm({
           "patients.read",
           "patients.create",
           "patients.update",
+          "appointments.read",
+          "appointments.manage",
           "orders.read",
           "orders.create",
           "orders.update",
@@ -235,7 +260,7 @@ var init_permissions = __esm({
         key: "shifokor",
         name: "Shifokor",
         description: "Tibbiy karta va buyurtmalar, bemor tahlil natijalarini ko'rish",
-        permissions: ["patients.read", "orders.read"]
+        permissions: ["patients.read", "orders.read", "appointments.serve"]
       },
       {
         key: "laborant",
@@ -274,7 +299,7 @@ var init_permissions = __esm({
         key: "kassir",
         name: "Kassa xodimi",
         description: "To'lovlarni qabul qilish",
-        permissions: ["patients.read", "orders.read", "finance.view", "payments.create"]
+        permissions: ["patients.read", "appointments.read", "orders.read", "finance.view", "payments.create"]
       },
       {
         key: "buxgalter",
@@ -295,6 +320,7 @@ var init_permissions = __esm({
         description: "Ruxsat etilgan tarix va hisobotlarni faqat ko'rish",
         permissions: [
           "patients.read",
+          "appointments.read",
           "orders.read",
           "finance.view",
           "expenses.read",
@@ -398,6 +424,8 @@ var init_patient_identity = __esm({
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
+  APPOINTMENT_STATUSES: () => APPOINTMENT_STATUSES,
+  APPOINTMENT_STATUS_LABELS: () => APPOINTMENT_STATUS_LABELS,
   DEFAULT_SECURITY_SETTINGS: () => DEFAULT_SECURITY_SETTINGS,
   DEPARTMENT_KINDS: () => DEPARTMENT_KINDS,
   DEPARTMENT_KIND_LABELS: () => DEPARTMENT_KIND_LABELS,
@@ -411,14 +439,19 @@ __export(schema_exports, {
   SAMPLE_REJECT_REASONS: () => SAMPLE_REJECT_REASONS,
   SAMPLE_STATUSES: () => SAMPLE_STATUSES,
   SAMPLE_STATUS_LABELS: () => SAMPLE_STATUS_LABELS,
+  SERVICE_KINDS: () => SERVICE_KINDS,
+  SERVICE_KIND_LABELS: () => SERVICE_KIND_LABELS,
   SESSION_END_CODES: () => SESSION_END_CODES,
   WEEKDAYS: () => WEEKDAYS,
   WEEKDAY_LABELS: () => WEEKDAY_LABELS,
   WEEKDAY_SHORT: () => WEEKDAY_SHORT,
   appSettings: () => appSettings,
+  appointmentStatusSchema: () => appointmentStatusSchema,
+  appointments: () => appointments,
   auditLog: () => auditLog,
   cancelExpenseSchema: () => cancelExpenseSchema,
   changePasswordSchema: () => changePasswordSchema,
+  createAppointmentSchema: () => createAppointmentSchema,
   createOrderSchema: () => createOrderSchema,
   createPaymentSchema: () => createPaymentSchema,
   daysBetween: () => daysBetween,
@@ -431,6 +464,7 @@ __export(schema_exports, {
   insertExpenseSchema: () => insertExpenseSchema,
   insertPatientSchema: () => insertPatientSchema,
   insertRoleSchema: () => insertRoleSchema,
+  insertServiceSchema: () => insertServiceSchema,
   insertTestSchema: () => insertTestSchema,
   insertUserSchema: () => insertUserSchema,
   labSettings: () => labSettings,
@@ -448,11 +482,13 @@ __export(schema_exports, {
   patients: () => patients,
   payments: () => payments,
   previousRange: () => previousRange,
+  rescheduleAppointmentSchema: () => rescheduleAppointmentSchema,
   roles: () => roles,
   samples: () => samples,
   saveResultsSchema: () => saveResultsSchema,
   scheduleSchema: () => scheduleSchema,
   securitySettingsSchema: () => securitySettingsSchema,
+  services: () => services,
   sessions: () => sessions,
   telegramContacts: () => telegramContacts,
   tests: () => tests,
@@ -462,6 +498,7 @@ __export(schema_exports, {
   updateOrderSchema: () => updateOrderSchema,
   updateRoleSchema: () => updateRoleSchema,
   updateSampleSchema: () => updateSampleSchema,
+  updateServiceSchema: () => updateServiceSchema,
   updateUserSchema: () => updateUserSchema,
   userMfa: () => userMfa,
   users: () => users,
@@ -506,7 +543,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -561,6 +598,23 @@ var init_schema = __esm({
       laboratoriya: "Laboratoriya",
       statsionar: "Statsionar",
       boshqa: "Boshqa"
+    };
+    SERVICE_KINDS = ["konsultatsiya", "uzi", "muolaja", "boshqa"];
+    SERVICE_KIND_LABELS = {
+      konsultatsiya: "Shifokor ko'rigi",
+      laboratoriya: "Laboratoriya",
+      uzi: "UZI",
+      muolaja: "Muolaja",
+      boshqa: "Boshqa"
+    };
+    APPOINTMENT_STATUSES = ["scheduled", "arrived", "in_progress", "completed", "no_show", "cancelled"];
+    APPOINTMENT_STATUS_LABELS = {
+      scheduled: "Yozildi",
+      arrived: "Keldi",
+      in_progress: "Qabulda",
+      completed: "Yakunlandi",
+      no_show: "Kelmadi",
+      cancelled: "Bekor qilindi"
     };
     WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
     WEEKDAY_SHORT = { 1: "Du", 2: "Se", 3: "Ch", 4: "Pa", 5: "Ju", 6: "Sh", 7: "Ya" };
@@ -644,6 +698,67 @@ var init_schema = __esm({
         updatedBy: varchar("updated_by")
       },
       (t) => ({ departmentIdx: index("IDX_doctors_department").on(t.departmentId) })
+    );
+    services = pgTable(
+      "services",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        name: text("name").notNull(),
+        kind: text("kind").notNull().default("konsultatsiya"),
+        /** Which department provides it; null for clinic-wide services. */
+        departmentId: varchar("department_id"),
+        price: money("price").notNull().default(0),
+        /** How long it takes, when that matters for scheduling. */
+        durationMinutes: integer("duration_minutes"),
+        description: text("description"),
+        isActive: boolean("is_active").notNull().default(true),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by")
+      },
+      (t) => ({ departmentIdx: index("IDX_services_department").on(t.departmentId) })
+    );
+    appointments = pgTable(
+      "appointments",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        patientId: varchar("patient_id").notNull(),
+        doctorId: varchar("doctor_id").notNull(),
+        serviceId: varchar("service_id"),
+        /** Set when the patient arrives: the day's visit (B2.5) this belongs to. */
+        visitId: varchar("visit_id"),
+        /** YYYY-MM-DD, clinic calendar. */
+        date: text("date").notNull(),
+        /** HH:MM, clinic wall clock. */
+        startTime: text("start_time").notNull(),
+        durationMinutes: integer("duration_minutes").notNull(),
+        /** The ticket number: per doctor, per day, in order of booking. */
+        queueNumber: integer("queue_number").notNull(),
+        status: text("status").notNull().default("scheduled"),
+        /** Price at booking time — a later price change does not rewrite it. */
+        price: money("price").notNull().default(0),
+        /** Why the patient is coming, as told to the registrar. */
+        reason: text("reason"),
+        arrivedAt: isoTimestamp("arrived_at"),
+        startedAt: isoTimestamp("started_at"),
+        completedAt: isoTimestamp("completed_at"),
+        cancelledAt: isoTimestamp("cancelled_at"),
+        cancelledBy: varchar("cancelled_by"),
+        cancelReason: text("cancel_reason"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by")
+      },
+      (t) => ({
+        dayIdx: index("IDX_appointments_date_doctor").on(t.date, t.doctorId),
+        patientIdx: index("IDX_appointments_patient").on(t.patientId),
+        queueIdx: uniqueIndex("UQ_appointments_queue").on(t.doctorId, t.date, t.queueNumber),
+        // One live booking per doctor per start time — the database is the last
+        // word when two registrars take the same slot at the same moment.
+        slotIdx: uniqueIndex("UQ_appointments_slot").on(t.doctorId, t.date, t.startTime).where(sql`status NOT IN ('cancelled', 'no_show')`)
+      })
     );
     patients = pgTable("patients", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1029,6 +1144,33 @@ var init_schema = __esm({
       isActive: z.boolean().default(true)
     });
     updateDoctorSchema = insertDoctorSchema.omit({ userId: true }).partial();
+    insertServiceSchema = z.object({
+      name: z.string().trim().min(2, "Xizmat nomini kiriting").max(120, "Nom juda uzun"),
+      kind: z.enum(SERVICE_KINDS, { errorMap: () => ({ message: "Xizmat turini tanlang" }) }),
+      departmentId: z.string().min(1).nullish().transform((v) => v || null),
+      price: z.coerce.number().int("Narx butun son bo'lishi kerak").min(0, "Narx manfiy bo'lmasligi kerak").max(1e8, "Narx juda katta"),
+      durationMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(480, "Ko'pi bilan 8 soat").nullish().transform((v) => v ?? null),
+      description: z.string().trim().max(300, "Tavsif juda uzun").nullish().transform((v) => v || null),
+      isActive: z.boolean().default(true)
+    });
+    updateServiceSchema = insertServiceSchema.partial();
+    dayString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Sanani YYYY-MM-DD ko'rinishida kiriting");
+    createAppointmentSchema = z.object({
+      patientId: z.string().min(1, "Bemorni tanlang"),
+      doctorId: z.string().min(1, "Shifokorni tanlang"),
+      serviceId: z.string().min(1).nullish().transform((v) => v || null),
+      date: dayString,
+      startTime: timeOfDay,
+      reason: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    rescheduleAppointmentSchema = createAppointmentSchema.omit({ patientId: true }).partial().refine(
+      (v) => Object.values(v).some((x) => x !== void 0),
+      "O'zgartirish uchun ma'lumot yo'q"
+    );
+    appointmentStatusSchema = z.object({
+      status: z.enum(APPOINTMENT_STATUSES),
+      reason: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null)
+    });
     securitySettingsSchema = z.object({
       sessionIdleMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(480, "Ko'pi bilan 8 soat"),
       sessionMaxHours: z.coerce.number().int().min(1, "Kamida 1 soat").max(168, "Ko'pi bilan 7 kun"),
@@ -1165,13 +1307,21 @@ function resolveFlag(incoming, line, gender) {
   if (incoming.flag) return incoming.flag;
   return computeFlag(incoming.result, line.referenceRange, { gender });
 }
-function buildPatientCard(patient, orderList, visitList, payments2) {
+function buildPatientCard(patient, orderList, visitList, payments2, appointmentList = []) {
   const visitDate = new Map(visitList.map((v) => [v.id, v.visitDate]));
   const groups = /* @__PURE__ */ new Map();
+  const attended = appointmentList.filter((a) => ATTENDED_STATUSES.includes(a.status));
+  for (const a of attended) {
+    const key = a.visitId ?? `day:${a.date}`;
+    const date = a.visitId && visitDate.get(a.visitId) || a.date;
+    const g = groups.get(key) ?? { key, date, orders: [], appointments: [], billed: 0, paid: 0 };
+    g.appointments.push(a);
+    groups.set(key, g);
+  }
   for (const order of orderList) {
     const key = order.visitId ?? `day:${localDay(order.createdAt)}`;
     const date = order.visitId && visitDate.get(order.visitId) || localDay(order.createdAt);
-    const g = groups.get(key) ?? { key, date, orders: [], billed: 0, paid: 0 };
+    const g = groups.get(key) ?? { key, date, orders: [], appointments: [], billed: 0, paid: 0 };
     g.orders.push(order);
     if (order.status !== "cancelled") {
       g.billed += order.totalAmount;
@@ -1179,17 +1329,24 @@ function buildPatientCard(patient, orderList, visitList, payments2) {
     }
     groups.set(key, g);
   }
-  const visits2 = [...groups.values()].map((g) => ({ ...g, orders: g.orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) })).sort((a, b) => b.date.localeCompare(a.date));
+  const visits2 = [...groups.values()].map((g) => ({
+    ...g,
+    orders: g.orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    appointments: g.appointments.sort((a, b) => a.startTime.localeCompare(b.startTime))
+  })).sort((a, b) => b.date.localeCompare(a.date));
   const live = orderList.filter((o) => o.status !== "cancelled");
   const billed = live.reduce((s, o) => s + o.totalAmount, 0);
   const paid = live.reduce((s, o) => s + o.paidAmount, 0);
-  const times = orderList.map((o) => o.createdAt).sort();
+  const times = [
+    ...orderList.map((o) => o.createdAt),
+    ...attended.map((a) => a.arrivedAt ?? a.createdAt)
+  ].sort();
   return {
     patient,
     visits: visits2,
     payments: [...payments2].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     totals: {
-      visits: visits2.filter((v) => v.orders.some((o) => o.status !== "cancelled")).length,
+      visits: visits2.filter((v) => v.appointments.length > 0 || v.orders.some((o) => o.status !== "cancelled")).length,
       orders: orderList.length,
       billed,
       paid,
@@ -1209,12 +1366,18 @@ function sortRoles(list) {
   };
   return [...list].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
-var DEFAULT_SETTINGS, SEED_USERS;
+var StorageConflict, DEFAULT_SETTINGS, SEED_USERS, ATTENDED_STATUSES;
 var init_storage_types = __esm({
   "server/storage-types.ts"() {
     "use strict";
     init_reference_range();
     init_permissions();
+    StorageConflict = class extends Error {
+      constructor(message) {
+        super(message);
+        this.name = "StorageConflict";
+      }
+    };
     DEFAULT_SETTINGS = {
       id: "default",
       labName: "MedLab",
@@ -1230,6 +1393,7 @@ var init_storage_types = __esm({
       // A two-word job title would come out as "Salom, administratori".
       { username: "admin", password: "admin123", fullName: "Administrator", role: SUPER_ADMIN }
     ];
+    ATTENDED_STATUSES = ["arrived", "in_progress", "completed"];
   }
 });
 
@@ -1557,6 +1721,132 @@ var init_sample = __esm({
   }
 });
 
+// shared/appointment.ts
+function weekdayOf(date) {
+  const d = (/* @__PURE__ */ new Date(`${date}T00:00:00Z`)).getUTCDay();
+  return d === 0 ? 7 : d;
+}
+function daysBetween2(from, to) {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5);
+}
+function isValidDay(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const d = /* @__PURE__ */ new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === date;
+}
+function clockNow(now = /* @__PURE__ */ new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return {
+    date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+    minutes: now.getHours() * 60 + now.getMinutes()
+  };
+}
+function slotStarts(schedule, slotMinutes, date) {
+  if (slotMinutes <= 0) return [];
+  const day = weekdayOf(date);
+  const starts = [];
+  for (const w of schedule.filter((s) => s.day === day).sort((a, b) => a.start.localeCompare(b.start))) {
+    const end = toMinutes(w.end);
+    for (let t = toMinutes(w.start); t + slotMinutes <= end; t += slotMinutes) starts.push(fromMinutes(t));
+  }
+  return starts;
+}
+function overlaps(aStart, aLen, bStart, bLen) {
+  const a = toMinutes(aStart);
+  const b = toMinutes(bStart);
+  return a < b + bLen && b < a + aLen;
+}
+function findClash(bookings, startTime, durationMinutes, ignoreId) {
+  return bookings.find(
+    (b) => b.id !== ignoreId && holdsSlot(b.status) && overlaps(b.startTime, b.durationMinutes, startTime, durationMinutes)
+  );
+}
+function buildSlots(starts, slotMinutes, bookings, date, now) {
+  return starts.map((startTime) => {
+    const endTime = fromMinutes(toMinutes(startTime) + slotMinutes);
+    const clash = findClash(bookings, startTime, slotMinutes);
+    if (clash) {
+      return {
+        startTime,
+        endTime,
+        available: false,
+        reason: "taken",
+        takenBy: clash.patientName ? { appointmentId: clash.id, patientName: clash.patientName, queueNumber: clash.queueNumber ?? 0 } : void 0
+      };
+    }
+    const past = date < now.date || date === now.date && toMinutes(endTime) <= now.minutes;
+    return past ? { startTime, endTime, available: false, reason: "past" } : { startTime, endTime, available: true };
+  });
+}
+function bookingProblem(opts) {
+  const { date, startTime, slotMinutes, starts, bookings, now } = opts;
+  if (!isValidDay(date)) return "Sana noto'g'ri";
+  if (date < now.date) return "O'tgan kunga yozib bo'lmaydi";
+  if (daysBetween2(now.date, date) > MAX_BOOKING_DAYS_AHEAD) {
+    return `${MAX_BOOKING_DAYS_AHEAD} kundan uzoq muddatga yozib bo'lmaydi`;
+  }
+  if (starts.length === 0) return "Shifokor bu kuni qabul qilmaydi";
+  if (!starts.includes(startTime)) return "Bu vaqt shifokorning ish jadvaliga to'g'ri kelmaydi";
+  if (date === now.date && toMinutes(startTime) + slotMinutes <= now.minutes) return "Bu vaqt allaqachon o'tib ketgan";
+  const clash = findClash(bookings, startTime, slotMinutes, opts.ignoreId);
+  if (clash) return `Bu vaqt band${clash.queueNumber ? ` (navbat \u2116${clash.queueNumber})` : ""}`;
+  return null;
+}
+function nextQueueNumber(existing) {
+  return existing.reduce((max, n) => Math.max(max, n), 0) + 1;
+}
+function checkTransition(from, to, who) {
+  if (from === to) return { ok: false, status: 400, message: "Qabul allaqachon shu holatda" };
+  const actor = TRANSITIONS2[from][to];
+  if (!actor) return { ok: false, status: 400, message: TRANSITION_REFUSALS[from] ?? "Bu holatga o'tkazib bo'lmaydi" };
+  const allowed = actor === "desk" ? who.desk : actor === "doctor" ? who.ownDoctor : who.desk || who.ownDoctor;
+  if (!allowed) {
+    return {
+      ok: false,
+      status: 403,
+      message: actor === "doctor" ? "Bu amalni faqat qabul qiluvchi shifokor bajaradi" : "Bu amal uchun ruxsatingiz yo'q"
+    };
+  }
+  return { ok: true };
+}
+function nextInLine(list) {
+  return list.filter((a) => a.status === "arrived").sort((a, b) => a.startTime.localeCompare(b.startTime) || a.queueNumber - b.queueNumber)[0];
+}
+var ACTIVE_STATUSES, holdsSlot, MAX_BOOKING_DAYS_AHEAD, toMinutes, fromMinutes, TRANSITIONS2, TRANSITION_REFUSALS, needsReason;
+var init_appointment = __esm({
+  "shared/appointment.ts"() {
+    "use strict";
+    ACTIVE_STATUSES = ["scheduled", "arrived", "in_progress", "completed"];
+    holdsSlot = (status) => ACTIVE_STATUSES.includes(status);
+    MAX_BOOKING_DAYS_AHEAD = 90;
+    toMinutes = (hhmm) => {
+      const [h, m] = hhmm.split(":").map(Number);
+      return h * 60 + m;
+    };
+    fromMinutes = (total) => {
+      const h = Math.floor(total / 60);
+      const m = total % 60;
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    };
+    TRANSITIONS2 = {
+      scheduled: { arrived: "desk", cancelled: "desk", no_show: "either" },
+      // Back to "scheduled" undoes a check-in made by mistake.
+      arrived: { in_progress: "doctor", scheduled: "desk", cancelled: "desk", no_show: "either" },
+      // Back to "arrived": the doctor called the wrong patient, or sends them for a test first.
+      in_progress: { completed: "doctor", arrived: "doctor" },
+      // A late patient who turns up after all.
+      no_show: { arrived: "desk" },
+      completed: {},
+      cancelled: {}
+    };
+    TRANSITION_REFUSALS = {
+      completed: "Yakunlangan qabulni o'zgartirib bo'lmaydi",
+      cancelled: "Bekor qilingan qabulni o'zgartirib bo'lmaydi. Yangi qabulga yozing"
+    };
+    needsReason = (to) => to === "cancelled";
+  }
+});
+
 // server/db-pg.ts
 var db_pg_exports = {};
 __export(db_pg_exports, {
@@ -1610,13 +1900,15 @@ import { and, asc, desc, eq, gte, inArray, lte, or, sql as sql2 } from "drizzle-
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapExpense, mapDepartment, doctorSelect, mapDoctor, PgStorage;
+var iso, mapUser, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, lockDoctorDay, appointmentsTableExists, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
     init_tests_data();
     init_schema();
     init_sample();
+    init_appointment();
+    init_patient_identity();
     init_db_pg();
     init_password();
     init_permissions();
@@ -1685,6 +1977,57 @@ var init_storage_pg = __esm({
       userActive: users.isActive,
       departmentName: departments.name
     }).from(doctors).leftJoin(users, eq(users.id, doctors.userId)).leftJoin(departments, eq(departments.id, doctors.departmentId));
+    mapService = (row) => ({
+      ...row,
+      kind: row.kind,
+      createdAt: iso(row.createdAt) ?? row.createdAt,
+      updatedAt: iso(row.updatedAt)
+    });
+    mapAppointment = (row) => ({
+      ...row,
+      status: row.status,
+      arrivedAt: iso(row.arrivedAt),
+      startedAt: iso(row.startedAt),
+      completedAt: iso(row.completedAt),
+      cancelledAt: iso(row.cancelledAt),
+      createdAt: iso(row.createdAt) ?? row.createdAt,
+      updatedAt: iso(row.updatedAt)
+    });
+    appointmentSelect = () => db.select({
+      a: appointments,
+      patientNumber: patients.patientNumber,
+      patientName: patients.fullName,
+      patientPhone: patients.phone,
+      patientBirthDate: patients.birthDate,
+      patientAgeRaw: patients.age,
+      patientGender: patients.gender,
+      doctorName: users.fullName,
+      doctorUserId: doctors.userId,
+      specialty: doctors.specialty,
+      room: doctors.room,
+      departmentName: departments.name,
+      serviceName: services.name
+    }).from(appointments).leftJoin(patients, eq(patients.id, appointments.patientId)).leftJoin(doctors, eq(doctors.id, appointments.doctorId)).leftJoin(users, eq(users.id, doctors.userId)).leftJoin(departments, eq(departments.id, doctors.departmentId)).leftJoin(services, eq(services.id, appointments.serviceId));
+    mapAppointmentRow = (r) => ({
+      ...mapAppointment(r.a),
+      patientNumber: r.patientNumber ?? 0,
+      patientName: r.patientName ?? "\u2014",
+      patientPhone: r.patientPhone ?? "",
+      patientBirthDate: r.patientBirthDate ?? null,
+      patientAge: patientAge({ birthDate: r.patientBirthDate, age: r.patientAgeRaw }),
+      patientGender: r.patientGender ?? null,
+      doctorName: r.doctorName ?? "\u2014",
+      doctorUserId: r.doctorUserId ?? "",
+      specialty: r.specialty ?? "",
+      room: r.room ?? null,
+      departmentName: r.departmentName ?? null,
+      serviceName: r.serviceName ?? null
+    });
+    lockDoctorDay = (tx, doctorId, date) => tx.execute(sql2`SELECT pg_advisory_xact_lock(hashtext(${`appointments:${doctorId}:${date}`}))`);
+    appointmentsTableExists = async (tx) => {
+      const { rows } = await tx.execute(sql2`SELECT to_regclass('public.appointments') IS NOT NULL AS ok`);
+      return Boolean(rows[0]?.ok);
+    };
     mapDoctor = (row) => ({
       ...row.doctor,
       schedule: row.doctor.schedule ?? [],
@@ -1879,6 +2222,174 @@ var init_storage_pg = __esm({
         const rows = await db.delete(doctors).where(eq(doctors.id, id)).returning({ id: doctors.id });
         return rows.length > 0;
       }
+      // ------------------------------------------------------------- services
+      async listServices(opts = {}) {
+        const rows = await db.select({
+          service: services,
+          departmentName: departments.name,
+          appointmentCount: sql2`(SELECT count(*)::int FROM appointments ap WHERE ap.service_id = "services"."id")`
+        }).from(services).leftJoin(departments, eq(departments.id, services.departmentId)).where(opts.activeOnly ? eq(services.isActive, true) : void 0).orderBy(desc(services.isActive), asc(services.kind), asc(services.name)).catch(async (err) => {
+          if (!isMissingTable(err) || !await this.servicesTableExists()) throw err;
+          const plain = await db.select({ service: services, departmentName: departments.name }).from(services).leftJoin(departments, eq(departments.id, services.departmentId)).where(opts.activeOnly ? eq(services.isActive, true) : void 0).orderBy(desc(services.isActive), asc(services.kind), asc(services.name));
+          return plain.map((r) => ({ ...r, appointmentCount: 0 }));
+        });
+        return rows.map((r) => ({
+          ...mapService(r.service),
+          departmentName: r.departmentName ?? null,
+          appointmentCount: r.appointmentCount ?? 0
+        }));
+      }
+      async servicesTableExists() {
+        const { rows } = await db.execute(sql2`SELECT to_regclass('public.services') IS NOT NULL AS ok`);
+        return Boolean(rows[0]?.ok);
+      }
+      async getService(id) {
+        const [row] = await db.select().from(services).where(eq(services.id, id)).limit(1);
+        return row && mapService(row);
+      }
+      async serviceDetails(id) {
+        return (await this.listServices()).find((x) => x.id === id);
+      }
+      async createService(input, actor) {
+        const [row] = await db.insert(services).values({
+          name: input.name,
+          kind: input.kind,
+          departmentId: input.departmentId ?? null,
+          price: input.price,
+          durationMinutes: input.durationMinutes ?? null,
+          description: input.description ?? null,
+          isActive: input.isActive ?? true,
+          createdBy: actor.id
+        }).returning({ id: services.id });
+        return await this.serviceDetails(row.id);
+      }
+      async updateService(id, input, actor) {
+        const patch = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id };
+        if (input.name !== void 0) patch.name = input.name;
+        if (input.kind !== void 0) patch.kind = input.kind;
+        if (input.departmentId !== void 0) patch.departmentId = input.departmentId ?? null;
+        if (input.price !== void 0) patch.price = input.price;
+        if (input.durationMinutes !== void 0) patch.durationMinutes = input.durationMinutes ?? null;
+        if (input.description !== void 0) patch.description = input.description ?? null;
+        if (input.isActive !== void 0) patch.isActive = input.isActive;
+        const rows = await db.update(services).set(patch).where(eq(services.id, id)).returning({ id: services.id });
+        return rows.length ? this.serviceDetails(id) : void 0;
+      }
+      async deleteService(id) {
+        const rows = await db.delete(services).where(eq(services.id, id)).returning({ id: services.id });
+        return rows.length > 0;
+      }
+      // --------------------------------------------------------- appointments
+      async listAppointments(q) {
+        const where = [];
+        if (q.date) where.push(eq(appointments.date, q.date));
+        if (q.beforeDate) where.push(sql2`${appointments.date} < ${q.beforeDate}`);
+        if (q.doctorId) where.push(eq(appointments.doctorId, q.doctorId));
+        if (q.patientId) where.push(eq(appointments.patientId, q.patientId));
+        if (q.statuses?.length) where.push(inArray(appointments.status, q.statuses));
+        const rows = await appointmentSelect().where(where.length ? and(...where) : void 0).orderBy(
+          ...q.patientId ? [desc(appointments.date), desc(appointments.startTime)] : [asc(appointments.date), asc(appointments.startTime), asc(appointments.queueNumber)]
+        ).limit(Math.min(q.limit ?? 500, 2e3));
+        return rows.map(mapAppointmentRow);
+      }
+      async getAppointment(id) {
+        const [row] = await appointmentSelect().where(eq(appointments.id, id)).limit(1);
+        return row && mapAppointmentRow(row);
+      }
+      /** The doctor's bookings for a day, read inside the locked transaction. */
+      async dayBookings(tx, doctorId, date) {
+        const rows = await tx.select().from(appointments).where(and(eq(appointments.doctorId, doctorId), eq(appointments.date, date)));
+        return rows.map(mapAppointment);
+      }
+      async createAppointment(input, actor, check) {
+        const id = await db.transaction(async (tx) => {
+          await lockDoctorDay(tx, input.doctorId, input.date);
+          const day = await this.dayBookings(tx, input.doctorId, input.date);
+          const problem = check(day);
+          if (problem) throw new StorageConflict(problem);
+          const [row] = await tx.insert(appointments).values({
+            patientId: input.patientId,
+            doctorId: input.doctorId,
+            serviceId: input.serviceId ?? null,
+            date: input.date,
+            startTime: input.startTime,
+            durationMinutes: input.durationMinutes,
+            queueNumber: nextQueueNumber(day.map((a) => a.queueNumber)),
+            status: "scheduled",
+            price: input.price,
+            reason: input.reason ?? null,
+            createdBy: actor.id
+          }).returning({ id: appointments.id });
+          return row.id;
+        });
+        return await this.getAppointment(id);
+      }
+      async rescheduleAppointment(id, patch, actor, check) {
+        await db.transaction(async (tx) => {
+          await lockDoctorDay(tx, patch.doctorId, patch.date);
+          const [current] = await tx.select().from(appointments).where(eq(appointments.id, id)).limit(1).for("update");
+          if (!current) throw new StorageConflict("Qabul topilmadi");
+          if (current.status !== "scheduled") throw new StorageConflict(`Faqat "yozildi" holatidagi qabulni ko'chirish mumkin`);
+          const day = await this.dayBookings(tx, patch.doctorId, patch.date);
+          const problem = check(day);
+          if (problem) throw new StorageConflict(problem);
+          const sameQueue = current.doctorId === patch.doctorId && current.date === patch.date;
+          await tx.update(appointments).set({
+            doctorId: patch.doctorId,
+            date: patch.date,
+            startTime: patch.startTime,
+            durationMinutes: patch.durationMinutes,
+            serviceId: patch.serviceId,
+            price: patch.price,
+            reason: patch.reason,
+            queueNumber: sameQueue ? current.queueNumber : nextQueueNumber(day.map((a) => a.queueNumber)),
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            updatedBy: actor.id
+          }).where(eq(appointments.id, id));
+        });
+        return await this.getAppointment(id);
+      }
+      async setAppointmentStatus(id, change, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const patch = { status: change.to, updatedAt: now, updatedBy: actor.id };
+        switch (change.to) {
+          case "arrived":
+            if (change.from !== "in_progress") patch.arrivedAt = now;
+            break;
+          case "in_progress":
+            patch.startedAt = now;
+            break;
+          case "completed":
+            patch.completedAt = now;
+            break;
+          case "cancelled":
+            patch.cancelledAt = now;
+            patch.cancelledBy = actor.id;
+            patch.cancelReason = change.reason ?? null;
+            break;
+          case "scheduled":
+            patch.arrivedAt = null;
+            patch.visitId = null;
+            break;
+        }
+        const updated = await db.transaction(async (tx) => {
+          if (change.to === "arrived" && change.from !== "in_progress") {
+            const [current] = await tx.select({ patientId: appointments.patientId }).from(appointments).where(eq(appointments.id, id)).limit(1);
+            if (current) {
+              const [visit] = await tx.insert(visits).values({ patientId: current.patientId, visitDate: todayKey(), createdBy: actor.id }).onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql2`excluded.patient_id` } }).returning({ id: visits.id });
+              patch.visitId = visit.id;
+            }
+          }
+          return tx.update(appointments).set(patch).where(and(eq(appointments.id, id), eq(appointments.status, change.from))).returning({ id: appointments.id });
+        });
+        if (!updated.length) throw new StorageConflict("Qabul holati boshqa joyda o'zgartirilgan. Sahifani yangilang");
+        return await this.getAppointment(id);
+      }
+      async doctorHasAppointments(doctorId) {
+        if (!await appointmentsTableExists(db)) return false;
+        const [row] = await db.select({ id: appointments.id }).from(appointments).where(eq(appointments.doctorId, doctorId)).limit(1);
+        return Boolean(row);
+      }
       // ---------------------------------------------------------------- users
       async listUsers() {
         const rows = await db.select().from(users).orderBy(asc(users.fullName));
@@ -1979,9 +2490,9 @@ var init_storage_pg = __esm({
       }
       async consumeRecoveryCode(userId, hash) {
         const rows = await db.update(userMfa).set({
-          recoveryCodes: sql2`array_remove(${userMfa.recoveryCodes}, ${hash})`,
+          recoveryCodes: sql2`array_remove(${userMfa.recoveryCodes}, ${hash}::text)`,
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(and(eq(userMfa.userId, userId), sql2`${hash} = ANY(${userMfa.recoveryCodes})`)).returning({ userId: userMfa.userId });
+        }).where(and(eq(userMfa.userId, userId), sql2`${hash}::text = ANY(${userMfa.recoveryCodes})`)).returning({ userId: userMfa.userId });
         return rows.length > 0;
       }
       async deleteUserMfa(userId) {
@@ -2015,15 +2526,24 @@ var init_storage_pg = __esm({
           if (digits.length >= 6) parts.push(sql2`coalesce(${patients.pinfl}, '') LIKE ${"%" + digits + "%"}`);
           where = or(...parts);
         }
-        let q = db.select({
-          patient: patients,
-          lastVisitAt: sql2`(SELECT max(o.created_at) FROM ${orders} o
-          WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`,
-          // A visit is a day at the clinic, however many orders it had.
-          visitCount: sql2`(SELECT count(DISTINCT coalesce(o.visit_id,
+        const withAppointments = await this.hasAppointmentsTable();
+        const lastVisitAt = withAppointments ? sql2`(SELECT max(t) FROM (
+            SELECT o.created_at AS t FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled'
+            UNION ALL
+            SELECT ap.arrived_at FROM appointments ap WHERE ap.patient_id = "patients"."id"
+              AND ap.arrived_at IS NOT NULL AND ap.status IN ('arrived', 'in_progress', 'completed')
+          ) x)` : sql2`(SELECT max(o.created_at) FROM ${orders} o
+          WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`;
+        const visitCount = withAppointments ? sql2`(SELECT count(DISTINCT k)::int FROM (
+            SELECT coalesce(o.visit_id, ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text) AS k
+              FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled'
+            UNION ALL
+            SELECT ap.visit_id FROM appointments ap WHERE ap.patient_id = "patients"."id"
+              AND ap.visit_id IS NOT NULL AND ap.status IN ('arrived', 'in_progress', 'completed')
+          ) x)` : sql2`(SELECT count(DISTINCT coalesce(o.visit_id,
             ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
-          FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`
-        }).from(patients).where(where).orderBy(desc(patients.createdAt), desc(patients.patientNumber)).$dynamic();
+          FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`;
+        let q = db.select({ patient: patients, lastVisitAt, visitCount }).from(patients).where(where).orderBy(desc(patients.createdAt), desc(patients.patientNumber)).$dynamic();
         if (query.limit !== void 0) q = q.limit(query.limit);
         if (query.offset) q = q.offset(query.offset);
         const [rows, [{ count }]] = await Promise.all([
@@ -2047,11 +2567,12 @@ var init_storage_pg = __esm({
         return row && { ...mapPatient(row), contacts: contacts.map(mapContact) };
       }
       async getPatientCard(id) {
-        const [details, list, visitRows, paymentRows] = await Promise.all([
+        const [details, list, visitRows, paymentRows, appointmentList] = await Promise.all([
           this.getPatientDetails(id),
           this.listOrders({ patientId: id }),
           db.select().from(visits).where(eq(visits.patientId, id)),
-          db.select({ payment: payments, orderNumber: orders.orderNumber }).from(payments).innerJoin(orders, eq(orders.id, payments.orderId)).where(eq(orders.patientId, id))
+          db.select({ payment: payments, orderNumber: orders.orderNumber }).from(payments).innerJoin(orders, eq(orders.id, payments.orderId)).where(eq(orders.patientId, id)),
+          await this.hasAppointmentsTable() ? this.listAppointments({ patientId: id }) : Promise.resolve([])
         ]);
         if (!details) return void 0;
         return buildPatientCard(
@@ -2063,8 +2584,21 @@ var init_storage_pg = __esm({
             method: r.payment.method,
             createdAt: iso(r.payment.createdAt),
             orderNumber: r.orderNumber
-          }))
+          })),
+          appointmentList
         );
+      }
+      /**
+       * Whether `npm run db:appointments` has run. Queries that join appointments
+       * into older screens (patients list, patient card) pick their SQL by it, so
+       * those screens keep working on a database not migrated yet. Once true it
+       * stays true; until then it is re-checked at most once a minute.
+       */
+      appointmentsTable = { ok: false, at: 0 };
+      async hasAppointmentsTable() {
+        if (this.appointmentsTable.ok || Date.now() - this.appointmentsTable.at < 6e4) return this.appointmentsTable.ok;
+        this.appointmentsTable = { ok: await appointmentsTableExists(db), at: Date.now() };
+        return this.appointmentsTable.ok;
       }
       async findPatientCandidates(q) {
         const parts = [];
@@ -2112,6 +2646,15 @@ var init_storage_pg = __esm({
         UPDATE ${orders} o SET visit_id = tv.id
         FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
         WHERE sv.patient_id = ${sourceId} AND o.visit_id = sv.id`);
+          let movedAppointments = 0;
+          if (await appointmentsTableExists(tx)) {
+            await tx.execute(sql2`
+          UPDATE appointments ap SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND ap.visit_id = sv.id`);
+            const movedAp = await tx.update(appointments).set({ patientId: targetId }).where(eq(appointments.patientId, sourceId)).returning({ id: appointments.id });
+            movedAppointments = movedAp.length;
+          }
           await tx.execute(sql2`
         DELETE FROM ${visits} sv USING ${visits} tv
         WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
@@ -2127,7 +2670,7 @@ var init_storage_pg = __esm({
             fill.telegramLinkedAt = source.telegramLinkedAt;
           }
           if (Object.keys(fill).length) await tx.update(patients).set(fill).where(eq(patients.id, targetId));
-          return { orders: moved.length, contacts: movedContacts.length };
+          return { orders: moved.length, contacts: movedContacts.length, appointments: movedAppointments };
         });
       }
       async getPatient(id) {
@@ -2181,6 +2724,10 @@ var init_storage_pg = __esm({
         const [{ count }] = await db.select({ count: sql2`count(*)::int` }).from(orders).where(eq(orders.patientId, id));
         if (count > 0) {
           throw new Error("Bu bemorda buyurtmalar mavjud \u2014 avval buyurtmalarni o'chiring");
+        }
+        if (await appointmentsTableExists(db)) {
+          const [booked] = await db.select({ id: appointments.id }).from(appointments).where(eq(appointments.patientId, id)).limit(1);
+          if (booked) throw new Error("Bu bemorda qabullar tarixi bor \u2014 kartani o'chirib bo'lmaydi");
         }
         const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
         if (rows.length) {
@@ -2933,6 +3480,8 @@ var init_db = __esm({
       roles: [],
       departments: [],
       doctors: [],
+      services: [],
+      appointments: [],
       security: null,
       patients: [],
       patientContacts: [],
@@ -2990,6 +3539,7 @@ var init_storage_file = __esm({
     init_tests_data();
     init_schema();
     init_patient_identity();
+    init_appointment();
     init_sample();
     init_db();
     init_password();
@@ -3246,6 +3796,197 @@ var init_storage_file = __esm({
         await this.persist();
         return this.doctorDetails(doc);
       }
+      // ------------------------------------------------------------- services
+      serviceDetails(svc) {
+        const dept = svc.departmentId ? this.db.departments.find((d) => d.id === svc.departmentId) : void 0;
+        return {
+          ...svc,
+          departmentName: dept?.name ?? null,
+          appointmentCount: this.db.appointments.filter((a) => a.serviceId === svc.id).length
+        };
+      }
+      async listServices(opts = {}) {
+        return this.db.services.filter((x) => !opts.activeOnly || x.isActive).map((x) => this.serviceDetails(x)).sort(
+          (a, b) => Number(b.isActive) - Number(a.isActive) || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)
+        );
+      }
+      async getService(id) {
+        const svc = this.db.services.find((x) => x.id === id);
+        return svc && { ...svc };
+      }
+      async createService(input, actor) {
+        const svc = {
+          id: randomUUID(),
+          name: input.name,
+          kind: input.kind,
+          departmentId: input.departmentId ?? null,
+          price: input.price,
+          durationMinutes: input.durationMinutes ?? null,
+          description: input.description ?? null,
+          isActive: input.isActive ?? true,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: null
+        };
+        this.db.services.push(svc);
+        await this.persist();
+        return this.serviceDetails(svc);
+      }
+      async updateService(id, input, actor) {
+        const svc = this.db.services.find((x) => x.id === id);
+        if (!svc) return void 0;
+        if (input.name !== void 0) svc.name = input.name;
+        if (input.kind !== void 0) svc.kind = input.kind;
+        if (input.departmentId !== void 0) svc.departmentId = input.departmentId ?? null;
+        if (input.price !== void 0) svc.price = input.price;
+        if (input.durationMinutes !== void 0) svc.durationMinutes = input.durationMinutes ?? null;
+        if (input.description !== void 0) svc.description = input.description ?? null;
+        if (input.isActive !== void 0) svc.isActive = input.isActive;
+        svc.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        svc.updatedBy = actor.id;
+        await this.persist();
+        return this.serviceDetails(svc);
+      }
+      async deleteService(id) {
+        const before = this.db.services.length;
+        this.db.services = this.db.services.filter((x) => x.id !== id);
+        if (this.db.services.length === before) return false;
+        await this.persist();
+        return true;
+      }
+      // --------------------------------------------------------- appointments
+      appointmentDetails(a) {
+        const patient = this.db.patients.find((p) => p.id === a.patientId);
+        const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
+        const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : void 0;
+        const dept = doctor?.departmentId ? this.db.departments.find((d) => d.id === doctor.departmentId) : void 0;
+        const svc = a.serviceId ? this.db.services.find((x) => x.id === a.serviceId) : void 0;
+        return {
+          ...a,
+          patientNumber: patient?.patientNumber ?? 0,
+          patientName: patient?.fullName ?? "\u2014",
+          patientPhone: patient?.phone ?? "",
+          patientBirthDate: patient?.birthDate ?? null,
+          patientAge: patientAge(patient),
+          patientGender: patient?.gender ?? null,
+          doctorName: user?.fullName ?? "\u2014",
+          doctorUserId: doctor?.userId ?? "",
+          specialty: doctor?.specialty ?? "",
+          room: doctor?.room ?? null,
+          departmentName: dept?.name ?? null,
+          serviceName: svc?.name ?? null
+        };
+      }
+      async listAppointments(q) {
+        const list = this.db.appointments.filter(
+          (a) => (!q.date || a.date === q.date) && (!q.beforeDate || a.date < q.beforeDate) && (!q.doctorId || a.doctorId === q.doctorId) && (!q.patientId || a.patientId === q.patientId) && (!q.statuses?.length || q.statuses.includes(a.status))
+        );
+        list.sort(
+          (a, b) => q.patientId ? b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime) : a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime) || a.queueNumber - b.queueNumber
+        );
+        return list.slice(0, Math.min(q.limit ?? 500, 2e3)).map((a) => this.appointmentDetails(a));
+      }
+      async getAppointment(id) {
+        const a = this.db.appointments.find((x) => x.id === id);
+        return a && this.appointmentDetails(a);
+      }
+      dayBookings(doctorId, date) {
+        return this.db.appointments.filter((a) => a.doctorId === doctorId && a.date === date).map((a) => ({ ...a }));
+      }
+      async createAppointment(input, actor, check) {
+        const day = this.dayBookings(input.doctorId, input.date);
+        const problem = check(day);
+        if (problem) throw new StorageConflict(problem);
+        const a = {
+          id: randomUUID(),
+          patientId: input.patientId,
+          doctorId: input.doctorId,
+          serviceId: input.serviceId ?? null,
+          visitId: null,
+          date: input.date,
+          startTime: input.startTime,
+          durationMinutes: input.durationMinutes,
+          queueNumber: nextQueueNumber(day.map((x) => x.queueNumber)),
+          status: "scheduled",
+          price: input.price,
+          reason: input.reason ?? null,
+          arrivedAt: null,
+          startedAt: null,
+          completedAt: null,
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelReason: null,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: null
+        };
+        this.db.appointments.push(a);
+        await this.persist();
+        return this.appointmentDetails(a);
+      }
+      async rescheduleAppointment(id, patch, actor, check) {
+        const a = this.db.appointments.find((x) => x.id === id);
+        if (!a) throw new StorageConflict("Qabul topilmadi");
+        if (a.status !== "scheduled") throw new StorageConflict(`Faqat "yozildi" holatidagi qabulni ko'chirish mumkin`);
+        const day = this.dayBookings(patch.doctorId, patch.date);
+        const problem = check(day);
+        if (problem) throw new StorageConflict(problem);
+        const sameQueue = a.doctorId === patch.doctorId && a.date === patch.date;
+        Object.assign(a, {
+          doctorId: patch.doctorId,
+          date: patch.date,
+          startTime: patch.startTime,
+          durationMinutes: patch.durationMinutes,
+          serviceId: patch.serviceId,
+          price: patch.price,
+          reason: patch.reason,
+          queueNumber: sameQueue ? a.queueNumber : nextQueueNumber(day.map((x) => x.queueNumber)),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedBy: actor.id
+        });
+        await this.persist();
+        return this.appointmentDetails(a);
+      }
+      async setAppointmentStatus(id, change, actor) {
+        const a = this.db.appointments.find((x) => x.id === id);
+        if (!a || a.status !== change.from) {
+          throw new StorageConflict("Qabul holati boshqa joyda o'zgartirilgan. Sahifani yangilang");
+        }
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        switch (change.to) {
+          case "arrived":
+            if (change.from !== "in_progress") {
+              a.arrivedAt = now;
+              a.visitId = this.ensureVisit(a.patientId, todayKey(), actor.id).id;
+            }
+            break;
+          case "in_progress":
+            a.startedAt = now;
+            break;
+          case "completed":
+            a.completedAt = now;
+            break;
+          case "cancelled":
+            a.cancelledAt = now;
+            a.cancelledBy = actor.id;
+            a.cancelReason = change.reason ?? null;
+            break;
+          case "scheduled":
+            a.arrivedAt = null;
+            a.visitId = null;
+            break;
+        }
+        a.status = change.to;
+        a.updatedAt = now;
+        a.updatedBy = actor.id;
+        await this.persist();
+        return this.appointmentDetails(a);
+      }
+      async doctorHasAppointments(doctorId) {
+        return this.db.appointments.some((a) => a.doctorId === doctorId);
+      }
       async deleteDoctor(id) {
         const before = this.db.doctors.length;
         this.db.doctors = this.db.doctors.filter((d) => d.id !== id);
@@ -3361,8 +4102,15 @@ var init_storage_file = __esm({
         const limit = query.limit ?? total;
         const page = rows.slice(offset, offset + limit).map((p) => {
           const live = this.db.orders.filter((o) => o.patientId === p.id && o.status !== "cancelled");
-          const last = live.reduce((m, o) => !m || o.createdAt > m ? o.createdAt : m, null);
-          const days = new Set(live.map((o) => o.visitId ?? localDay(o.createdAt)));
+          const attended = this.db.appointments.filter(
+            (a) => a.patientId === p.id && a.arrivedAt && ATTENDED_STATUSES.includes(a.status)
+          );
+          const times = [...live.map((o) => o.createdAt), ...attended.map((a) => a.arrivedAt)];
+          const last = times.reduce((m, t) => !m || t > m ? t : m, null);
+          const days = /* @__PURE__ */ new Set([
+            ...live.map((o) => o.visitId ?? localDay(o.createdAt)),
+            ...attended.map((a) => a.visitId ?? `day:${a.date}`)
+          ]);
           return { ...p, lastVisitAt: last, visitCount: days.size };
         });
         return { items: page, total };
@@ -3384,7 +4132,7 @@ var init_storage_file = __esm({
         const numbers = new Map(items.map((o) => [o.id, o.orderNumber]));
         const payments2 = this.db.payments.filter((p) => numbers.has(p.orderId)).map((p) => ({ ...p, orderNumber: numbers.get(p.orderId) }));
         const visits2 = this.db.visits.filter((v) => v.patientId === id);
-        return buildPatientCard(details, items, visits2, payments2);
+        return buildPatientCard(details, items, visits2, payments2, await this.listAppointments({ patientId: id }));
       }
       async findPatientCandidates(q) {
         return this.db.patients.map(normalizePatient).filter((p) => p.id !== q.excludeId).filter(
@@ -3426,6 +4174,7 @@ var init_storage_file = __esm({
           const same = this.db.visits.find((x) => x.patientId === targetId && x.visitDate === v.visitDate);
           if (same) {
             for (const o of this.db.orders) if (o.visitId === v.id) o.visitId = same.id;
+            for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
             this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
           } else {
             v.patientId = targetId;
@@ -3438,9 +4187,11 @@ var init_storage_file = __esm({
           target.telegramChatId = source.telegramChatId;
           target.telegramLinkedAt = source.telegramLinkedAt;
         }
+        let appointments2 = 0;
+        for (const a of this.db.appointments) if (a.patientId === sourceId) a.patientId = targetId, appointments2++;
         this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
         await this.persist();
-        return { orders: orders2, contacts };
+        return { orders: orders2, contacts, appointments: appointments2 };
       }
       async getPatientByPhone(phone) {
         const digits = nationalPhoneDigits(phone);
@@ -3496,6 +4247,9 @@ var init_storage_file = __esm({
       async deletePatient(id) {
         if (this.db.orders.some((o) => o.patientId === id)) {
           throw new Error("Bu bemorda buyurtmalar mavjud \u2014 avval buyurtmalarni o'chiring");
+        }
+        if (this.db.appointments.some((a) => a.patientId === id)) {
+          throw new Error("Bu bemorda qabullar tarixi bor \u2014 kartani o'chirib bo'lmaydi");
         }
         const before = this.db.patients.length;
         this.db.patients = this.db.patients.filter((p) => p.id !== id);
@@ -4852,6 +5606,9 @@ function checkMfaCode(record, code, now = Date.now()) {
   return record.recoveryCodes.some((h) => sameString(h, hash)) ? { ok: true, kind: "recovery", hash } : { ok: false, reason: "invalid" };
 }
 
+// server/routes.ts
+init_storage_types();
+
 // server/telegram.ts
 init_schema();
 import { Bot, GrammyError, Keyboard, webhookCallback } from "grammy";
@@ -5120,7 +5877,7 @@ async function telegramBotInfo() {
   }
 }
 
-// server/routes.ts
+// server/route-helpers.ts
 var handle = (fn) => (req, res, next) => fn(req, res).catch(next);
 var numberParam = (value, fallback) => {
   const n = Number(value);
@@ -5137,6 +5894,387 @@ async function audit(req, action, entity, entityId, summary) {
     console.error("[audit] yozib bo'lmadi:", err);
   }
 }
+var emptyIfMissing = (err, empty) => {
+  if (err?.code === "42P01") return empty;
+  throw err;
+};
+
+// server/routes-clinic.ts
+init_schema();
+init_appointment();
+var money2 = (n) => `${n.toLocaleString("ru-RU").replace(/,/g, " ")} so'm`;
+var patientLabel = (a) => `\u2116${a.patientNumber} ${a.patientName}`;
+var when = (a) => `${a.date} ${a.startTime}`;
+async function bookableDoctor(id) {
+  const doctor = await storage.getDoctor(id);
+  if (!doctor) return { error: "Shifokor topilmadi" };
+  if (!doctor.isActive || !doctor.userActive) return { error: `${doctor.fullName} hozir qabul qilmaydi` };
+  return { doctor };
+}
+async function pickedService(id) {
+  if (!id) return { service: null };
+  const service = await storage.getService(id);
+  if (!service) return { error: "Xizmat topilmadi" };
+  if (!service.isActive) return { error: `"${service.name}" xizmati hozir ko'rsatilmaydi` };
+  return { service };
+}
+var toBookings = (list) => list.map((a) => ({
+  id: a.id,
+  startTime: a.startTime,
+  durationMinutes: a.durationMinutes,
+  status: a.status,
+  queueNumber: a.queueNumber
+}));
+function bookingCheck(opts) {
+  return (day) => {
+    const twice = day.find(
+      (a) => a.id !== opts.ignoreId && a.patientId === opts.patientId && holdsSlot(a.status) && a.status !== "completed"
+    );
+    if (twice) {
+      return `Bemor bu kuni shu shifokorga allaqachon yozilgan (${twice.startTime}, navbat \u2116${twice.queueNumber})`;
+    }
+    return bookingProblem({
+      date: opts.date,
+      startTime: opts.startTime,
+      slotMinutes: opts.doctor.slotMinutes,
+      starts: slotStarts(opts.doctor.schedule, opts.doctor.slotMinutes, opts.date),
+      bookings: toBookings(day),
+      now: clockNow(),
+      ignoreId: opts.ignoreId
+    });
+  };
+}
+var isOwnDoctor = (req, a) => hasPermission(req, "appointments.serve") && a.doctorUserId === req.user.id;
+function registerClinicRoutes(app) {
+  app.get(
+    "/api/services",
+    requireAuth,
+    handle(async (req, res) => {
+      res.json(await storage.listServices({ activeOnly: req.query.active === "1" }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/price-list",
+    requireAuth,
+    handle(async (req, res) => {
+      const activeOnly = req.query.active === "1";
+      const [svc, tests2] = await Promise.all([
+        storage.listServices({ activeOnly }).catch((e) => emptyIfMissing(e, [])),
+        storage.listTests({ activeOnly })
+      ]);
+      const items = [
+        ...svc.map((s) => ({
+          source: "service",
+          id: s.id,
+          name: s.name,
+          kind: s.kind,
+          group: s.departmentName,
+          price: s.price,
+          isActive: s.isActive
+        })),
+        ...tests2.map((t) => ({
+          source: "test",
+          id: t.id,
+          name: t.name,
+          kind: "laboratoriya",
+          group: t.category,
+          price: t.price,
+          isActive: t.isActive
+        }))
+      ];
+      res.json(items);
+    })
+  );
+  async function serviceNameTaken(name, exceptId) {
+    const key = name.trim().toLowerCase();
+    return (await storage.listServices()).some((s) => s.id !== exceptId && s.name.trim().toLowerCase() === key);
+  }
+  async function departmentProblem(id) {
+    if (!id) return null;
+    const dept = await storage.getDepartment(id);
+    if (!dept) return "Bo'lim topilmadi";
+    if (!dept.isActive) return `"${dept.name}" bo'limi yopilgan`;
+    return null;
+  }
+  app.post(
+    "/api/services",
+    requirePermission("services.manage"),
+    handle(async (req, res) => {
+      const input = insertServiceSchema.parse(req.body);
+      if (await serviceNameTaken(input.name)) return res.status(409).json({ message: "Bunday nomli xizmat allaqachon bor" });
+      const deptError = await departmentProblem(input.departmentId);
+      if (deptError) return res.status(400).json({ message: deptError });
+      const service = await storage.createService(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "service",
+        service.id,
+        `"${service.name}" xizmati qo'shildi (${SERVICE_KIND_LABELS[service.kind]}, ${money2(service.price)})`
+      );
+      res.status(201).json(service);
+    })
+  );
+  app.patch(
+    "/api/services/:id",
+    requirePermission("services.manage"),
+    handle(async (req, res) => {
+      const input = updateServiceSchema.parse(req.body);
+      const before = await storage.getService(req.params.id);
+      if (!before) return res.status(404).json({ message: "Xizmat topilmadi" });
+      if (input.name && await serviceNameTaken(input.name, before.id)) {
+        return res.status(409).json({ message: "Bunday nomli xizmat allaqachon bor" });
+      }
+      if (input.departmentId && input.departmentId !== before.departmentId) {
+        const deptError = await departmentProblem(input.departmentId);
+        if (deptError) return res.status(400).json({ message: deptError });
+      }
+      const service = await storage.updateService(before.id, input, actorOf(req));
+      if (!service) return res.status(404).json({ message: "Xizmat topilmadi" });
+      const changes = [];
+      if (input.name && input.name !== before.name) changes.push(`nomi: ${before.name} \u2192 ${service.name}`);
+      if (input.kind && input.kind !== before.kind) changes.push(`turi: ${SERVICE_KIND_LABELS[service.kind]}`);
+      if (input.price !== void 0 && input.price !== before.price) {
+        changes.push(`narx: ${money2(before.price)} \u2192 ${money2(service.price)}`);
+      }
+      if (input.departmentId !== void 0 && (input.departmentId ?? null) !== before.departmentId) {
+        changes.push(`bo'lim: ${service.departmentName ?? "\u2014"}`);
+      }
+      if (input.isActive !== void 0 && input.isActive !== before.isActive) {
+        changes.push(service.isActive ? "qayta yoqildi" : "to'xtatildi");
+      }
+      await audit(req, "update", "service", service.id, `"${service.name}" xizmati \u2014 ${changes.join(", ") || "tavsif yangilandi"}`);
+      res.json(service);
+    })
+  );
+  app.delete(
+    "/api/services/:id",
+    requirePermission("services.manage"),
+    handle(async (req, res) => {
+      const service = (await storage.listServices()).find((s) => s.id === req.params.id);
+      if (!service) return res.status(404).json({ message: "Xizmat topilmadi" });
+      if (service.appointmentCount > 0) {
+        return res.status(409).json({
+          message: `Bu xizmat ${service.appointmentCount} ta qabulda ishlatilgan. O'chirish o'rniga to'xtating (nofaol qiling)`
+        });
+      }
+      await storage.deleteService(service.id);
+      await audit(req, "delete", "service", service.id, `"${service.name}" xizmati o'chirildi`);
+      res.sendStatus(204);
+    })
+  );
+  app.get(
+    "/api/appointments",
+    requireAuth,
+    handle(async (req, res) => {
+      const patientId = stringParam(req.query.patientId);
+      const canAll = hasPermission(req, "appointments.read");
+      if (!canAll && !(patientId && hasPermission(req, "patients.read"))) {
+        return res.status(403).json({ message: "Bu amal uchun ruxsatingiz yo'q" });
+      }
+      const date = stringParam(req.query.date);
+      if (date && !isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
+      if (!date && !patientId) return res.status(400).json({ message: "Sana yoki bemor ko'rsatilishi kerak" });
+      const list = await storage.listAppointments({ date, patientId, doctorId: stringParam(req.query.doctorId) }).catch((e) => emptyIfMissing(e, []));
+      res.json(list);
+    })
+  );
+  app.get(
+    "/api/doctors/:id/slots",
+    requirePermission("appointments.manage", "appointments.read"),
+    handle(async (req, res) => {
+      const date = stringParam(req.query.date);
+      if (!date || !isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
+      const doctor = await storage.getDoctor(req.params.id);
+      if (!doctor) return res.status(404).json({ message: "Shifokor topilmadi" });
+      const starts = doctor.isActive && doctor.userActive ? slotStarts(doctor.schedule, doctor.slotMinutes, date) : [];
+      const day = await storage.listAppointments({ doctorId: doctor.id, date }).catch((e) => emptyIfMissing(e, []));
+      const bookings = day.map((a) => ({
+        id: a.id,
+        startTime: a.startTime,
+        durationMinutes: a.durationMinutes,
+        status: a.status,
+        patientName: a.patientName,
+        queueNumber: a.queueNumber
+      }));
+      const result = {
+        doctorId: doctor.id,
+        date,
+        works: starts.length > 0,
+        slotMinutes: doctor.slotMinutes,
+        slots: buildSlots(starts, doctor.slotMinutes, bookings, date, clockNow())
+      };
+      res.json(result);
+    })
+  );
+  app.post(
+    "/api/appointments",
+    requirePermission("appointments.manage"),
+    handle(async (req, res) => {
+      const input = createAppointmentSchema.parse(req.body);
+      const patient = await storage.getPatient(input.patientId);
+      if (!patient) return res.status(400).json({ message: "Bemor topilmadi" });
+      const found = await bookableDoctor(input.doctorId);
+      if ("error" in found) return res.status(400).json({ message: found.error });
+      const picked = await pickedService(input.serviceId);
+      if ("error" in picked) return res.status(400).json({ message: picked.error });
+      const { doctor } = found;
+      const appointment = await storage.createAppointment(
+        {
+          ...input,
+          durationMinutes: doctor.slotMinutes,
+          // A chosen service sets the price; otherwise the doctor's consultation fee.
+          price: picked.service?.price ?? doctor.consultationPrice
+        },
+        actorOf(req),
+        bookingCheck({ doctor, date: input.date, startTime: input.startTime, patientId: patient.id })
+      );
+      await audit(
+        req,
+        "create",
+        "appointment",
+        appointment.id,
+        `${patientLabel(appointment)} \u2014 ${appointment.doctorName} qabuliga yozildi (${when(appointment)}, navbat \u2116${appointment.queueNumber})`
+      );
+      res.status(201).json(appointment);
+    })
+  );
+  app.patch(
+    "/api/appointments/:id",
+    requirePermission("appointments.manage"),
+    handle(async (req, res) => {
+      const input = rescheduleAppointmentSchema.parse(req.body);
+      const before = await storage.getAppointment(req.params.id);
+      if (!before) return res.status(404).json({ message: "Qabul topilmadi" });
+      if (before.status !== "scheduled") {
+        return res.status(409).json({ message: `Faqat "yozildi" holatidagi qabulni ko'chirish mumkin` });
+      }
+      const doctorId = input.doctorId ?? before.doctorId;
+      const found = await bookableDoctor(doctorId);
+      if ("error" in found) return res.status(400).json({ message: found.error });
+      const { doctor } = found;
+      const serviceId = input.serviceId !== void 0 ? input.serviceId : before.serviceId;
+      const picked = await pickedService(serviceId);
+      if ("error" in picked && serviceId !== before.serviceId) return res.status(400).json({ message: picked.error });
+      const service = "service" in picked ? picked.service : null;
+      const date = input.date ?? before.date;
+      const startTime = input.startTime ?? before.startTime;
+      const repriced = doctorId !== before.doctorId || serviceId !== before.serviceId;
+      const appointment = await storage.rescheduleAppointment(
+        before.id,
+        {
+          doctorId,
+          date,
+          startTime,
+          durationMinutes: doctor.slotMinutes,
+          serviceId,
+          price: repriced ? service?.price ?? doctor.consultationPrice : before.price,
+          reason: input.reason !== void 0 ? input.reason : before.reason
+        },
+        actorOf(req),
+        bookingCheck({ doctor, date, startTime, patientId: before.patientId, ignoreId: before.id })
+      );
+      const changes = [];
+      if (when(before) !== when(appointment)) changes.push(`${when(before)} \u2192 ${when(appointment)}`);
+      if (before.doctorId !== appointment.doctorId) changes.push(`shifokor: ${before.doctorName} \u2192 ${appointment.doctorName}`);
+      if (before.queueNumber !== appointment.queueNumber || before.date !== appointment.date) {
+        changes.push(`navbat \u2116${appointment.queueNumber}`);
+      }
+      if (before.price !== appointment.price) changes.push(`narx: ${money2(before.price)} \u2192 ${money2(appointment.price)}`);
+      await audit(req, "update", "appointment", appointment.id, `${patientLabel(appointment)} \u2014 qabul ko'chirildi: ${changes.join(", ") || "izoh yangilandi"}`);
+      res.json(appointment);
+    })
+  );
+  async function changeStatus(req, res, appointment, to, reason) {
+    const desk = hasPermission(req, "appointments.manage");
+    const ownDoctor = isOwnDoctor(req, appointment);
+    const verdict = checkTransition(appointment.status, to, { desk, ownDoctor });
+    if (!verdict.ok) return res.status(verdict.status).json({ message: verdict.message });
+    if (needsReason(to) && (!reason || reason.length < 3)) {
+      return res.status(400).json({ message: "Bekor qilish sababini yozing" });
+    }
+    const today = clockNow().date;
+    if (to === "arrived" && appointment.status !== "in_progress" || to === "in_progress") {
+      if (appointment.date !== today) {
+        return res.status(400).json({
+          message: to === "arrived" ? 'Bemorni faqat qabul kuni "keldi" deb belgilash mumkin' : "Qabulni faqat belgilangan kuni boshlash mumkin"
+        });
+      }
+    }
+    if (to === "in_progress") {
+      const current = (await storage.listAppointments({ doctorId: appointment.doctorId, date: today, statuses: ["in_progress"] })).find(
+        (a) => a.id !== appointment.id
+      );
+      if (current) {
+        return res.status(409).json({ message: `Avval joriy qabulni yakunlang: ${patientLabel(current)} (navbat \u2116${current.queueNumber})` });
+      }
+    }
+    const updated = await storage.setAppointmentStatus(appointment.id, { from: appointment.status, to, reason }, actorOf(req));
+    const label = APPOINTMENT_STATUS_LABELS[to].toLowerCase();
+    await audit(
+      req,
+      "update",
+      "appointment",
+      updated.id,
+      `${patientLabel(updated)} \u2014 ${updated.doctorName} qabuli (${when(updated)}): ${APPOINTMENT_STATUS_LABELS[appointment.status].toLowerCase()} \u2192 ${label}${to === "cancelled" && reason ? ` (sabab: ${reason})` : ""}`
+    );
+    return res.json(updated);
+  }
+  app.post(
+    "/api/appointments/:id/status",
+    requirePermission("appointments.manage", "appointments.serve"),
+    handle(async (req, res) => {
+      const { status, reason } = appointmentStatusSchema.parse(req.body);
+      const appointment = await storage.getAppointment(req.params.id);
+      if (!appointment) return res.status(404).json({ message: "Qabul topilmadi" });
+      if (!hasPermission(req, "appointments.manage") && appointment.doctorUserId !== req.user.id) {
+        return res.status(404).json({ message: "Qabul topilmadi" });
+      }
+      return changeStatus(req, res, appointment, status, reason);
+    })
+  );
+  app.get(
+    "/api/cabinet",
+    requirePermission("appointments.serve", "appointments.read"),
+    handle(async (req, res) => {
+      const date = stringParam(req.query.date) ?? clockNow().date;
+      if (!isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
+      const requested = stringParam(req.query.doctorId);
+      let doctor;
+      if (requested && hasPermission(req, "appointments.read")) {
+        doctor = await storage.getDoctor(requested);
+      } else {
+        doctor = await storage.getDoctorByUser(req.user.id).catch((e) => emptyIfMissing(e, void 0));
+      }
+      if (!doctor) {
+        return res.status(404).json({
+          message: "Sizga shifokor profili biriktirilmagan. Administrator Klinika \u2192 Shifokorlar bo'limida profil ochadi",
+          code: "NO_DOCTOR_PROFILE"
+        });
+      }
+      const [appointments2, unfinished] = await Promise.all([
+        storage.listAppointments({ doctorId: doctor.id, date }).catch((e) => emptyIfMissing(e, [])),
+        storage.listAppointments({ doctorId: doctor.id, beforeDate: clockNow().date, statuses: ["in_progress"] }).catch((e) => emptyIfMissing(e, []))
+      ]);
+      const cabinet = { doctor, date, appointments: appointments2, unfinished };
+      res.json(cabinet);
+    })
+  );
+  app.post(
+    "/api/cabinet/call-next",
+    requirePermission("appointments.serve"),
+    handle(async (req, res) => {
+      const doctor = await storage.getDoctorByUser(req.user.id);
+      if (!doctor) return res.status(404).json({ message: "Sizga shifokor profili biriktirilmagan" });
+      const today = await storage.listAppointments({ doctorId: doctor.id, date: clockNow().date });
+      const next = nextInLine(today);
+      if (!next) return res.status(409).json({ message: "Navbatda kutayotgan bemor yo'q" });
+      return changeStatus(req, res, next, "in_progress", null);
+    })
+  );
+}
+
+// server/routes.ts
 async function registerRoutes(app) {
   setupAuth(app);
   console.log(`[db] ${usingPostgres ? "Postgres (Neon)" : "Mahalliy JSON (.data/db.json)"}`);
@@ -5536,7 +6674,7 @@ async function registerRoutes(app) {
       if (!card) return res.status(404).json({ message: "Bemor topilmadi" });
       await logCardView(req, card.patient);
       if (!hasPermission(req, "orders.read")) {
-        card.visits = [];
+        card.visits = card.visits.map((v) => ({ ...v, orders: [], billed: 0, paid: 0 })).filter((v) => v.appointments.length > 0);
         card.payments = [];
       }
       if (!hasPermission(req, "finance.view") && !hasPermission(req, "payments.create")) {
@@ -5690,7 +6828,7 @@ async function registerRoutes(app) {
         "update",
         "patient",
         target.id,
-        `\u2116${source.patientNumber} ${source.fullName} kartasi \u2116${target.patientNumber} ${target.fullName} bilan birlashtirildi (${moved.orders} ta buyurtma, ${moved.contacts} ta aloqa ko'chirildi)`
+        `\u2116${source.patientNumber} ${source.fullName} kartasi \u2116${target.patientNumber} ${target.fullName} bilan birlashtirildi (${moved.orders} ta buyurtma, ${moved.appointments} ta qabul, ${moved.contacts} ta aloqa ko'chirildi)`
       );
       res.json({ ...moved, patient: await storage.getPatientDetails(target.id) });
     })
@@ -6630,10 +7768,6 @@ async function registerRoutes(app) {
       res.json(saved);
     })
   );
-  const emptyIfMissing = (err, empty) => {
-    if (err?.code === "42P01") return empty;
-    throw err;
-  };
   app.get(
     "/api/departments",
     requireAuth,
@@ -6782,11 +7916,17 @@ async function registerRoutes(app) {
     handle(async (req, res) => {
       const before = await storage.getDoctor(req.params.id);
       if (!before) return res.status(404).json({ message: "Shifokor topilmadi" });
+      if (await storage.doctorHasAppointments(before.id)) {
+        return res.status(409).json({
+          message: "Bu shifokorda qabullar tarixi bor. Profilni o'chirish o'rniga qabulni to'xtating (nofaol qiling)"
+        });
+      }
       await storage.deleteDoctor(before.id);
       await audit(req, "delete", "doctor", before.id, `${before.fullName} \u2014 shifokor profili o'chirildi`);
       res.sendStatus(204);
     })
   );
+  registerClinicRoutes(app);
   app.use("/api", (req, res, next) => {
     if (res.headersSent) return next();
     res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });
@@ -6795,6 +7935,9 @@ async function registerRoutes(app) {
     if (res.headersSent) return next(err);
     if (err instanceof ZodError) {
       return res.status(400).json({ message: fromZodError(err).toString() });
+    }
+    if (err instanceof StorageConflict) {
+      return res.status(409).json({ message: err.message });
     }
     if (err?.code === "42P01") {
       return res.status(503).json({

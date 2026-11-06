@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  APPOINTMENT_STATUS_LABELS,
+  type AppointmentStatus,
   ORDER_STATUS_LABELS,
   SAMPLE_STATUS_LABELS,
   type OrderStatus,
@@ -15,6 +17,8 @@ import {
 } from "@shared/schema";
 import { SYSTEM_ROLES } from "@shared/permissions";
 import {
+  APPOINTMENT_STATUS_DOTS,
+  APPOINTMENT_STATUS_STYLES,
   FLAG_LABELS,
   FLAG_STYLES,
   roleStyle,
@@ -182,6 +186,34 @@ export function StatusBadge({ status, className }: { status: OrderStatus; classN
       <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOTS[status])} />
       {ORDER_STATUS_LABELS[status]}
     </Badge>
+  );
+}
+
+export function AppointmentBadge({ status, className }: { status: AppointmentStatus; className?: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn("gap-1.5 whitespace-nowrap font-medium", APPOINTMENT_STATUS_STYLES[status], className)}
+      data-testid={`badge-appointment-${status}`}
+    >
+      <span className={cn("h-1.5 w-1.5 rounded-full", APPOINTMENT_STATUS_DOTS[status])} />
+      {APPOINTMENT_STATUS_LABELS[status]}
+    </Badge>
+  );
+}
+
+/** The queue ticket: "№7", big enough to call out across a corridor. */
+export function QueueTicket({ number, className }: { number: number; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-9 min-w-[2.75rem] items-center justify-center rounded-lg border border-primary/25 bg-primary/[0.07] px-2 font-mono text-[15px] font-bold tabular text-primary",
+        className,
+      )}
+      title={`Navbat raqami ${number}`}
+    >
+      №{number}
+    </span>
   );
 }
 

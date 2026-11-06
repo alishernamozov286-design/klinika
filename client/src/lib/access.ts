@@ -10,6 +10,9 @@ import type { Permission } from "@shared/permissions";
  */
 export const ROUTE_ACCESS: Record<string, Permission[]> = {
   "/patients": ["patients.read"],
+  "/queue": ["appointments.read", "appointments.manage"],
+  "/cabinet": ["appointments.serve"],
+  "/services": ["services.manage", "appointments.manage", "appointments.read"],
   "/orders": ["orders.read"],
   "/results": ["orders.read"],
   "/reports": ["reports.view"],

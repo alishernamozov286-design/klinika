@@ -20,6 +20,8 @@ import type {
   User,
   UserMfa,
   Visit,
+  Service,
+  Appointment,
 } from "@shared/schema";
 
 export type DbShape = {
@@ -28,6 +30,8 @@ export type DbShape = {
   roles: RoleRecord[];
   departments: Department[];
   doctors: Doctor[];
+  services: Service[];
+  appointments: Appointment[];
   security: SecuritySettings | null;
   patients: Patient[];
   patientContacts: PatientContact[];
@@ -62,6 +66,8 @@ export const emptyDb = (): DbShape => ({
   roles: [],
   departments: [],
   doctors: [],
+  services: [],
+  appointments: [],
   security: null,
   patients: [],
   patientContacts: [],

@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   BarChart3,
+  CalendarClock,
+  ClipboardPlus,
   FileText,
   FlaskConical,
   Home,
@@ -8,6 +10,7 @@ import {
   Settings,
   ShieldCheck,
   Stethoscope,
+  Tags,
   UserCog,
   Users,
   Wallet,
@@ -39,7 +42,9 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
     label: "Ish maydoni",
     items: [
       { title: "Bosh sahifa", url: "/home", icon: Home },
+      { title: "Mening kabinetim", url: "/cabinet", icon: ClipboardPlus },
       { title: "Bemorlar", url: "/patients", icon: Users },
+      { title: "Navbat", url: "/queue", icon: CalendarClock },
       { title: "Buyurtmalar", url: "/orders", icon: FlaskConical },
       { title: "Natijalar", url: "/results", icon: FileText },
     ],
@@ -50,6 +55,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
     items: [
       { title: "Shifokorlar", url: "/doctors", icon: Stethoscope },
       { title: "Bo'limlar", url: "/departments", icon: Network },
+      { title: "Xizmatlar", url: "/services", icon: Tags },
       { title: "Xodimlar", url: "/staff", icon: UserCog },
     ],
   },

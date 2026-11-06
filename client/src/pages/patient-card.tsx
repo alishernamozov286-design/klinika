@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import {
   ArrowLeft,
+  CalendarClock,
   CalendarDays,
+  CalendarPlus,
   ChevronRight,
   Eye,
   FileText,
@@ -16,12 +18,14 @@ import {
   PhoneCall,
   Receipt,
   ShieldCheck,
+  Stethoscope,
   TrendingUp,
   UserRound,
   Wallet,
 } from "lucide-react";
 import {
   PAYMENT_METHOD_LABELS,
+  type AppointmentWithDetails,
   type AuditEntry,
   type OrderWithDetails,
   type PatientCard as PatientCardData,
@@ -33,12 +37,14 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  AppointmentBadge,
   Avatar,
   EmptyState,
   Money,
   PatientNumber,
   PaymentBadge,
   PhoneText,
+  QueueTicket,
   SectionCard,
   StatCard,
   StatusBadge,
@@ -47,12 +53,13 @@ import {
 } from "@/components/ui-kit";
 import { PatientDialog } from "@/components/patient-dialog";
 import { OrderDialog } from "@/components/order-dialog";
+import { AppointmentDialog } from "@/components/appointment-dialog";
 import { OrderDetailDialog } from "@/components/order-detail-dialog";
 import { ResultsDialog } from "@/components/results-dialog";
 import { PrintDialog } from "@/components/print-dialog";
 import { MergePatientDialog } from "@/components/merge-patient-dialog";
 import { useAuth } from "@/hooks/use-auth";
-import { ageGender, formatDate, formatDateTime, formatLongDate, formatPhone, money, timeAgo } from "@/lib/format";
+import { ageGender, dayKey, formatDate, formatDateTime, formatDay, formatLongDate, formatPhone, money, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /** Code-split like on the old history dialog: the trend chart pulls in Recharts. */
@@ -70,6 +77,7 @@ export default function PatientCardPage() {
   const { can } = useAuth();
   const [editOpen, setEditOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
+  const [bookOpen, setBookOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [detail, setDetail] = useState<OrderWithDetails | null>(null);
   const [results, setResults] = useState<OrderWithDetails | null>(null);
@@ -174,6 +182,12 @@ export default function PatientCardPage() {
           </div>
 
           <div className="flex shrink-0 flex-wrap gap-2">
+            {can("appointments.manage") && (
+              <Button variant="secondary" onClick={() => setBookOpen(true)} data-testid="button-card-book">
+                <CalendarPlus className="mr-2 h-4 w-4" />
+                Qabulga yozish
+              </Button>
+            )}
             {can("orders.create") && (
               <Button onClick={() => setOrderOpen(true)} className="shadow-brand" data-testid="button-card-new-order">
                 <FlaskConical className="mr-2 h-4 w-4" />
@@ -247,6 +261,10 @@ export default function PatientCardPage() {
             <History className="mr-2 h-4 w-4" />
             Tashriflar
           </TabsTrigger>
+          <TabsTrigger value="appointments" data-testid="tab-card-appointments">
+            <CalendarClock className="mr-2 h-4 w-4" />
+            Qabullar
+          </TabsTrigger>
           <TabsTrigger value="trend" data-testid="tab-card-trend">
             <TrendingUp className="mr-2 h-4 w-4" />
             Natijalar dinamikasi
@@ -301,7 +319,9 @@ export default function PatientCardPage() {
                   <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                     <p className="font-semibold">
                       {formatLongDate(visit.date)}
-                      <span className="ml-2 text-sm font-normal text-muted-foreground">{timeAgo(visit.orders[0].createdAt)}</span>
+                      <span className="ml-2 text-sm font-normal text-muted-foreground">
+                        {timeAgo(visit.orders[0]?.createdAt ?? visit.appointments[0]?.arrivedAt ?? `${visit.date}T12:00:00`)}
+                      </span>
                     </p>
                     {seesMoney && visit.billed > 0 && (
                       <p className="text-sm text-muted-foreground">
@@ -315,6 +335,28 @@ export default function PatientCardPage() {
                     )}
                   </div>
                   <div className="space-y-2">
+                    {visit.appointments.map((a) => (
+                      <div key={a.id} className="card-premium p-4" data-testid={`card-visit-appointment-${a.id}`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div className="icon-tile h-8 w-8 bg-sky-500/10 text-sky-600 dark:text-sky-400">
+                              <Stethoscope className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">
+                                Shifokor qabuli · {a.doctorName}
+                                <span className="font-normal text-muted-foreground"> ({a.specialty})</span>
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {a.startTime} · navbat №{a.queueNumber} · {a.serviceName ?? "Shifokor ko'rigi"}
+                                {a.reason && ` · «${a.reason}»`}
+                              </p>
+                            </div>
+                          </div>
+                          <AppointmentBadge status={a.status} />
+                        </div>
+                      </div>
+                    ))}
                     {visit.orders.map((order) => (
                       <button
                         key={order.id}
@@ -467,6 +509,10 @@ export default function PatientCardPage() {
         </TabsContent>
 
         {/* ------------------------------------------------------- access */}
+        <TabsContent value="appointments" className="mt-6">
+          <PatientAppointments patientId={p.id} canBook={can("appointments.manage")} onBook={() => setBookOpen(true)} />
+        </TabsContent>
+
         {can("audit.read") && (
           <TabsContent value="access" className="mt-6">
             <AccessLog patientId={p.id} />
@@ -476,6 +522,7 @@ export default function PatientCardPage() {
 
       <PatientDialog open={editOpen} onOpenChange={setEditOpen} patient={p} />
       <OrderDialog open={orderOpen} onOpenChange={setOrderOpen} presetPatient={p} />
+      <AppointmentDialog open={bookOpen} onOpenChange={setBookOpen} presetPatient={p} />
       <MergePatientDialog source={mergeOpen ? p : null} onClose={() => setMergeOpen(false)} />
       <OrderDetailDialog
         open={Boolean(detail)}
@@ -493,6 +540,60 @@ export default function PatientCardPage() {
       <ResultsDialog open={Boolean(results)} onOpenChange={(o) => !o && setResults(null)} order={results} />
       <PrintDialog open={Boolean(printing)} onOpenChange={(o) => !o && setPrinting(null)} order={printing} />
     </div>
+  );
+}
+
+/** The patient's appointments, newest first (B2.7): upcoming ones on top, then history. */
+function PatientAppointments({ patientId, canBook, onBook }: { patientId: string; canBook: boolean; onBook: () => void }) {
+  const { data = [], isLoading } = useQuery<AppointmentWithDetails[]>({
+    queryKey: [`/api/appointments?patientId=${patientId}`],
+  });
+  const today = dayKey(new Date());
+  const upcoming = data.filter((a) => a.date >= today && (a.status === "scheduled" || a.status === "arrived" || a.status === "in_progress"));
+
+  return (
+    <SectionCard
+      icon={CalendarClock}
+      title="Shifokor qabullari"
+      description={upcoming.length ? `${upcoming.length} ta kelgusi qabul` : "Qabullar tarixi"}
+      flush
+      action={
+        canBook ? (
+          <Button size="sm" variant="outline" onClick={onBook}>
+            <CalendarPlus className="mr-2 h-4 w-4" />
+            Qabulga yozish
+          </Button>
+        ) : undefined
+      }
+    >
+      {isLoading ? (
+        <TableSkeleton rows={3} />
+      ) : data.length === 0 ? (
+        <EmptyState icon={CalendarClock} title="Qabul yo'q" description="Bemor hali shifokor qabuliga yozilmagan." />
+      ) : (
+        <div className="divide-y" data-testid="list-patient-appointments">
+          {data.map((a) => (
+            <div key={a.id} className={cn("flex flex-wrap items-center gap-3 px-5 py-3", a.status === "cancelled" && "opacity-60")}>
+              <QueueTicket number={a.queueNumber} />
+              <div className="w-28 shrink-0">
+                <p className="text-sm font-semibold tabular">{formatDay(a.date)}</p>
+                <p className="font-mono text-xs text-muted-foreground">{a.startTime}</p>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{a.doctorName}</p>
+                <p className="text-xs text-muted-foreground">
+                  {a.specialty}
+                  {a.room ? ` · ${a.room}-xona` : ""} · {a.serviceName ?? "Shifokor ko'rigi"} · {money(a.price)}
+                </p>
+                {a.reason && <p className="text-xs italic text-muted-foreground">«{a.reason}»</p>}
+                {a.cancelReason && <p className="text-xs text-rose-600 dark:text-rose-400">Bekor qilish sababi: {a.cancelReason}</p>}
+              </div>
+              <AppointmentBadge status={a.status} />
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 

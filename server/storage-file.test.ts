@@ -446,7 +446,7 @@ describe("roles", () => {
   it("hands out copies, so a role read before an update still shows the old value", async () => {
     const before = await storage.getRole("shifokor");
     await storage.updateRole("shifokor", { permissions: ["patients.read"] }, ACTOR);
-    expect(before?.permissions).toEqual(["patients.read", "orders.read"]);
+    expect(before?.permissions).toEqual(["patients.read", "orders.read", "appointments.serve"]);
   });
 
   it("stamps who edited a role and when", async () => {
@@ -783,7 +783,7 @@ describe("patients: registry", () => {
     await storage.createOrder({ patientId: dup.id, testIds: ["1"], discount: 0, paidAmount: 0 });
 
     const moved = await storage.mergePatients(dup.id, real.id);
-    expect(moved).toEqual({ orders: 1, contacts: 1 });
+    expect(moved).toEqual({ orders: 1, contacts: 1, appointments: 0 });
     expect(await storage.getPatient(dup.id)).toBeUndefined();
     const merged = await storage.getPatientDetails(real.id);
     expect(merged?.birthDate).toBe("1990-05-12");
@@ -847,5 +847,221 @@ describe("visits and the patient card", () => {
     await storage.writeAudit({ actor: ACTOR, action: "view", entity: "patient", entityId: "p2", summary: "boshqa" });
     expect((await storage.listAudit({ entity: "patient", entityId: "p1" })).total).toBe(2);
     expect((await storage.listAudit({ entity: "patient", entityId: "p1", action: "view" })).total).toBe(1);
+  });
+});
+
+describe("services catalogue (B2.6)", () => {
+  it("creates, lists with the department name, and updates", async () => {
+    const dept = await storage.createDepartment({ name: "Diagnostika", kind: "diagnostika", isActive: true }, ACTOR);
+    const svc = await storage.createService(
+      { name: "Qorin bo'shlig'i UZI", kind: "uzi", departmentId: dept.id, price: 120000, durationMinutes: 20, description: null, isActive: true },
+      ACTOR,
+    );
+    expect(svc.departmentName).toBe("Diagnostika");
+    expect(svc.appointmentCount).toBe(0);
+    const updated = await storage.updateService(svc.id, { price: 130000, isActive: false }, ACTOR);
+    expect(updated?.price).toBe(130000);
+    expect(updated?.updatedBy).toBe(ACTOR.id);
+    expect(await storage.listServices({ activeOnly: true })).toHaveLength(0);
+    expect(await storage.deleteService(svc.id)).toBe(true);
+    expect(await storage.getService(svc.id)).toBeUndefined();
+  });
+});
+
+describe("appointments (B2.7)", () => {
+  const MON = "2026-11-09";
+  const free = () => null;
+
+  async function setup() {
+    const user = await storage.createUser({ username: "dr9", password: "parol123", fullName: "Rustamov Jasur", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      {
+        userId: user.id,
+        departmentId: null,
+        specialty: "Nevrolog",
+        room: "12",
+        consultationPrice: 100000,
+        slotMinutes: 20,
+        schedule: [{ day: 1, start: "09:00", end: "12:00" }],
+        isActive: true,
+      },
+      ACTOR,
+    );
+    const patient = await storage.createPatient({ fullName: "Aliyev Vali", phone: "+998901234567", gender: "erkak", age: 40, address: null });
+    const book = (startTime: string, patientId = patient.id, date = MON) =>
+      storage.createAppointment(
+        { patientId, doctorId: doctor.id, serviceId: null, date, startTime, reason: null, durationMinutes: 20, price: 100000 },
+        ACTOR,
+        free,
+      );
+    return { doctor, patient, book };
+  }
+
+  it("issues ticket numbers per doctor and day, and joins names", async () => {
+    const { book, patient } = await setup();
+    const a = await book("09:00");
+    const b = await book("09:20");
+    const c = await book("09:00", patient.id, "2026-11-16");
+    expect([a.queueNumber, b.queueNumber, c.queueNumber]).toEqual([1, 2, 1]);
+    expect(a.patientName).toBe("Aliyev Vali");
+    expect(a.doctorName).toBe("Rustamov Jasur");
+    expect(a.room).toBe("12");
+    expect(a.status).toBe("scheduled");
+  });
+
+  it("aborts the write when the in-lock check objects", async () => {
+    const { doctor, patient } = await setup();
+    await expect(
+      storage.createAppointment(
+        { patientId: patient.id, doctorId: doctor.id, serviceId: null, date: MON, startTime: "09:00", reason: null, durationMinutes: 20, price: 0 },
+        ACTOR,
+        () => "Bu vaqt band",
+      ),
+    ).rejects.toThrow("Bu vaqt band");
+    expect(await storage.listAppointments({ date: MON })).toHaveLength(0);
+  });
+
+  it("passes the day's bookings to the check, so a clash can be seen", async () => {
+    const { doctor, patient, book } = await setup();
+    await book("09:00");
+    let seen = 0;
+    await storage.createAppointment(
+      { patientId: patient.id, doctorId: doctor.id, serviceId: null, date: MON, startTime: "09:40", reason: null, durationMinutes: 20, price: 0 },
+      ACTOR,
+      (day) => {
+        seen = day.length;
+        return null;
+      },
+    );
+    expect(seen).toBe(1);
+  });
+
+  it("checks in to today's visit, starts, completes — stamping each step", async () => {
+    const { book } = await setup();
+    const a = await book("09:00");
+    const arrived = await storage.setAppointmentStatus(a.id, { from: "scheduled", to: "arrived" }, ACTOR);
+    expect(arrived.arrivedAt).toBeTruthy();
+    expect(arrived.visitId).toBeTruthy();
+    const started = await storage.setAppointmentStatus(a.id, { from: "arrived", to: "in_progress" }, ACTOR);
+    expect(started.startedAt).toBeTruthy();
+    // Sent back to the waiting list and called again: arrival time is kept.
+    const back = await storage.setAppointmentStatus(a.id, { from: "in_progress", to: "arrived" }, ACTOR);
+    expect(back.arrivedAt).toBe(arrived.arrivedAt);
+    await storage.setAppointmentStatus(a.id, { from: "arrived", to: "in_progress" }, ACTOR);
+    const done = await storage.setAppointmentStatus(a.id, { from: "in_progress", to: "completed" }, ACTOR);
+    expect(done.completedAt).toBeTruthy();
+    expect(done.status).toBe("completed");
+  });
+
+  it("refuses a status change when someone else already moved it", async () => {
+    const { book } = await setup();
+    const a = await book("09:00");
+    await storage.setAppointmentStatus(a.id, { from: "scheduled", to: "cancelled", reason: "Bemor qo'ng'iroq qildi" }, ACTOR);
+    await expect(storage.setAppointmentStatus(a.id, { from: "scheduled", to: "arrived" }, ACTOR)).rejects.toThrow(/boshqa joyda/);
+    const [row] = await storage.listAppointments({ date: MON });
+    expect(row.cancelReason).toBe("Bemor qo'ng'iroq qildi");
+    expect(row.cancelledBy).toBe(ACTOR.id);
+  });
+
+  it("an undone check-in clears the arrival", async () => {
+    const { book } = await setup();
+    const a = await book("09:00");
+    await storage.setAppointmentStatus(a.id, { from: "scheduled", to: "arrived" }, ACTOR);
+    const undone = await storage.setAppointmentStatus(a.id, { from: "arrived", to: "scheduled" }, ACTOR);
+    expect(undone.arrivedAt).toBeNull();
+    expect(undone.visitId).toBeNull();
+  });
+
+  it("moves a booking: same day keeps the ticket, another day gets a new one", async () => {
+    const { book } = await setup();
+    const a = await book("09:00");
+    await book("09:00", undefined, "2026-11-16");
+    const base = { doctorId: a.doctorId, durationMinutes: 20, serviceId: null, price: 100000, reason: null };
+    const moved = await storage.rescheduleAppointment(a.id, { ...base, date: MON, startTime: "10:00" }, ACTOR, free);
+    expect(moved.queueNumber).toBe(1);
+    const nextWeek = await storage.rescheduleAppointment(a.id, { ...base, date: "2026-11-16", startTime: "10:00" }, ACTOR, free);
+    expect(nextWeek.queueNumber).toBe(2);
+    await storage.setAppointmentStatus(a.id, { from: "scheduled", to: "cancelled", reason: "xato" }, ACTOR);
+    await expect(storage.rescheduleAppointment(a.id, { ...base, date: MON, startTime: "11:00" }, ACTOR, free)).rejects.toThrow(
+      /yozildi/,
+    );
+  });
+
+  it("filters by doctor, patient, status and 'before a day'", async () => {
+    const { book, doctor, patient } = await setup();
+    const a = await book("09:00", patient.id, "2026-11-02");
+    await book("09:00");
+    await storage.setAppointmentStatus(a.id, { from: "scheduled", to: "arrived" }, ACTOR);
+    await storage.setAppointmentStatus(a.id, { from: "arrived", to: "in_progress" }, ACTOR);
+    expect(await storage.listAppointments({ doctorId: doctor.id, beforeDate: MON, statuses: ["in_progress"] })).toHaveLength(1);
+    const history = await storage.listAppointments({ patientId: patient.id });
+    expect(history.map((x) => x.date)).toEqual([MON, "2026-11-02"]);
+    expect(await storage.doctorHasAppointments(doctor.id)).toBe(true);
+  });
+
+  it("follows the patient on a merge and blocks deleting a card with history", async () => {
+    const { book, patient } = await setup();
+    const dup = await storage.createPatient({ fullName: "Aliyev Valijon", phone: "+998901111111", gender: "erkak", age: 40, address: null });
+    await book("09:20", dup.id);
+    const result = await storage.mergePatients(dup.id, patient.id);
+    expect(result?.appointments).toBe(1);
+    expect(await storage.listAppointments({ patientId: patient.id })).toHaveLength(1);
+    await expect(storage.deletePatient(patient.id)).rejects.toThrow(/qabullar tarixi/);
+  });
+
+  it("counts a service's appointments", async () => {
+    const { doctor, patient } = await setup();
+    const svc = await storage.createService(
+      { name: "Takroriy ko'rik", kind: "konsultatsiya", departmentId: null, price: 50000, durationMinutes: null, description: null, isActive: true },
+      ACTOR,
+    );
+    await storage.createAppointment(
+      { patientId: patient.id, doctorId: doctor.id, serviceId: svc.id, date: MON, startTime: "09:00", reason: null, durationMinutes: 20, price: 50000 },
+      ACTOR,
+      free,
+    );
+    expect((await storage.listServices())[0].appointmentCount).toBe(1);
+    expect((await storage.listAppointments({ date: MON }))[0].serviceName).toBe("Takroriy ko'rik");
+  });
+});
+
+describe("appointments on the patient card (B2.5 × B2.7)", () => {
+  it("an attended appointment is a visit, shared with a lab order the same day", async () => {
+    const user = await storage.createUser({ username: "dr7", password: "parol123", fullName: "Nazarov Olim", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      { userId: user.id, departmentId: null, specialty: "Kardiolog", consultationPrice: 90000, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const patient = await storage.createPatient({ fullName: "Tursunov Akmal", phone: "+998907777777", gender: "erkak", age: 50, address: null });
+    const today = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const day = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    const booked = await storage.createAppointment(
+      { patientId: patient.id, doctorId: doctor.id, serviceId: null, date: day, startTime: "09:00", reason: null, durationMinutes: 20, price: 90000 },
+      ACTOR,
+      () => null,
+    );
+
+    // Booked but not come: not a visit yet.
+    let card = await storage.getPatientCard(patient.id);
+    expect(card?.totals.visits).toBe(0);
+
+    await storage.setAppointmentStatus(booked.id, { from: "scheduled", to: "arrived" }, ACTOR);
+    card = await storage.getPatientCard(patient.id);
+    expect(card?.totals.visits).toBe(1);
+    expect(card?.visits[0].appointments).toHaveLength(1);
+    expect(card?.totals.lastVisitAt).toBeTruthy();
+
+    // A lab order the same day joins the same visit.
+    const [test] = await storage.listTests();
+    await storage.createOrder({ patientId: patient.id, testIds: [test.id], discount: 0, paidAmount: 0, createdBy: ACTOR.id });
+    card = await storage.getPatientCard(patient.id);
+    expect(card?.totals.visits).toBe(1);
+    expect(card?.visits[0].orders).toHaveLength(1);
+    expect(card?.visits[0].appointments).toHaveLength(1);
+
+    const listed = (await storage.listPatients({ search: "Tursunov" })).items[0];
+    expect(listed.visitCount).toBe(1);
+    expect(listed.lastVisitAt).toBeTruthy();
   });
 });

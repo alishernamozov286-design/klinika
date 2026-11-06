@@ -19,6 +19,16 @@ import {
   tests,
   users,
   userMfa,
+  services,
+  appointments,
+  type Service,
+  type ServiceKind,
+  type ServiceWithDetails,
+  type InsertService,
+  type UpdateServiceInput,
+  type Appointment,
+  type AppointmentStatus,
+  type AppointmentWithDetails,
   type UserMfa,
   type AuditEntry,
   type CreatePaymentInput,
@@ -75,6 +85,8 @@ import {
   nationalPhoneDigits,
 } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
+import { nextQueueNumber } from "@shared/appointment";
+import { patientAge } from "@shared/patient-identity";
 import { db } from "./db-pg";
 import { hashPassword } from "./password";
 import { LEGACY_ADMIN, SUPER_ADMIN, SYSTEM_ROLES, isPermission, type Permission } from "@shared/permissions";
@@ -87,6 +99,11 @@ import {
   type SeedResult,
   todayKey,
   type Actor,
+  StorageConflict,
+  type AppointmentQuery,
+  type AppointmentStatusChange,
+  type BookingCheck,
+  type NewAppointment,
   type AuditInput,
   type AuditQuery,
   type CreateOrderArgs,
@@ -200,6 +217,83 @@ const doctorSelect = () =>
     .leftJoin(departments, eq(departments.id, doctors.departmentId));
 
 type DoctorRow = Awaited<ReturnType<ReturnType<typeof doctorSelect>["execute"]>>[number];
+
+const mapService = (row: typeof services.$inferSelect): Service => ({
+  ...row,
+  kind: row.kind as ServiceKind,
+  createdAt: iso(row.createdAt) ?? row.createdAt,
+  updatedAt: iso(row.updatedAt),
+});
+
+const mapAppointment = (row: typeof appointments.$inferSelect): Appointment => ({
+  ...row,
+  status: row.status as AppointmentStatus,
+  arrivedAt: iso(row.arrivedAt),
+  startedAt: iso(row.startedAt),
+  completedAt: iso(row.completedAt),
+  cancelledAt: iso(row.cancelledAt),
+  createdAt: iso(row.createdAt) ?? row.createdAt,
+  updatedAt: iso(row.updatedAt),
+});
+
+/** An appointment with everything the queue and the cabinet print next to it — one round trip. */
+const appointmentSelect = () =>
+  db
+    .select({
+      a: appointments,
+      patientNumber: patients.patientNumber,
+      patientName: patients.fullName,
+      patientPhone: patients.phone,
+      patientBirthDate: patients.birthDate,
+      patientAgeRaw: patients.age,
+      patientGender: patients.gender,
+      doctorName: users.fullName,
+      doctorUserId: doctors.userId,
+      specialty: doctors.specialty,
+      room: doctors.room,
+      departmentName: departments.name,
+      serviceName: services.name,
+    })
+    .from(appointments)
+    .leftJoin(patients, eq(patients.id, appointments.patientId))
+    .leftJoin(doctors, eq(doctors.id, appointments.doctorId))
+    .leftJoin(users, eq(users.id, doctors.userId))
+    .leftJoin(departments, eq(departments.id, doctors.departmentId))
+    .leftJoin(services, eq(services.id, appointments.serviceId));
+
+type AppointmentRow = Awaited<ReturnType<ReturnType<typeof appointmentSelect>["execute"]>>[number];
+
+const mapAppointmentRow = (r: AppointmentRow): AppointmentWithDetails => ({
+  ...mapAppointment(r.a),
+  patientNumber: r.patientNumber ?? 0,
+  patientName: r.patientName ?? "—",
+  patientPhone: r.patientPhone ?? "",
+  patientBirthDate: r.patientBirthDate ?? null,
+  patientAge: patientAge({ birthDate: r.patientBirthDate, age: r.patientAgeRaw }),
+  patientGender: r.patientGender ?? null,
+  doctorName: r.doctorName ?? "—",
+  doctorUserId: r.doctorUserId ?? "",
+  specialty: r.specialty ?? "",
+  room: r.room ?? null,
+  departmentName: r.departmentName ?? null,
+  serviceName: r.serviceName ?? null,
+});
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Serialises every booking write for one doctor's day. Taken inside the
+ * transaction and released with it, so the "is it free?" check and the
+ * insert are one step for everyone else booking the same doctor and day.
+ */
+const lockDoctorDay = (tx: Tx, doctorId: string, date: string) =>
+  tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`appointments:${doctorId}:${date}`}))`);
+
+/** True once `npm run db:appointments` has run — used where a missing table must not abort a transaction. */
+const appointmentsTableExists = async (tx: Tx | typeof db) => {
+  const { rows } = await tx.execute<{ ok: boolean }>(sql`SELECT to_regclass('public.appointments') IS NOT NULL AS ok`);
+  return Boolean(rows[0]?.ok);
+};
 
 const mapDoctor = (row: DoctorRow): DoctorWithDetails => ({
   ...row.doctor,
@@ -470,6 +564,245 @@ export class PgStorage implements IStorage {
     return rows.length > 0;
   }
 
+  // ------------------------------------------------------------- services
+
+  async listServices(opts: { activeOnly?: boolean } = {}): Promise<ServiceWithDetails[]> {
+    const rows = await db
+      .select({
+        service: services,
+        departmentName: departments.name,
+        appointmentCount: sql<number>`(SELECT count(*)::int FROM appointments ap WHERE ap.service_id = "services"."id")`,
+      })
+      .from(services)
+      .leftJoin(departments, eq(departments.id, services.departmentId))
+      .where(opts.activeOnly ? eq(services.isActive, true) : undefined)
+      .orderBy(desc(services.isActive), asc(services.kind), asc(services.name))
+      .catch(async (err) => {
+        // Before db:appointments the count's table is missing; the catalogue still lists.
+        if (!isMissingTable(err) || !(await this.servicesTableExists())) throw err;
+        const plain = await db
+          .select({ service: services, departmentName: departments.name })
+          .from(services)
+          .leftJoin(departments, eq(departments.id, services.departmentId))
+          .where(opts.activeOnly ? eq(services.isActive, true) : undefined)
+          .orderBy(desc(services.isActive), asc(services.kind), asc(services.name));
+        return plain.map((r) => ({ ...r, appointmentCount: 0 }));
+      });
+    return rows.map((r) => ({
+      ...mapService(r.service),
+      departmentName: r.departmentName ?? null,
+      appointmentCount: r.appointmentCount ?? 0,
+    }));
+  }
+
+  private async servicesTableExists(): Promise<boolean> {
+    const { rows } = await db.execute<{ ok: boolean }>(sql`SELECT to_regclass('public.services') IS NOT NULL AS ok`);
+    return Boolean(rows[0]?.ok);
+  }
+
+  async getService(id: string): Promise<Service | undefined> {
+    const [row] = await db.select().from(services).where(eq(services.id, id)).limit(1);
+    return row && mapService(row);
+  }
+
+  private async serviceDetails(id: string): Promise<ServiceWithDetails | undefined> {
+    return (await this.listServices()).find((x) => x.id === id);
+  }
+
+  async createService(input: InsertService, actor: Actor): Promise<ServiceWithDetails> {
+    const [row] = await db
+      .insert(services)
+      .values({
+        name: input.name,
+        kind: input.kind,
+        departmentId: input.departmentId ?? null,
+        price: input.price,
+        durationMinutes: input.durationMinutes ?? null,
+        description: input.description ?? null,
+        isActive: input.isActive ?? true,
+        createdBy: actor.id,
+      })
+      .returning({ id: services.id });
+    return (await this.serviceDetails(row.id))!;
+  }
+
+  async updateService(id: string, input: UpdateServiceInput, actor: Actor): Promise<ServiceWithDetails | undefined> {
+    const patch: Partial<typeof services.$inferInsert> = { updatedAt: new Date().toISOString(), updatedBy: actor.id };
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.kind !== undefined) patch.kind = input.kind;
+    if (input.departmentId !== undefined) patch.departmentId = input.departmentId ?? null;
+    if (input.price !== undefined) patch.price = input.price;
+    if (input.durationMinutes !== undefined) patch.durationMinutes = input.durationMinutes ?? null;
+    if (input.description !== undefined) patch.description = input.description ?? null;
+    if (input.isActive !== undefined) patch.isActive = input.isActive;
+    const rows = await db.update(services).set(patch).where(eq(services.id, id)).returning({ id: services.id });
+    return rows.length ? this.serviceDetails(id) : undefined;
+  }
+
+  async deleteService(id: string): Promise<boolean> {
+    const rows = await db.delete(services).where(eq(services.id, id)).returning({ id: services.id });
+    return rows.length > 0;
+  }
+
+  // --------------------------------------------------------- appointments
+
+  async listAppointments(q: AppointmentQuery): Promise<AppointmentWithDetails[]> {
+    const where = [];
+    if (q.date) where.push(eq(appointments.date, q.date));
+    if (q.beforeDate) where.push(sql`${appointments.date} < ${q.beforeDate}`);
+    if (q.doctorId) where.push(eq(appointments.doctorId, q.doctorId));
+    if (q.patientId) where.push(eq(appointments.patientId, q.patientId));
+    if (q.statuses?.length) where.push(inArray(appointments.status, q.statuses));
+    const rows = await appointmentSelect()
+      .where(where.length ? and(...where) : undefined)
+      // A patient's history reads newest first; a day's queue in time order.
+      .orderBy(
+        ...(q.patientId
+          ? [desc(appointments.date), desc(appointments.startTime)]
+          : [asc(appointments.date), asc(appointments.startTime), asc(appointments.queueNumber)]),
+      )
+      .limit(Math.min(q.limit ?? 500, 2000));
+    return rows.map(mapAppointmentRow);
+  }
+
+  async getAppointment(id: string): Promise<AppointmentWithDetails | undefined> {
+    const [row] = await appointmentSelect().where(eq(appointments.id, id)).limit(1);
+    return row && mapAppointmentRow(row);
+  }
+
+  /** The doctor's bookings for a day, read inside the locked transaction. */
+  private async dayBookings(tx: Tx, doctorId: string, date: string): Promise<Appointment[]> {
+    const rows = await tx
+      .select()
+      .from(appointments)
+      .where(and(eq(appointments.doctorId, doctorId), eq(appointments.date, date)));
+    return rows.map(mapAppointment);
+  }
+
+  async createAppointment(input: NewAppointment, actor: Actor, check: BookingCheck): Promise<AppointmentWithDetails> {
+    const id = await db.transaction(async (tx) => {
+      await lockDoctorDay(tx, input.doctorId, input.date);
+      const day = await this.dayBookings(tx, input.doctorId, input.date);
+      const problem = check(day);
+      if (problem) throw new StorageConflict(problem);
+      const [row] = await tx
+        .insert(appointments)
+        .values({
+          patientId: input.patientId,
+          doctorId: input.doctorId,
+          serviceId: input.serviceId ?? null,
+          date: input.date,
+          startTime: input.startTime,
+          durationMinutes: input.durationMinutes,
+          queueNumber: nextQueueNumber(day.map((a) => a.queueNumber)),
+          status: "scheduled",
+          price: input.price,
+          reason: input.reason ?? null,
+          createdBy: actor.id,
+        })
+        .returning({ id: appointments.id });
+      return row.id;
+    });
+    return (await this.getAppointment(id))!;
+  }
+
+  async rescheduleAppointment(
+    id: string,
+    patch: { doctorId: string; date: string; startTime: string; durationMinutes: number; serviceId: string | null; price: number; reason: string | null },
+    actor: Actor,
+    check: BookingCheck,
+  ): Promise<AppointmentWithDetails> {
+    await db.transaction(async (tx) => {
+      await lockDoctorDay(tx, patch.doctorId, patch.date);
+      const [current] = await tx.select().from(appointments).where(eq(appointments.id, id)).limit(1).for("update");
+      if (!current) throw new StorageConflict("Qabul topilmadi");
+      if (current.status !== "scheduled") throw new StorageConflict("Faqat \"yozildi\" holatidagi qabulni ko'chirish mumkin");
+      const day = await this.dayBookings(tx, patch.doctorId, patch.date);
+      const problem = check(day);
+      if (problem) throw new StorageConflict(problem);
+      const sameQueue = current.doctorId === patch.doctorId && current.date === patch.date;
+      await tx
+        .update(appointments)
+        .set({
+          doctorId: patch.doctorId,
+          date: patch.date,
+          startTime: patch.startTime,
+          durationMinutes: patch.durationMinutes,
+          serviceId: patch.serviceId,
+          price: patch.price,
+          reason: patch.reason,
+          queueNumber: sameQueue ? current.queueNumber : nextQueueNumber(day.map((a) => a.queueNumber)),
+          updatedAt: new Date().toISOString(),
+          updatedBy: actor.id,
+        })
+        .where(eq(appointments.id, id));
+    });
+    return (await this.getAppointment(id))!;
+  }
+
+  async setAppointmentStatus(id: string, change: AppointmentStatusChange, actor: Actor): Promise<AppointmentWithDetails> {
+    const now = new Date().toISOString();
+    const patch: Partial<typeof appointments.$inferInsert> = { status: change.to, updatedAt: now, updatedBy: actor.id };
+    switch (change.to) {
+      case "arrived":
+        // Arrival is stamped once; coming back from "qabulda" keeps the first time.
+        if (change.from !== "in_progress") patch.arrivedAt = now;
+        break;
+      case "in_progress":
+        patch.startedAt = now;
+        break;
+      case "completed":
+        patch.completedAt = now;
+        break;
+      case "cancelled":
+        patch.cancelledAt = now;
+        patch.cancelledBy = actor.id;
+        patch.cancelReason = change.reason ?? null;
+        break;
+      case "scheduled":
+        // An undone check-in: the patient is not here after all.
+        patch.arrivedAt = null;
+        patch.visitId = null;
+        break;
+    }
+
+    const updated = await db.transaction(async (tx) => {
+      if (change.to === "arrived" && change.from !== "in_progress") {
+        const [current] = await tx
+          .select({ patientId: appointments.patientId })
+          .from(appointments)
+          .where(eq(appointments.id, id))
+          .limit(1);
+        if (current) {
+          // Today's visit (B2.5), shared with any lab order made today.
+          const [visit] = await tx
+            .insert(visits)
+            .values({ patientId: current.patientId, visitDate: todayKey(), createdBy: actor.id })
+            .onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql`excluded.patient_id` } })
+            .returning({ id: visits.id });
+          patch.visitId = visit.id;
+        }
+      }
+      return tx
+        .update(appointments)
+        .set(patch)
+        .where(and(eq(appointments.id, id), eq(appointments.status, change.from)))
+        .returning({ id: appointments.id });
+    });
+    if (!updated.length) throw new StorageConflict("Qabul holati boshqa joyda o'zgartirilgan. Sahifani yangilang");
+    return (await this.getAppointment(id))!;
+  }
+
+  async doctorHasAppointments(doctorId: string): Promise<boolean> {
+    if (!(await appointmentsTableExists(db))) return false;
+    const [row] = await db
+      .select({ id: appointments.id })
+      .from(appointments)
+      .where(eq(appointments.doctorId, doctorId))
+      .limit(1);
+    return Boolean(row);
+  }
+
   // ---------------------------------------------------------------- users
 
   async listUsers(): Promise<PublicUser[]> {
@@ -615,10 +948,10 @@ export class PgStorage implements IStorage {
     const rows = await db
       .update(userMfa)
       .set({
-        recoveryCodes: sql`array_remove(${userMfa.recoveryCodes}, ${hash})`,
+        recoveryCodes: sql`array_remove(${userMfa.recoveryCodes}, ${hash}::text)`,
         updatedAt: new Date().toISOString(),
       })
-      .where(and(eq(userMfa.userId, userId), sql`${hash} = ANY(${userMfa.recoveryCodes})`))
+      .where(and(eq(userMfa.userId, userId), sql`${hash}::text = ANY(${userMfa.recoveryCodes})`))
       .returning({ userId: userMfa.userId });
     return rows.length > 0;
   }
@@ -661,17 +994,31 @@ export class PgStorage implements IStorage {
     }
 
     // Visit figures as correlated subqueries: one round trip, and they are
-    // only computed for the page being returned.
-    let q = db
-      .select({
-        patient: patients,
-        lastVisitAt: sql<string | null>`(SELECT max(o.created_at) FROM ${orders} o
-          WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`,
-        // A visit is a day at the clinic, however many orders it had.
-        visitCount: sql<number>`(SELECT count(DISTINCT coalesce(o.visit_id,
+    // only computed for the page being returned. A visit is a day at the
+    // clinic — a lab order, an attended doctor's appointment, or both.
+    const withAppointments = await this.hasAppointmentsTable();
+    const lastVisitAt = withAppointments
+      ? sql<string | null>`(SELECT max(t) FROM (
+            SELECT o.created_at AS t FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled'
+            UNION ALL
+            SELECT ap.arrived_at FROM appointments ap WHERE ap.patient_id = "patients"."id"
+              AND ap.arrived_at IS NOT NULL AND ap.status IN ('arrived', 'in_progress', 'completed')
+          ) x)`
+      : sql<string | null>`(SELECT max(o.created_at) FROM ${orders} o
+          WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`;
+    const visitCount = withAppointments
+      ? sql<number>`(SELECT count(DISTINCT k)::int FROM (
+            SELECT coalesce(o.visit_id, ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text) AS k
+              FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled'
+            UNION ALL
+            SELECT ap.visit_id FROM appointments ap WHERE ap.patient_id = "patients"."id"
+              AND ap.visit_id IS NOT NULL AND ap.status IN ('arrived', 'in_progress', 'completed')
+          ) x)`
+      : sql<number>`(SELECT count(DISTINCT coalesce(o.visit_id,
             ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
-          FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`,
-      })
+          FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`;
+    let q = db
+      .select({ patient: patients, lastVisitAt, visitCount })
       .from(patients)
       .where(where)
       .orderBy(desc(patients.createdAt), desc(patients.patientNumber))
@@ -703,7 +1050,7 @@ export class PgStorage implements IStorage {
   }
 
   async getPatientCard(id: string): Promise<PatientCard | undefined> {
-    const [details, list, visitRows, paymentRows] = await Promise.all([
+    const [details, list, visitRows, paymentRows, appointmentList] = await Promise.all([
       this.getPatientDetails(id),
       this.listOrders({ patientId: id }),
       db.select().from(visits).where(eq(visits.patientId, id)),
@@ -712,6 +1059,7 @@ export class PgStorage implements IStorage {
         .from(payments)
         .innerJoin(orders, eq(orders.id, payments.orderId))
         .where(eq(orders.patientId, id)),
+      (await this.hasAppointmentsTable()) ? this.listAppointments({ patientId: id }) : Promise.resolve([]),
     ]);
     if (!details) return undefined;
     return buildPatientCard(
@@ -724,7 +1072,21 @@ export class PgStorage implements IStorage {
         createdAt: iso(r.payment.createdAt),
         orderNumber: r.orderNumber,
       })),
+      appointmentList,
     );
+  }
+
+  /**
+   * Whether `npm run db:appointments` has run. Queries that join appointments
+   * into older screens (patients list, patient card) pick their SQL by it, so
+   * those screens keep working on a database not migrated yet. Once true it
+   * stays true; until then it is re-checked at most once a minute.
+   */
+  private appointmentsTable: { ok: boolean; at: number } = { ok: false, at: 0 };
+  private async hasAppointmentsTable(): Promise<boolean> {
+    if (this.appointmentsTable.ok || Date.now() - this.appointmentsTable.at < 60_000) return this.appointmentsTable.ok;
+    this.appointmentsTable = { ok: await appointmentsTableExists(db), at: Date.now() };
+    return this.appointmentsTable.ok;
   }
 
   async findPatientCandidates(q: PatientCandidateQuery): Promise<Patient[]> {
@@ -765,7 +1127,10 @@ export class PgStorage implements IStorage {
     }
   }
 
-  async mergePatients(sourceId: string, targetId: string): Promise<{ orders: number; contacts: number } | undefined> {
+  async mergePatients(
+    sourceId: string,
+    targetId: string,
+  ): Promise<{ orders: number; contacts: number; appointments: number } | undefined> {
     if (sourceId === targetId) return undefined;
     return db.transaction(async (tx) => {
       const [[source], [target]] = await Promise.all([
@@ -802,6 +1167,21 @@ export class PgStorage implements IStorage {
         UPDATE ${orders} o SET visit_id = tv.id
         FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
         WHERE sv.patient_id = ${sourceId} AND o.visit_id = sv.id`);
+
+      // Appointments (B2.7) follow the patient, re-pointed at the surviving visit.
+      let movedAppointments = 0;
+      if (await appointmentsTableExists(tx)) {
+        await tx.execute(sql`
+          UPDATE appointments ap SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND ap.visit_id = sv.id`);
+        const movedAp = await tx
+          .update(appointments)
+          .set({ patientId: targetId })
+          .where(eq(appointments.patientId, sourceId))
+          .returning({ id: appointments.id });
+        movedAppointments = movedAp.length;
+      }
       await tx.execute(sql`
         DELETE FROM ${visits} sv USING ${visits} tv
         WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
@@ -820,7 +1200,7 @@ export class PgStorage implements IStorage {
         fill.telegramLinkedAt = source.telegramLinkedAt;
       }
       if (Object.keys(fill).length) await tx.update(patients).set(fill).where(eq(patients.id, targetId));
-      return { orders: moved.length, contacts: movedContacts.length };
+      return { orders: moved.length, contacts: movedContacts.length, appointments: movedAppointments };
     });
   }
 
@@ -897,6 +1277,10 @@ export class PgStorage implements IStorage {
       .where(eq(orders.patientId, id));
     if (count > 0) {
       throw new Error("Bu bemorda buyurtmalar mavjud — avval buyurtmalarni o'chiring");
+    }
+    if (await appointmentsTableExists(db)) {
+      const [booked] = await db.select({ id: appointments.id }).from(appointments).where(eq(appointments.patientId, id)).limit(1);
+      if (booked) throw new Error("Bu bemorda qabullar tarixi bor — kartani o'chirib bo'lmaydi");
     }
     const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
     if (rows.length) {

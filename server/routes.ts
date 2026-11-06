@@ -96,7 +96,7 @@ import {
   verifyTotp,
 } from "./mfa";
 import { localDay, storage, usingPostgres } from "./storage";
-import type { Actor, ExpenseQuery } from "./storage-types";
+import { StorageConflict, type ExpenseQuery } from "./storage-types";
 import {
   claimPendingContact,
   deliverOrderResults,
@@ -108,44 +108,8 @@ import {
   telegramWebhook,
 } from "./telegram";
 
-/** Wraps an async handler so a rejected promise reaches the error middleware. */
-const handle =
-  (fn: (req: Request, res: Response) => Promise<unknown>) =>
-  (req: Request, res: Response, next: NextFunction) =>
-    fn(req, res).catch(next);
-
-const numberParam = (value: unknown, fallback?: number) => {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-};
-
-const stringParam = (value: unknown) => (typeof value === "string" && value ? value : undefined);
-
-/** Who is doing this, in the shape the storage layer stamps onto rows. */
-function actorOf(req: Request): Actor {
-  return { id: req.user?.id ?? null, name: req.user?.fullName ?? "Tizim" };
-}
-
-/**
- * Appends to the audit log.
- *
- * Never rejects: the log is a record of the work, not part of it, so a logging
- * failure must not roll back a payment the cashier already took. Failures go to
- * the server console where they can be noticed.
- */
-async function audit(
-  req: Request,
-  action: string,
-  entity: string,
-  entityId: string | null,
-  summary: string,
-): Promise<void> {
-  try {
-    await storage.writeAudit({ actor: actorOf(req), action, entity, entityId, summary });
-  } catch (err) {
-    console.error("[audit] yozib bo'lmadi:", err);
-  }
-}
+import { actorOf, audit, emptyIfMissing, handle, numberParam, stringParam } from "./route-helpers";
+import { registerClinicRoutes } from "./routes-clinic";
 
 export async function registerRoutes(app: Express): Promise<void> {
   setupAuth(app);
@@ -706,7 +670,10 @@ export async function registerRoutes(app: Express): Promise<void> {
       await logCardView(req, card.patient);
 
       if (!hasPermission(req, "orders.read")) {
-        card.visits = [];
+        // Lab orders are hidden; the days the patient saw a doctor stay.
+        card.visits = card.visits
+          .map((v) => ({ ...v, orders: [], billed: 0, paid: 0 }))
+          .filter((v) => v.appointments.length > 0);
         card.payments = [];
       }
       if (!hasPermission(req, "finance.view") && !hasPermission(req, "payments.create")) {
@@ -903,7 +870,7 @@ export async function registerRoutes(app: Express): Promise<void> {
         "patient",
         target.id,
         `№${source.patientNumber} ${source.fullName} kartasi №${target.patientNumber} ${target.fullName} bilan birlashtirildi ` +
-          `(${moved.orders} ta buyurtma, ${moved.contacts} ta aloqa ko'chirildi)`,
+          `(${moved.orders} ta buyurtma, ${moved.appointments} ta qabul, ${moved.contacts} ta aloqa ko'chirildi)`,
       );
       res.json({ ...moved, patient: await storage.getPatientDetails(target.id) });
     }),
@@ -2092,10 +2059,6 @@ export async function registerRoutes(app: Express): Promise<void> {
    * Before `npm run db:clinic` has run the tables do not exist; the lists then
    * answer empty instead of failing the whole page.
    */
-  const emptyIfMissing = <T>(err: unknown, empty: T): T => {
-    if ((err as { code?: string } | null)?.code === "42P01") return empty;
-    throw err;
-  };
 
   app.get(
     "/api/departments",
@@ -2270,15 +2233,22 @@ export async function registerRoutes(app: Express): Promise<void> {
     "/api/doctors/:id",
     requirePermission("doctors.manage"),
     handle(async (req, res) => {
-      // TODO(B2.7): once appointments reference doctors, refuse here when any
-      // exist and tell the user to deactivate the profile instead.
       const before = await storage.getDoctor(req.params.id);
       if (!before) return res.status(404).json({ message: "Shifokor topilmadi" });
+      // Appointments are medical history and point at the doctor: a doctor
+      // who has seen patients is paused (isActive = false), never removed.
+      if (await storage.doctorHasAppointments(before.id)) {
+        return res.status(409).json({
+          message: "Bu shifokorda qabullar tarixi bor. Profilni o'chirish o'rniga qabulni to'xtating (nofaol qiling)",
+        });
+      }
       await storage.deleteDoctor(before.id);
       await audit(req, "delete", "doctor", before.id, `${before.fullName} — shifokor profili o'chirildi`);
       res.sendStatus(204);
     }),
   );
+
+  registerClinicRoutes(app);
 
   // An unknown API path is a 404 in JSON, not the client app's index.html with
   // a 200 — which is what the SPA fallback further down would otherwise serve.
@@ -2293,6 +2263,9 @@ export async function registerRoutes(app: Express): Promise<void> {
     if (res.headersSent) return next(err);
     if (err instanceof ZodError) {
       return res.status(400).json({ message: fromZodError(err).toString() });
+    }
+    if (err instanceof StorageConflict) {
+      return res.status(409).json({ message: err.message });
     }
     // A table from a newer release that this database has not been migrated to.
     if ((err as { code?: string } | null)?.code === "42P01") {

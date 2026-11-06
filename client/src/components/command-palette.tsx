@@ -4,7 +4,9 @@ import { useLocation } from "wouter";
 import {
   ArrowRight,
   BarChart3,
+  CalendarClock,
   ClipboardCheck,
+  ClipboardPlus,
   CornerDownLeft,
   FlaskConical,
   Loader2,
@@ -13,6 +15,7 @@ import {
   Search,
   Settings,
   Stethoscope,
+  Tags,
   UserCog,
   UserPlus,
   Users,
@@ -129,13 +132,16 @@ export function CommandPalette({
     }
     // Destinations follow the same permissions as the sidebar (lib/access.ts).
     const destinations: Item[] = [
+      { kind: "action", id: "go-cabinet", label: "Mening kabinetim", hint: "Bo'limga o'tish", icon: ClipboardPlus, run: () => go("/cabinet") },
       { kind: "action", id: "go-patients", label: "Bemorlar", hint: "Bo'limga o'tish", icon: Users, run: () => go("/patients") },
+      { kind: "action", id: "go-queue", label: "Navbat", hint: "Qabullar jadvali", icon: CalendarClock, run: () => go("/queue") },
       { kind: "action", id: "go-orders", label: "Buyurtmalar", hint: "Bo'limga o'tish", icon: Receipt, run: () => go("/orders") },
       { kind: "action", id: "go-results", label: "Natijalar", hint: "Bo'limga o'tish", icon: ClipboardCheck, run: () => go("/results") },
       { kind: "action", id: "go-reports", label: "Hisobotlar", hint: "Bo'limga o'tish", icon: BarChart3, run: () => go("/reports") },
       { kind: "action", id: "go-expenses", label: "Xarajatlar", hint: "Bo'limga o'tish", icon: Wallet, run: () => go("/expenses") },
       { kind: "action", id: "go-doctors", label: "Shifokorlar", hint: "Bo'limga o'tish", icon: Stethoscope, run: () => go("/doctors") },
       { kind: "action", id: "go-departments", label: "Bo'limlar", hint: "Bo'limga o'tish", icon: Network, run: () => go("/departments") },
+      { kind: "action", id: "go-services", label: "Xizmatlar", hint: "Narxlar ro'yxati", icon: Tags, run: () => go("/services") },
       { kind: "action", id: "go-staff", label: "Xodimlar", hint: "Bo'limga o'tish", icon: UserCog, run: () => go("/staff") },
       { kind: "action", id: "go-settings", label: "Sozlamalar", hint: "Bo'limga o'tish", icon: Settings, run: () => go("/settings") },
     ];

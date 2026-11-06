@@ -46,16 +46,24 @@ import type {
   UpdateUserInput,
   User,
   UserMfa,
+  Service,
+  ServiceWithDetails,
+  InsertService,
+  UpdateServiceInput,
+  Appointment,
+  AppointmentWithDetails,
   Visit,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
-import { nameKey } from "@shared/patient-identity";
+import { nameKey, patientAge } from "@shared/patient-identity";
+import { nextQueueNumber } from "@shared/appointment";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { type DbShape, readDbSync, writeDb } from "./db";
 import { hashPassword } from "./password";
 import { LEGACY_ADMIN, SUPER_ADMIN, SYSTEM_ROLES } from "@shared/permissions";
 import {
   SEED_USERS,
+  ATTENDED_STATUSES,
   buildPatientCard,
   byActiveThenName,
   sortRoles,
@@ -64,6 +72,11 @@ import {
   localDay,
   todayKey,
   type Actor,
+  StorageConflict,
+  type AppointmentQuery,
+  type AppointmentStatusChange,
+  type BookingCheck,
+  type NewAppointment,
   type AuditInput,
   type AuditQuery,
   type CreateOrderArgs,
@@ -406,6 +419,231 @@ export class FileStorage implements IStorage {
     return this.doctorDetails(doc);
   }
 
+  // ------------------------------------------------------------- services
+
+  private serviceDetails(svc: Service): ServiceWithDetails {
+    const dept = svc.departmentId ? this.db.departments.find((d) => d.id === svc.departmentId) : undefined;
+    return {
+      ...svc,
+      departmentName: dept?.name ?? null,
+      appointmentCount: this.db.appointments.filter((a) => a.serviceId === svc.id).length,
+    };
+  }
+
+  async listServices(opts: { activeOnly?: boolean } = {}): Promise<ServiceWithDetails[]> {
+    return this.db.services
+      .filter((x) => !opts.activeOnly || x.isActive)
+      .map((x) => this.serviceDetails(x))
+      .sort(
+        (a, b) =>
+          Number(b.isActive) - Number(a.isActive) || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name),
+      );
+  }
+
+  async getService(id: string): Promise<Service | undefined> {
+    const svc = this.db.services.find((x) => x.id === id);
+    return svc && { ...svc };
+  }
+
+  async createService(input: InsertService, actor: Actor): Promise<ServiceWithDetails> {
+    const svc: Service = {
+      id: randomUUID(),
+      name: input.name,
+      kind: input.kind,
+      departmentId: input.departmentId ?? null,
+      price: input.price,
+      durationMinutes: input.durationMinutes ?? null,
+      description: input.description ?? null,
+      isActive: input.isActive ?? true,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      updatedAt: null,
+      updatedBy: null,
+    };
+    this.db.services.push(svc);
+    await this.persist();
+    return this.serviceDetails(svc);
+  }
+
+  async updateService(id: string, input: UpdateServiceInput, actor: Actor): Promise<ServiceWithDetails | undefined> {
+    const svc = this.db.services.find((x) => x.id === id);
+    if (!svc) return undefined;
+    if (input.name !== undefined) svc.name = input.name;
+    if (input.kind !== undefined) svc.kind = input.kind;
+    if (input.departmentId !== undefined) svc.departmentId = input.departmentId ?? null;
+    if (input.price !== undefined) svc.price = input.price;
+    if (input.durationMinutes !== undefined) svc.durationMinutes = input.durationMinutes ?? null;
+    if (input.description !== undefined) svc.description = input.description ?? null;
+    if (input.isActive !== undefined) svc.isActive = input.isActive;
+    svc.updatedAt = new Date().toISOString();
+    svc.updatedBy = actor.id;
+    await this.persist();
+    return this.serviceDetails(svc);
+  }
+
+  async deleteService(id: string): Promise<boolean> {
+    const before = this.db.services.length;
+    this.db.services = this.db.services.filter((x) => x.id !== id);
+    if (this.db.services.length === before) return false;
+    await this.persist();
+    return true;
+  }
+
+  // --------------------------------------------------------- appointments
+
+  private appointmentDetails(a: Appointment): AppointmentWithDetails {
+    const patient = this.db.patients.find((p) => p.id === a.patientId);
+    const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
+    const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : undefined;
+    const dept = doctor?.departmentId ? this.db.departments.find((d) => d.id === doctor.departmentId) : undefined;
+    const svc = a.serviceId ? this.db.services.find((x) => x.id === a.serviceId) : undefined;
+    return {
+      ...a,
+      patientNumber: patient?.patientNumber ?? 0,
+      patientName: patient?.fullName ?? "—",
+      patientPhone: patient?.phone ?? "",
+      patientBirthDate: patient?.birthDate ?? null,
+      patientAge: patientAge(patient),
+      patientGender: patient?.gender ?? null,
+      doctorName: user?.fullName ?? "—",
+      doctorUserId: doctor?.userId ?? "",
+      specialty: doctor?.specialty ?? "",
+      room: doctor?.room ?? null,
+      departmentName: dept?.name ?? null,
+      serviceName: svc?.name ?? null,
+    };
+  }
+
+  async listAppointments(q: AppointmentQuery): Promise<AppointmentWithDetails[]> {
+    const list = this.db.appointments.filter(
+      (a) =>
+        (!q.date || a.date === q.date) &&
+        (!q.beforeDate || a.date < q.beforeDate) &&
+        (!q.doctorId || a.doctorId === q.doctorId) &&
+        (!q.patientId || a.patientId === q.patientId) &&
+        (!q.statuses?.length || q.statuses.includes(a.status)),
+    );
+    list.sort((a, b) =>
+      q.patientId
+        ? b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime)
+        : a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime) || a.queueNumber - b.queueNumber,
+    );
+    return list.slice(0, Math.min(q.limit ?? 500, 2000)).map((a) => this.appointmentDetails(a));
+  }
+
+  async getAppointment(id: string): Promise<AppointmentWithDetails | undefined> {
+    const a = this.db.appointments.find((x) => x.id === id);
+    return a && this.appointmentDetails(a);
+  }
+
+  private dayBookings(doctorId: string, date: string): Appointment[] {
+    return this.db.appointments.filter((a) => a.doctorId === doctorId && a.date === date).map((a) => ({ ...a }));
+  }
+
+  async createAppointment(input: NewAppointment, actor: Actor, check: BookingCheck): Promise<AppointmentWithDetails> {
+    // Check and push happen without an await in between: on this
+    // single-process store nothing else can run in that gap.
+    const day = this.dayBookings(input.doctorId, input.date);
+    const problem = check(day);
+    if (problem) throw new StorageConflict(problem);
+    const a: Appointment = {
+      id: randomUUID(),
+      patientId: input.patientId,
+      doctorId: input.doctorId,
+      serviceId: input.serviceId ?? null,
+      visitId: null,
+      date: input.date,
+      startTime: input.startTime,
+      durationMinutes: input.durationMinutes,
+      queueNumber: nextQueueNumber(day.map((x) => x.queueNumber)),
+      status: "scheduled",
+      price: input.price,
+      reason: input.reason ?? null,
+      arrivedAt: null,
+      startedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancelReason: null,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      updatedAt: null,
+      updatedBy: null,
+    };
+    this.db.appointments.push(a);
+    await this.persist();
+    return this.appointmentDetails(a);
+  }
+
+  async rescheduleAppointment(
+    id: string,
+    patch: { doctorId: string; date: string; startTime: string; durationMinutes: number; serviceId: string | null; price: number; reason: string | null },
+    actor: Actor,
+    check: BookingCheck,
+  ): Promise<AppointmentWithDetails> {
+    const a = this.db.appointments.find((x) => x.id === id);
+    if (!a) throw new StorageConflict("Qabul topilmadi");
+    if (a.status !== "scheduled") throw new StorageConflict("Faqat \"yozildi\" holatidagi qabulni ko'chirish mumkin");
+    const day = this.dayBookings(patch.doctorId, patch.date);
+    const problem = check(day);
+    if (problem) throw new StorageConflict(problem);
+    const sameQueue = a.doctorId === patch.doctorId && a.date === patch.date;
+    Object.assign(a, {
+      doctorId: patch.doctorId,
+      date: patch.date,
+      startTime: patch.startTime,
+      durationMinutes: patch.durationMinutes,
+      serviceId: patch.serviceId,
+      price: patch.price,
+      reason: patch.reason,
+      queueNumber: sameQueue ? a.queueNumber : nextQueueNumber(day.map((x) => x.queueNumber)),
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor.id,
+    });
+    await this.persist();
+    return this.appointmentDetails(a);
+  }
+
+  async setAppointmentStatus(id: string, change: AppointmentStatusChange, actor: Actor): Promise<AppointmentWithDetails> {
+    const a = this.db.appointments.find((x) => x.id === id);
+    if (!a || a.status !== change.from) {
+      throw new StorageConflict("Qabul holati boshqa joyda o'zgartirilgan. Sahifani yangilang");
+    }
+    const now = new Date().toISOString();
+    switch (change.to) {
+      case "arrived":
+        if (change.from !== "in_progress") {
+          a.arrivedAt = now;
+          a.visitId = this.ensureVisit(a.patientId, todayKey(), actor.id).id;
+        }
+        break;
+      case "in_progress":
+        a.startedAt = now;
+        break;
+      case "completed":
+        a.completedAt = now;
+        break;
+      case "cancelled":
+        a.cancelledAt = now;
+        a.cancelledBy = actor.id;
+        a.cancelReason = change.reason ?? null;
+        break;
+      case "scheduled":
+        a.arrivedAt = null;
+        a.visitId = null;
+        break;
+    }
+    a.status = change.to;
+    a.updatedAt = now;
+    a.updatedBy = actor.id;
+    await this.persist();
+    return this.appointmentDetails(a);
+  }
+
+  async doctorHasAppointments(doctorId: string): Promise<boolean> {
+    return this.db.appointments.some((a) => a.doctorId === doctorId);
+  }
+
   async deleteDoctor(id: string): Promise<boolean> {
     const before = this.db.doctors.length;
     this.db.doctors = this.db.doctors.filter((d) => d.id !== id);
@@ -552,9 +790,16 @@ export class FileStorage implements IStorage {
     const limit = query.limit ?? total;
     const page = rows.slice(offset, offset + limit).map((p) => {
       const live = this.db.orders.filter((o) => o.patientId === p.id && o.status !== "cancelled");
-      const last = live.reduce<string | null>((m, o) => (!m || o.createdAt > m ? o.createdAt : m), null);
-      // A visit is a day at the clinic, however many orders it had.
-      const days = new Set(live.map((o) => o.visitId ?? localDay(o.createdAt)));
+      const attended = this.db.appointments.filter(
+        (a) => a.patientId === p.id && a.arrivedAt && ATTENDED_STATUSES.includes(a.status),
+      );
+      const times = [...live.map((o) => o.createdAt), ...attended.map((a) => a.arrivedAt!)];
+      const last = times.reduce<string | null>((m, t) => (!m || t > m ? t : m), null);
+      // A visit is a day at the clinic: a lab order, an attended appointment, or both.
+      const days = new Set([
+        ...live.map((o) => o.visitId ?? localDay(o.createdAt)),
+        ...attended.map((a) => a.visitId ?? `day:${a.date}`),
+      ]);
       return { ...p, lastVisitAt: last, visitCount: days.size };
     });
     return { items: page, total };
@@ -581,7 +826,7 @@ export class FileStorage implements IStorage {
       .filter((p) => numbers.has(p.orderId))
       .map((p) => ({ ...p, orderNumber: numbers.get(p.orderId)! }));
     const visits = this.db.visits.filter((v) => v.patientId === id);
-    return buildPatientCard(details, items, visits, payments);
+    return buildPatientCard(details, items, visits, payments, await this.listAppointments({ patientId: id }));
   }
 
   async findPatientCandidates(q: PatientCandidateQuery): Promise<Patient[]> {
@@ -616,7 +861,10 @@ export class FileStorage implements IStorage {
     }
   }
 
-  async mergePatients(sourceId: string, targetId: string): Promise<{ orders: number; contacts: number } | undefined> {
+  async mergePatients(
+    sourceId: string,
+    targetId: string,
+  ): Promise<{ orders: number; contacts: number; appointments: number } | undefined> {
     const source = this.db.patients.find((p) => p.id === sourceId);
     const target = this.db.patients.find((p) => p.id === targetId);
     if (!source || !target || source.id === target.id) return undefined;
@@ -636,6 +884,7 @@ export class FileStorage implements IStorage {
       const same = this.db.visits.find((x) => x.patientId === targetId && x.visitDate === v.visitDate);
       if (same) {
         for (const o of this.db.orders) if (o.visitId === v.id) o.visitId = same.id;
+        for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
         this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
       } else {
         v.patientId = targetId;
@@ -649,9 +898,11 @@ export class FileStorage implements IStorage {
       target.telegramChatId = source.telegramChatId;
       target.telegramLinkedAt = source.telegramLinkedAt;
     }
+    let appointments = 0;
+    for (const a of this.db.appointments) if (a.patientId === sourceId) (a.patientId = targetId), appointments++;
     this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
     await this.persist();
-    return { orders, contacts };
+    return { orders, contacts, appointments };
   }
 
   async getPatientByPhone(phone: string): Promise<Patient | undefined> {
@@ -714,6 +965,9 @@ export class FileStorage implements IStorage {
   async deletePatient(id: string): Promise<boolean> {
     if (this.db.orders.some((o) => o.patientId === id)) {
       throw new Error("Bu bemorda buyurtmalar mavjud — avval buyurtmalarni o'chiring");
+    }
+    if (this.db.appointments.some((a) => a.patientId === id)) {
+      throw new Error("Bu bemorda qabullar tarixi bor — kartani o'chirib bo'lmaydi");
     }
     const before = this.db.patients.length;
     this.db.patients = this.db.patients.filter((p) => p.id !== id);

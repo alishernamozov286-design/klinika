@@ -1,5 +1,5 @@
 import { nationalPhoneDigits } from "@shared/schema";
-import type { OrderStatus, ResultFlag, SampleStatus } from "@shared/schema";
+import type { AppointmentStatus, OrderStatus, ResultFlag, SampleStatus } from "@shared/schema";
 
 /** Non-breaking space, so a so'm amount or a phone number never wraps mid-value. */
 const NBSP = " ";
@@ -166,6 +166,30 @@ export function dayKey(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/**
+ * A wall-clock calendar day ("2026-11-09") as "9-noyabr, dushanba". Parsed
+ * as UTC midnight and read back in UTC, so no time zone can shift the day.
+ */
+export function formatDayLong(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return `${d.getUTCDate()}-${MONTHS[d.getUTCMonth()]}, ${WEEKDAYS[d.getUTCDay()]}`;
+}
+
+/** "09.11.2026" for a wall-clock day. */
+export function formatDay(day: string | null | undefined): string {
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return DASH;
+  const [y, m, d] = day.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+/** A wall-clock day moved by n days. */
+export function shiftDay(day: string, n: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 export function daysAgo(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
@@ -230,6 +254,35 @@ export const STATUS_DOTS: Record<OrderStatus, string> = {
   in_progress: "bg-sky-500",
   completed: "bg-emerald-500",
   cancelled: "bg-rose-500",
+};
+
+/**
+ * Appointment statuses, in the same colour language: booked is slate (nothing
+ * to do yet), arrived is amber (waiting — needs the doctor), in the room is
+ * sky, done is emerald, missed and cancelled are rose.
+ */
+export const APPOINTMENT_STATUS_STYLES: Record<AppointmentStatus, string> = {
+  scheduled:
+    "bg-slate-500/10 text-slate-700 border-slate-500/25 dark:text-slate-300 dark:bg-slate-400/10 dark:border-slate-400/25",
+  arrived:
+    "bg-amber-500/10 text-amber-700 border-amber-500/25 dark:text-amber-300 dark:bg-amber-400/10 dark:border-amber-400/25",
+  in_progress:
+    "bg-sky-500/10 text-sky-700 border-sky-500/25 dark:text-sky-300 dark:bg-sky-400/10 dark:border-sky-400/25",
+  completed:
+    "bg-emerald-500/10 text-emerald-700 border-emerald-500/25 dark:text-emerald-300 dark:bg-emerald-400/10 dark:border-emerald-400/25",
+  no_show:
+    "bg-rose-500/10 text-rose-700 border-rose-500/25 dark:text-rose-300 dark:bg-rose-400/10 dark:border-rose-400/25",
+  cancelled:
+    "bg-muted text-muted-foreground border-border line-through decoration-muted-foreground/40",
+};
+
+export const APPOINTMENT_STATUS_DOTS: Record<AppointmentStatus, string> = {
+  scheduled: "bg-slate-400",
+  arrived: "bg-amber-500",
+  in_progress: "bg-sky-500 animate-pulse",
+  completed: "bg-emerald-500",
+  no_show: "bg-rose-500",
+  cancelled: "bg-muted-foreground/50",
 };
 
 /**

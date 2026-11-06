@@ -13,11 +13,12 @@
 
 export const PERMISSION_GROUPS = [
   { key: "patients", label: "Bemorlar", description: "Bemorlar bazasi va shaxsiy kartalar" },
+  { key: "appointments", label: "Navbat va qabul", description: "Shifokor qabuliga yozish, navbat va shifokor kabineti" },
   { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
   { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
   { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
   { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
-  { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar va shifokorlar" },
+  { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar, shifokorlar va xizmatlar" },
   { key: "system", label: "Tizim", description: "Sozlamalar, xodimlar, rollar va xavfsizlik" },
 ] as const;
 
@@ -59,6 +60,22 @@ export const PERMISSIONS = {
     label: "O'chirish",
     description: "Bemorni bazadan butunlay o'chirish",
     sensitive: true,
+  },
+
+  "appointments.read": {
+    group: "appointments",
+    label: "Ko'rish",
+    description: "Barcha shifokorlar navbati va qabullar jadvalini ko'rish",
+  },
+  "appointments.manage": {
+    group: "appointments",
+    label: "Qabulga yozish",
+    description: "Qabulga yozish, \"keldi\" deb belgilash, ko'chirish va bekor qilish",
+  },
+  "appointments.serve": {
+    group: "appointments",
+    label: "Qabul o'tkazish",
+    description: "Shifokor kabineti: o'z navbatidagi bemorni chaqirish va qabulni yakunlash",
   },
 
   "orders.read": {
@@ -164,6 +181,11 @@ export const PERMISSIONS = {
     label: "Shifokorlar",
     description: "Shifokor profili: mutaxassislik, kabinet, qabul narxi va ish jadvali",
   },
+  "services.manage": {
+    group: "clinic",
+    label: "Xizmatlar katalogi",
+    description: "Xizmatlar (ko'rik, UZI, muolaja) va ularning narxlarini boshqarish",
+  },
 
   "settings.manage": {
     group: "system",
@@ -250,6 +272,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     permissions: [
       "departments.manage",
       "doctors.manage",
+      "services.manage",
+      "appointments.read",
       "patients.read",
       "orders.read",
       "orders.cancel",
@@ -269,6 +293,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "patients.read",
       "patients.create",
       "patients.update",
+      "appointments.read",
+      "appointments.manage",
       "orders.read",
       "orders.create",
       "orders.update",
@@ -282,7 +308,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "shifokor",
     name: "Shifokor",
     description: "Tibbiy karta va buyurtmalar, bemor tahlil natijalarini ko'rish",
-    permissions: ["patients.read", "orders.read"],
+    permissions: ["patients.read", "orders.read", "appointments.serve"],
   },
   {
     key: "laborant",
@@ -321,7 +347,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "kassir",
     name: "Kassa xodimi",
     description: "To'lovlarni qabul qilish",
-    permissions: ["patients.read", "orders.read", "finance.view", "payments.create"],
+    permissions: ["patients.read", "appointments.read", "orders.read", "finance.view", "payments.create"],
   },
   {
     key: "buxgalter",
@@ -342,6 +368,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     description: "Ruxsat etilgan tarix va hisobotlarni faqat ko'rish",
     permissions: [
       "patients.read",
+      "appointments.read",
       "orders.read",
       "finance.view",
       "expenses.read",
