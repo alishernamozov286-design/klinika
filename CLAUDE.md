@@ -45,6 +45,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `server/routes.ts`: asosiy API. `server/routes-clinic.ts`: xizmatlar, qabullar, shifokor kabineti. `server/routes-medical.ts`: ko'rik yozuvlari, tibbiy karta, allergiyalar. Umumiy yordamchilar (`handle`, `audit`, `actorOf`, `emptyIfMissing`, `logPatientView`) — `server/route-helpers.ts`. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali. Storage'ning `StorageConflict` xatosi avtomatik 409 bo‘ladi.
 - `shared/appointment.ts`: qabul qoidalari (bo‘sh vaqtlar to‘ri, ustma-ust tushish, holat mashinasi va kim qaysi o‘tishni qiladi). Server ham, UI ham shundan foydalanadi.
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
+- `shared/patient-links.ts`: bemorga bog'langan jadvallar reyestri (birlashtirish va o'chirish qoidalari). `shared/ledger.ts`: nima o'chirilmaydi (to'lov, natijali buyurtma, ishlatilgan tahlil). `shared/reception.ts`: registratura panelining hisob-kitobi.
 - `server/auth.ts`: sessiya, Passport, login blokirovkasi, `forgetSessionUser`, `requireMfaEnrollment`.
 - `server/mfa.ts`: TOTP, kalitni shifrlash, zaxira kodlar (B1.8).
 - `shared/permissions.ts`: **ruxsatlar katalogi** (`PERMISSIONS`) va TZ §3 dagi 11 ta rolning boshlang‘ich ruxsatlari (`SYSTEM_ROLES`).
@@ -61,7 +62,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - **Interfeys tili: o‘zbek (lotin).** Barcha yorliqlar, xabarlar, xatolar o‘zbekcha. Kod va identifikatorlar inglizcha.
 - Format: telefon `+998 XX XXX XX XX`, pul `1 000 000 so'm`, faqat `format.ts` orqali.
 - Dizayn: oddiy shadcn defaultlari yetarli emas. `ui-kit.tsx` va `index.css` dizayn tizimidan foydalan (premium ko‘rinish).
-- Tibbiy hujjatlar, natijalar va moliyaviy yozuvlar **o‘chirilmaydi**: bekor qilinadi (`cancelled*`) yoki versiyalanadi (`§10`).
+- Tibbiy hujjatlar, natijalar va moliyaviy yozuvlar **o‘chirilmaydi**: bekor qilinadi (`cancelled*`, to'lovlar `voided*`) yoki versiyalanadi (`§10`). Qoidalar va xabarlar `shared/ledger.ts` da.
 - Har bir muhim jadvalda `id`, `createdAt`, `updatedAt`, `createdBy` / `updatedBy` bo‘ladi (`§10`).
 - Har bir yozish amali `audit()` ga tushadi. Tibbiy ma'lumotni o‘qish ham alohida jurnalga yoziladi (B1.6 dan keyin).
 - Ruxsat **serverda** tekshiriladi. UI'da yashirish faqat qulaylik uchun.
@@ -94,9 +95,9 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-05. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 31.5 → ≈41%**.
+> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 34 → ≈45%**.
 
-### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 90%
+### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
 - [x] **B1.1** Ma'lumotlar bazasi: PostgreSQL + Drizzle, fayl ombori zaxira varianti.
 - [x] **B1.2** Login va parol: scrypt xesh, brute-force blokirovka (username+IP), eskalatsiyali bloklash.
@@ -133,10 +134,16 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Testlar: `server/mfa.test.ts` (14), `server/storage-file.test.ts` (2FA bloki), 42 ta API e2e tekshiruv (vaqtinchalik skript bilan).
   - Neon'da `npm run db:mfa` bajarildi (2026-11-05); atomik so‘rovlar real bazada tranzaksiya ichida sinovdan o‘tdi.
   - Brauzerda (headless Chrome, CDP orqali) tekshirildi: kod bosqichi, noto‘g‘ri kod ogohlantirishi, kirish, Sozlamalar paneli (telefon o‘lchami ham), majburiy sozlash ekrani, QR, zaxira kodlar. `api/index.js` qayta yig‘ildi.
-- [~] **B1.9** Bemor ID (`§4.2`): `patientNumber` bor. **Qoldi:** barcha yangi modullarda faqat shu ID orqali bog‘lanish (qabul mezoni 16.1).
-- [~] **B1.10** Umumiy ustunlar (`§10`): `updatedAt`/`updatedBy` qo'shildi — roles, departments, doctors, expenses, patients. **Qoldi:** orders, tests, payments.
+- [x] **B1.9** Bemor ID (`§4.2`, qabul mezoni 16.1): har bir modul bemorga faqat `patients.id` (`patient_id` ustuni) orqali bog'lanadi. `patientNumber` hamma joyda ko'rsatiladi, lekin u orqali bog'lanilmaydi.
+  - `shared/patient-links.ts` (`PATIENT_LINKS`): `patient_id` li har bir jadval uchun birlashtirishda va o'chirishda nima bo'lishi yozilgan. `patient-links.test.ts` sxemani o'qiydi va ro'yxatga kiritilmagan jadval bo'lsa build yiqiladi. **Yangi modul jadvali avval shu yerga, so'ng ikkala storage'dagi `mergePatients` / `deletePatient` ga qo'shiladi.**
+  - Kartani o'chirish: buyurtma, qabul, ko'rik yozuvi yoki allergiyasi bor karta o'chirilmaydi (409, "birlashtiring" degan xabar bilan). Tekshiruv va o'chirish bitta tranzaksiyada, karta qatori qulflangan holda bajariladi. Postgres'da modullar soni qancha bo'lishidan qat'i nazar 2 ta so'rov.
+- [x] **B1.10** Umumiy ustunlar (`§10`: identifikator, yaratilgan va o'zgartirilgan vaqt, tegishli foydalanuvchi).
+  - Qo'shildi: `users` (`created_by`, `updated_at`, `updated_by`; kirish blokirovkasi "o'zgartirish" hisoblanmaydi), `roles` / `departments` / `doctors` / `patients` (`created_by`), `tests` (to'rttala ustun), `orders` (`updated_at`, `updated_by`: tahrir, natija, to'lov). Eski qatorlarda bu ustunlar NULL qoladi, o'ylab topilgan qiymat yozilmaydi. Mijoz bu ustunlarni yubora olmaydi (insert sxemalaridan chiqarilgan).
+  - Atayin qo'shilmadi: `visits`, `medical_record_versions`, `samples`, `patient_allergies`. Ular o'zgarmas yozuvlar yoki har bir hodisada o'z kim/qachon belgisiga ega. `order_tests` natijalari B4.5 da versiyalanadi.
+  - **Moliyaviy va tibbiy yozuvlar o'chirilmaydi** (`shared/ledger.ts`): to'lov yozuvi endi o'chirilmaydi, sabab bilan **bekor qilinadi** (`POST /api/payments/:id/void`, `payments.delete` ruxsati; `voided_*` ustunlari; to'langan summaga kirmaydi, tarixda chizilgan holda qoladi; ikki marta bekor qilish 409). To'lovi (bekor qilingani ham) yoki natijasi bor buyurtma o'chirilmaydi, faqat bekor qilinadi. Buyurtmalarda ishlatilgan tahlil katalogdan o'chirilmaydi, faolsizlantiriladi.
+  - Migratsiya: `npm run db:columns` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart:** kod bu ustunlarni har bir buyurtma, tahlil va xodim so'rovida o'qiydi. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06); yangi storage kodi real bazada o'qish rejimida tekshirildi.
 
-### Bosqich 2: Registratura (`§4`, `§15.2`) 86%
+### Bosqich 2: Registratura (`§4`, `§15.2`) 95%
 
 - [x] **B2.1** Yangi bemor formasi (`§4.1.2`): F.I.Sh., jins, telefon, manzil, tug'ilgan sana (yosh avtomatik; sana noma'lum bo'lsa taxminiy yosh), pasport/ID, JShShIR, favqulodda aloqa (`patient_contacts`). Migratsiya: `npm run db:patients`.
 - [x] **B2.2** Takroriy bemorni aniqlash (`§4.2`, `shared/patient-identity.ts`): yozish paytida tekshiruv; kuchli moslik (JShShIR, pasport, ism+telefon, ism+tug'ilgan sana — kirill/lotin farqisiz) saqlashni 409 bilan to'xtatadi, ro'yxatchi "shu bemor"ni tanlaydi yoki aniq tasdiqlaydi; kuchsiz moslik (faqat telefon/ism) faqat ogohlantiradi. Dublikat kartalarni birlashtirish (`patients.delete` ruxsati): buyurtmalar, aloqalar, Telegram ko'chadi, bo'sh maydonlar to'ldiriladi.
@@ -161,7 +168,10 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [x] **B2.8** Shifokorga elektron yo‘llanma (`§4.2`): qabul yaratilganda shifokor kabinetida paydo bo‘ladi. Qabul shifokorning kabinetiga darhol tushadi ("Yozilganlar"), "keldi" belgisi bilan "Kutayotganlar"ga o'tadi; murojaat sababi ham ko'rinadi.
 - [x] **B2.9** Laboratoriyaga buyurtma yuborish (`§4.2`).
 - [~] **B2.10** To‘lovni rasmiylashtirish (`§4.2`): lab buyurtmalari uchun bor. Bosqich 7 da umumiy hisobvaraqqa o‘tadi.
-- [ ] **B2.11** Registratura bosh sahifasi (`§4.1.1`): bugungi bemorlar, navbatdagilar, qabulga kelganlar, yangi ro‘yxatdan o‘tganlar, to‘lov holati.
+- [x] **B2.11** Registratura bosh sahifasi (`§4.1.1`): bugungi bemorlar, navbatdagilar, qabulga kelganlar, yangi ro‘yxatdan o‘tganlar, to‘lov holati.
+  - `GET /api/reception` (`appointments.read` yoki `orders.read`): Postgres'da bitta so'rov + kunlik qabullar, parallel. Har bir bo'lim o'z ruxsati bilan qaytadi: navbat `appointments.read`, to'lov holati `orders.read` (summalar `finance.view`), yangi bemorlar `patients.read`. Ruxsat bo'lmasa `null`.
+  - Bosh sahifada (`appointments.read` egalari uchun) "Registratura · Bugungi kun" paneli: 5 ta ko'rsatkich, qabulga kelganlar (qabuldagi, so'ng kelish tartibida), navbatdagilar (vaqt bo'yicha, kechikayotganlar belgilanadi, to'g'ridan-to'g'ri "Keldi"), yangi bemorlar, to'lov holati (to'liq / qisman / to'lanmagan). Kechikish server soati bo'yicha. 20 s da yangilanadi va amallardan keyin darhol invalidatsiya qilinadi.
+  - Hisoblash qoidalari `shared/reception.ts` da (test bilan). "To'lov holati" hozircha lab buyurtmalari bo'yicha. Qabul to'lovlari B7.1 (umumiy hisobvaraq) bilan qo'shiladi.
 
 ### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 39%
 
@@ -263,7 +273,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 | # | Mezon | Bog‘liq vazifalar | Holat |
 |---|---|---|---|
-| 16.1 | Bitta bemor barcha modullarda yagona ID bilan | B1.9, B2.5 | 🟡 |
+| 16.1 | Bitta bemor barcha modullarda yagona ID bilan | B1.9, B2.5 | ✅ (yangi modullar `PATIENT_LINKS` ga yoziladi) |
 | 16.2 | Registraturadan shifokorga buyurtma | B2.7, B2.8, B3.1 | ✅ |
 | 16.3 | Shifokordan laboratoriyaga yo‘llanma | B3.5 | ❌ |
 | 16.4 | Tasdiqlangan natija shifokorga yetadi | B4.5, B3.9 | ❌ |
@@ -292,5 +302,6 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B1.8 · Ikki bosqichli autentifikatsiya: TOTP, zaxira kodlar, rol bo'yicha majburiylik, admin reset, qulf bilan bog'langan kod xatolari.
 - 2026-11-05 · B2.6–B2.8, B3.1 · Xizmatlar katalogi va narxlar ro'yxati, qabulga yozish (bo'sh vaqtlar, navbat raqami, poyga himoyasi), navbat sahifasi, shifokor kabineti, qabullar bemor kartasi va tashriflarida. Yo'l-yo'lakay: route yordamchilari `route-helpers.ts` ga chiqarildi.
 - 2026-11-06 · B3.3, B3.7, B3.2 (qisman) · Ko'rik oynasi (avtosaqlash, revision to'qnashuvi himoyasi), tasdiqlash va versiyali tuzatish, elektron tibbiy karta (allergiyalar, tashxislar tarixi, lab natijalari), kabinetda tugallanmagan kartalar. Yo'l-yo'lakay: navbat va kabinet ekranlari eskirgan keshni ko'rsatardi (global `refetchOnMount: false`), tuzatildi.
+- 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
 - 2026-11-05 · fix · Postgres'dagi ichki so'rovlar: natijalar navbati (kutilmoqda/tayyor), tahlil nomi bo'yicha qidiruv, bemorlarning oxirgi tashrifi, bo'limlardagi shifokorlar soni noto'g'ri edi; tuzatildi va himoya testi qo'shildi.
 - 2026-11-05 · fix · Telegram polling 409 xatosi butun serverni o'chirardi; endi xato yoziladi va bot o'zi qayta ulanadi (409 da 35 s, boshqa xatolarda 5 s → 5 daq).

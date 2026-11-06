@@ -194,7 +194,7 @@ function BookingForm({
       return (await res.json()) as AppointmentWithDetails;
     },
     onSuccess: (a) => {
-      invalidateApi("/api/appointments", "/api/doctors", "/api/cabinet", "/api/services");
+      invalidateApi("/api/appointments", "/api/doctors", "/api/cabinet", "/api/services", "/api/reception");
       toast({
         title: isMove ? "Qabul ko'chirildi" : `Qabulga yozildi — navbat №${a.queueNumber}`,
         description: `${a.patientName} · ${a.doctorName} · ${formatDay(a.date)} ${a.startTime}`,

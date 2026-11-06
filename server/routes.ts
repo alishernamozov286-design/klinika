@@ -9,6 +9,7 @@ import {
   changePasswordSchema,
   createOrderSchema,
   createPaymentSchema,
+  voidPaymentSchema,
   insertExpenseSchema,
   updateExpenseSchema,
   cancelExpenseSchema,
@@ -451,7 +452,7 @@ export async function registerRoutes(app: Express): Promise<void> {
         return res.status(400).json({ message: "Joriy parol noto'g'ri" });
       }
 
-      await storage.updateUser(me.id, { password: input.newPassword });
+      await storage.updateUser(me.id, { password: input.newPassword }, actorOf(req));
       // Whoever might have had the old password is signed out everywhere else.
       const ended = await revokeUserSessions(sessionStore, sessionPool, me.id, { keepSid: req.sessionID });
       await audit(
@@ -850,7 +851,7 @@ export async function registerRoutes(app: Express): Promise<void> {
       }
       const [source, target] = await Promise.all([storage.getPatient(req.params.id), storage.getPatient(intoId)]);
       if (!source || !target) return res.status(404).json({ message: "Bemor topilmadi" });
-      const moved = await storage.mergePatients(source.id, target.id);
+      const moved = await storage.mergePatients(source.id, target.id, actorOf(req));
       if (!moved) return res.status(404).json({ message: "Bemor topilmadi" });
       await audit(
         req,
@@ -890,7 +891,7 @@ export async function registerRoutes(app: Express): Promise<void> {
     "/api/tests",
     requirePermission("tests.manage"),
     handle(async (req, res) => {
-      const test = await storage.createTest(insertTestSchema.parse(req.body));
+      const test = await storage.createTest(insertTestSchema.parse(req.body), actorOf(req));
       await audit(req, "create", "test", test.id, `"${test.name}" qo'shildi — ${test.price} so'm`);
       res.status(201).json(test);
     }),
@@ -902,7 +903,7 @@ export async function registerRoutes(app: Express): Promise<void> {
     handle(async (req, res) => {
       const input = insertTestSchema.partial().parse(req.body);
       const before = await storage.getTest(req.params.id);
-      const test = await storage.updateTest(req.params.id, input);
+      const test = await storage.updateTest(req.params.id, input, actorOf(req));
       if (!test) return res.status(404).json({ message: "Tahlil topilmadi" });
       // A price change is the one edit worth spelling out — it silently
       // rewrites what every future order costs.
@@ -1012,7 +1013,7 @@ export async function registerRoutes(app: Express): Promise<void> {
         return res.status(403).json({ message: "Buyurtmani tahrirlash uchun ruxsatingiz yo'q" });
       }
 
-      const order = await storage.updateOrder(req.params.id, input);
+      const order = await storage.updateOrder(req.params.id, input, actorOf(req));
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
 
       // Spelled out rather than "order updated": the log is only worth keeping
@@ -1184,14 +1185,27 @@ export async function registerRoutes(app: Express): Promise<void> {
     }),
   );
 
-  app.delete(
-    "/api/payments/:id",
+  /**
+   * Voids a mistyped ledger entry (TZ §10: financial records are never
+   * deleted). The row stays visible, struck through, with who and why; the
+   * paid total stops counting it. Money handed back is a refund, not this.
+   */
+  app.post(
+    "/api/payments/:id/void",
     requirePermission("payments.delete"),
     handle(async (req, res) => {
-      const ok = await storage.deletePayment(req.params.id);
-      if (!ok) return res.status(404).json({ message: "To'lov topilmadi" });
-      await audit(req, "delete", "payment", req.params.id, "To'lov yozuvi o'chirildi");
-      res.sendStatus(204);
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const order = await storage.voidPayment(req.params.id, reason, actorOf(req));
+      if (!order) return res.status(404).json({ message: "To'lov topilmadi" });
+      const row = order.payments?.find((p) => p.id === req.params.id);
+      await audit(
+        req,
+        "void",
+        "order",
+        order.id,
+        `#${order.orderNumber}: ${row?.amount ?? "?"} so'm to'lov bekor qilindi. Sabab: ${reason}`,
+      );
+      res.json(order);
     }),
   );
 
@@ -1618,7 +1632,7 @@ export async function registerRoutes(app: Express): Promise<void> {
       if (await storage.getUserByUsername(input.username)) {
         return res.status(409).json({ message: "Bu login allaqachon band" });
       }
-      const user = await storage.createUser(input);
+      const user = await storage.createUser(input, actorOf(req));
       const { roleName } = await toSessionUser(user);
       await audit(req, "create", "user", user.id, `${user.fullName} (${roleName}) qo'shildi`);
       res.status(201).json(user);
@@ -1663,7 +1677,7 @@ export async function registerRoutes(app: Express): Promise<void> {
           return res.status(409).json({ message: "Bu login allaqachon band" });
         }
       }
-      const user = await storage.updateUser(req.params.id, input);
+      const user = await storage.updateUser(req.params.id, input, actorOf(req));
       forgetSessionUser(req.params.id);
       if (!user) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
 

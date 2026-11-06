@@ -49,6 +49,7 @@ import {
   type InsertDepartment,
   type InsertDoctor,
   type DashboardStatsData,
+  type ReceptionDay,
   type Expense,
   type ExpenseStatus,
   type ExpenseSummary,
@@ -95,6 +96,8 @@ import {
   nationalPhoneDigits,
 } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
+import { BLOCKING_TABLES, patientHistoryProblem, type BlockingTable } from "@shared/patient-links";
+import { PAYMENT_ALREADY_VOIDED, TEST_IN_USE, orderDeleteProblem } from "@shared/ledger";
 import { nextQueueNumber } from "@shared/appointment";
 import { patientAge } from "@shared/patient-identity";
 import { db } from "./db-pg";
@@ -138,7 +141,17 @@ import type { LockState } from "@shared/lockout";
 const iso = <T extends string | null>(value: T): T =>
   (value ? (new Date(value).toISOString() as T) : value);
 
-const mapUser = (row: typeof users.$inferSelect): User => ({ ...row, createdAt: iso(row.createdAt) });
+const mapUser = (row: typeof users.$inferSelect): User => ({
+  ...row,
+  createdAt: iso(row.createdAt),
+  updatedAt: iso(row.updatedAt),
+});
+
+const mapTest = (row: typeof tests.$inferSelect): Test => ({
+  ...row,
+  createdAt: iso(row.createdAt),
+  updatedAt: iso(row.updatedAt),
+});
 
 const mapPatient = (row: typeof patients.$inferSelect): Patient => ({
   ...row,
@@ -156,6 +169,7 @@ const mapOrder = (row: typeof orders.$inferSelect): Order => ({
   ...row,
   status: row.status as Order["status"],
   createdAt: iso(row.createdAt),
+  updatedAt: iso(row.updatedAt),
   completedAt: iso(row.completedAt),
   telegramSentAt: iso(row.telegramSentAt),
 });
@@ -186,6 +200,13 @@ const strip = (user: typeof users.$inferSelect): PublicUser => {
  * pulling rows into JS first.
  */
 const dayExpr = sql`(${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date`;
+
+const mapPayment = (row: typeof payments.$inferSelect): Payment => ({
+  ...row,
+  method: row.method as Payment["method"],
+  createdAt: iso(row.createdAt) ?? row.createdAt,
+  voidedAt: iso(row.voidedAt),
+});
 
 const mapRole = (row: typeof roles.$inferSelect): RoleRecord => ({
   ...row,
@@ -496,6 +517,7 @@ export class PgStorage implements IStorage {
         description: input.description ?? null,
         permissions: [...input.permissions],
         isSystem: input.isSystem ?? false,
+        createdBy: actor.id,
         updatedBy: actor.id,
       })
       .returning();
@@ -548,6 +570,7 @@ export class PgStorage implements IStorage {
         kind: input.kind,
         description: input.description ?? null,
         isActive: input.isActive ?? true,
+        createdBy: actor.id,
         updatedBy: actor.id,
       })
       .returning();
@@ -606,6 +629,7 @@ export class PgStorage implements IStorage {
         slotMinutes: input.slotMinutes,
         schedule: input.schedule,
         isActive: input.isActive ?? true,
+        createdBy: actor.id,
         updatedBy: actor.id,
       })
       .returning({ id: doctors.id });
@@ -1074,7 +1098,7 @@ export class PgStorage implements IStorage {
     return row && mapUser(row);
   }
 
-  async createUser(input: InsertUser): Promise<PublicUser> {
+  async createUser(input: InsertUser, actor?: Actor): Promise<PublicUser> {
     const [row] = await db
       .insert(users)
       .values({
@@ -1083,12 +1107,13 @@ export class PgStorage implements IStorage {
         fullName: input.fullName,
         role: input.role,
         isActive: input.isActive ?? true,
+        createdBy: actor?.id ?? null,
       })
       .returning();
     return strip(row);
   }
 
-  async updateUser(id: string, input: UpdateUserInput): Promise<PublicUser | undefined> {
+  async updateUser(id: string, input: UpdateUserInput, actor?: Actor): Promise<PublicUser | undefined> {
     const patch: Partial<typeof users.$inferInsert> = {};
     if (input.username) patch.username = input.username;
     if (input.fullName) patch.fullName = input.fullName;
@@ -1099,6 +1124,8 @@ export class PgStorage implements IStorage {
       const current = await this.getUser(id);
       return current ? strip(current) : undefined;
     }
+    patch.updatedAt = new Date().toISOString();
+    patch.updatedBy = actor?.id ?? null;
     const [row] = await db.update(users).set(patch).where(eq(users.id, id)).returning();
     return row ? strip(row) : undefined;
   }
@@ -1316,12 +1343,7 @@ export class PgStorage implements IStorage {
       details,
       list.items,
       visitRows.map((v) => ({ ...v, createdAt: iso(v.createdAt) ?? v.createdAt })),
-      paymentRows.map((r) => ({
-        ...r.payment,
-        method: r.payment.method as Payment["method"],
-        createdAt: iso(r.payment.createdAt),
-        orderNumber: r.orderNumber,
-      })),
+      paymentRows.map((r) => ({ ...mapPayment(r.payment), orderNumber: r.orderNumber })),
       appointmentList,
     );
   }
@@ -1380,8 +1402,10 @@ export class PgStorage implements IStorage {
   async mergePatients(
     sourceId: string,
     targetId: string,
+    actor?: Actor,
   ): Promise<{ orders: number; contacts: number; appointments: number } | undefined> {
     if (sourceId === targetId) return undefined;
+    const stamp = { updatedAt: new Date().toISOString(), updatedBy: actor?.id ?? null };
     return db.transaction(async (tx) => {
       const [[source], [target]] = await Promise.all([
         tx.select().from(patients).where(eq(patients.id, sourceId)).limit(1),
@@ -1391,7 +1415,7 @@ export class PgStorage implements IStorage {
 
       const moved = await tx
         .update(orders)
-        .set({ patientId: targetId })
+        .set({ patientId: targetId, ...stamp })
         .where(eq(orders.patientId, sourceId))
         .returning({ id: orders.id });
 
@@ -1460,7 +1484,8 @@ export class PgStorage implements IStorage {
         fill.telegramChatId = source.telegramChatId;
         fill.telegramLinkedAt = source.telegramLinkedAt;
       }
-      if (Object.keys(fill).length) await tx.update(patients).set(fill).where(eq(patients.id, targetId));
+      // Stamped even with nothing to fill: the card now carries the duplicate's history.
+      await tx.update(patients).set({ ...fill, ...stamp }).where(eq(patients.id, targetId));
       return { orders: moved.length, contacts: movedContacts.length, appointments: movedAppointments };
     });
   }
@@ -1504,6 +1529,7 @@ export class PgStorage implements IStorage {
         birthDate: input.birthDate ?? null,
         passport: input.passport ?? null,
         pinfl: input.pinfl ?? null,
+        createdBy: actor?.id ?? null,
         updatedBy: actor?.id ?? null,
       })
       .returning();
@@ -1531,50 +1557,57 @@ export class PgStorage implements IStorage {
   }
 
   async deletePatient(id: string): Promise<boolean> {
-    // Refuse rather than orphan the order history.
-    const [{ count }] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(orders)
-      .where(eq(orders.patientId, id));
-    if (count > 0) {
-      throw new Error("Bu bemorda buyurtmalar mavjud — avval buyurtmalarni o'chiring");
-    }
-    if (await appointmentsTableExists(db)) {
-      const [booked] = await db.select({ id: appointments.id }).from(appointments).where(eq(appointments.patientId, id)).limit(1);
-      if (booked) throw new Error("Bu bemorda qabullar tarixi bor — kartani o'chirib bo'lmaydi");
-    }
-    if (await tableExists(db, "patient_allergies")) {
-      const [allergy] = await db
-        .select({ id: patientAllergies.id })
-        .from(patientAllergies)
-        .where(eq(patientAllergies.patientId, id))
-        .limit(1);
-      if (allergy) throw new Error("Bu bemorda tibbiy ma'lumotlar (allergiyalar) bor — kartani o'chirib bo'lmaydi");
-    }
-    const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
-    if (rows.length) {
-      await db.delete(patientContacts).where(eq(patientContacts.patientId, id));
-      await db.delete(visits).where(eq(visits.patientId, id));
-    }
-    return rows.length > 0;
+    return db.transaction(async (tx) => {
+      // The card is locked first, so history cannot be attached between the check and the delete.
+      const [locked] = await tx.select({ id: patients.id }).from(patients).where(eq(patients.id, id)).for("update");
+      if (!locked) return false;
+
+      // Refuse rather than orphan history. Two round trips whatever the number
+      // of modules: which tables exist (one not yet migrated holds nothing),
+      // then one count per existing table in a single statement.
+      const { rows: present } = await tx.execute<{ name: BlockingTable }>(sql`
+        SELECT t.name FROM unnest(string_to_array(${BLOCKING_TABLES.join(",")}, ',')) AS t(name)
+        WHERE to_regclass('public.' || t.name) IS NOT NULL`);
+      const counts: Partial<Record<BlockingTable, number>> = {};
+      if (present.length) {
+        const { rows } = await tx.execute<{ name: BlockingTable; n: number }>(
+          sql.join(
+            present.map(
+              ({ name }) =>
+                sql`SELECT ${name}::text AS name, count(*)::int AS n FROM ${sql.identifier(name)} x WHERE x.patient_id = ${id}`,
+            ),
+            sql` UNION ALL `,
+          ),
+        );
+        for (const r of rows) counts[r.name] = r.n;
+      }
+      const problem = patientHistoryProblem(counts);
+      if (problem) throw new StorageConflict(problem);
+
+      await tx.delete(patientContacts).where(eq(patientContacts.patientId, id));
+      await tx.delete(visits).where(eq(visits.patientId, id));
+      const rows = await tx.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
+      return rows.length > 0;
+    });
   }
 
   // ---------------------------------------------------------------- tests
 
   async listTests(opts: { activeOnly?: boolean } = {}): Promise<Test[]> {
-    return db
+    const rows = await db
       .select()
       .from(tests)
       .where(opts.activeOnly ? eq(tests.isActive, true) : undefined)
       .orderBy(asc(tests.category), asc(tests.name));
+    return rows.map(mapTest);
   }
 
   async getTest(id: string): Promise<Test | undefined> {
     const [row] = await db.select().from(tests).where(eq(tests.id, id)).limit(1);
-    return row;
+    return row && mapTest(row);
   }
 
-  async createTest(input: InsertTest): Promise<Test> {
+  async createTest(input: InsertTest, actor: Actor): Promise<Test> {
     const [row] = await db
       .insert(tests)
       .values({
@@ -1584,12 +1617,13 @@ export class PgStorage implements IStorage {
         unit: input.unit ?? null,
         referenceRange: input.referenceRange ?? null,
         isActive: input.isActive ?? true,
+        createdBy: actor.id,
       })
       .returning();
-    return row;
+    return mapTest(row);
   }
 
-  async updateTest(id: string, input: Partial<InsertTest>): Promise<Test | undefined> {
+  async updateTest(id: string, input: Partial<InsertTest>, actor: Actor): Promise<Test | undefined> {
     const patch: Partial<typeof tests.$inferInsert> = {};
     if (input.name !== undefined) patch.name = input.name;
     if (input.price !== undefined) patch.price = input.price;
@@ -1598,13 +1632,24 @@ export class PgStorage implements IStorage {
     if (input.referenceRange !== undefined) patch.referenceRange = input.referenceRange ?? null;
     if (input.isActive !== undefined) patch.isActive = input.isActive;
     if (Object.keys(patch).length === 0) return this.getTest(id);
+    patch.updatedAt = new Date().toISOString();
+    patch.updatedBy = actor.id;
     const [row] = await db.update(tests).set(patch).where(eq(tests.id, id)).returning();
-    return row;
+    return row && mapTest(row);
   }
 
   async deleteTest(id: string): Promise<boolean> {
-    const rows = await db.delete(tests).where(eq(tests.id, id)).returning({ id: tests.id });
-    return rows.length > 0;
+    // Check and delete in one statement, so an order placed in between
+    // cannot slip past the check.
+    const { rows } = await db.execute<{ deleted: boolean; used: boolean }>(sql`
+      WITH used AS (
+        SELECT EXISTS (SELECT 1 FROM order_tests ot WHERE ot.test_id = ${id}) AS used
+      ), gone AS (
+        DELETE FROM tests t WHERE t.id = ${id} AND NOT (SELECT u.used FROM used u) RETURNING t.id
+      )
+      SELECT EXISTS (SELECT 1 FROM gone) AS deleted, (SELECT u.used FROM used u) AS used`);
+    if (rows[0]?.used) throw new StorageConflict(TEST_IN_USE);
+    return Boolean(rows[0]?.deleted);
   }
 
   // --------------------------------------------------------------- orders
@@ -1753,11 +1798,7 @@ export class PgStorage implements IStorage {
       .from(payments)
       .where(eq(payments.orderId, orderId))
       .orderBy(desc(payments.createdAt));
-    return rows.map((r) => ({
-      ...r,
-      method: r.method as Payment["method"],
-      createdAt: iso(r.createdAt),
-    }));
+    return rows.map(mapPayment);
   }
 
   /**
@@ -1765,11 +1806,14 @@ export class PgStorage implements IStorage {
    * after every change is what keeps the two from drifting — incrementing it in
    * place silently loses a payment whenever a write fails halfway.
    */
-  private async syncPaid(tx: typeof db, orderId: string): Promise<void> {
+  private async syncPaid(tx: typeof db, orderId: string, actor: Actor): Promise<void> {
     await tx
       .update(orders)
       .set({
-        paidAmount: sql`greatest(0, (SELECT coalesce(sum(amount), 0)::int FROM ${payments} WHERE order_id = ${orderId}))`,
+        paidAmount: sql`greatest(0, (SELECT coalesce(sum(p.amount), 0)::int FROM payments p
+          WHERE p.order_id = ${orderId} AND p.voided_at IS NULL))`,
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor.id,
       })
       .where(eq(orders.id, orderId));
   }
@@ -1855,7 +1899,7 @@ export class PgStorage implements IStorage {
     return (await this.getOrder(orderId))!;
   }
 
-  async updateOrder(id: string, input: UpdateOrderInput): Promise<OrderWithDetails | undefined> {
+  async updateOrder(id: string, input: UpdateOrderInput, actor?: Actor): Promise<OrderWithDetails | undefined> {
     const [current] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
     if (!current) return undefined;
 
@@ -1881,7 +1925,9 @@ export class PgStorage implements IStorage {
       patch.completedAt = input.status === "completed" ? new Date().toISOString() : null;
     }
 
-    if (Object.keys(patch).length > 0) {
+    if (Object.keys(patch).length > 0 || input.testIds) {
+      patch.updatedAt = new Date().toISOString();
+      patch.updatedBy = actor?.id ?? null;
       await db.update(orders).set(patch).where(eq(orders.id, id));
     }
     return this.getOrder(id);
@@ -1971,6 +2017,7 @@ export class PgStorage implements IStorage {
       }
 
       // Status follows the line items: all filled -> completed, some -> in_progress.
+      const patch: Partial<typeof orders.$inferInsert> = { updatedAt: now, updatedBy: actor?.id ?? null };
       if (current.status !== "cancelled") {
         const [{ total, filled }] = await tx
           .select({
@@ -1981,11 +2028,10 @@ export class PgStorage implements IStorage {
           .where(eq(orderTests.orderId, id));
 
         const status = total > 0 && filled === total ? "completed" : filled > 0 ? "in_progress" : "pending";
-        await tx
-          .update(orders)
-          .set({ status, completedAt: status === "completed" ? now : null })
-          .where(eq(orders.id, id));
+        patch.status = status;
+        patch.completedAt = status === "completed" ? now : null;
       }
+      await tx.update(orders).set(patch).where(eq(orders.id, id));
     });
 
     return this.getOrder(id);
@@ -1993,8 +2039,17 @@ export class PgStorage implements IStorage {
 
   async deleteOrder(id: string): Promise<boolean> {
     return db.transaction(async (tx) => {
+      // Locked first, so a payment or a result cannot land between the check and the delete.
+      const [locked] = await tx.select({ id: orders.id }).from(orders).where(eq(orders.id, id)).for("update");
+      if (!locked) return false;
+      const { rows: [held] } = await tx.execute<{ paid: number; results: number }>(sql`
+        SELECT
+          (SELECT count(*) FROM payments p WHERE p.order_id = ${id})::int AS paid,
+          (SELECT count(*) FROM order_tests ot WHERE ot.order_id = ${id} AND ot.result IS NOT NULL)::int AS results`);
+      const problem = orderDeleteProblem(held?.paid ?? 0, held?.results ?? 0);
+      if (problem) throw new StorageConflict(problem);
+
       await tx.delete(orderTests).where(eq(orderTests.orderId, id));
-      await tx.delete(payments).where(eq(payments.orderId, id));
       // Must go with the order: the barcode is unique, so an orphan row would
       // block the number from ever being used again.
       await tx.delete(samples).where(eq(samples.orderId, id));
@@ -2090,7 +2145,7 @@ export class PgStorage implements IStorage {
     const [{ paid }] = await db
       .select({ paid: sql<number>`coalesce(sum(${payments.amount}), 0)::int` })
       .from(payments)
-      .where(eq(payments.orderId, orderId));
+      .where(and(eq(payments.orderId, orderId), isNull(payments.voidedAt)));
 
     // Neither direction may take the ledger somewhere impossible: no paying
     // past the bill, no refunding money that was never taken.
@@ -2111,20 +2166,34 @@ export class PgStorage implements IStorage {
         createdBy: actor.id,
         createdByName: actor.name,
       });
-      await this.syncPaid(tx as unknown as typeof db, orderId);
+      await this.syncPaid(tx as unknown as typeof db, orderId, actor);
     });
 
     return this.getOrder(orderId);
   }
 
-  async deletePayment(paymentId: string): Promise<boolean> {
-    const [row] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
-    if (!row) return false;
-    await db.transaction(async (tx) => {
-      await tx.delete(payments).where(eq(payments.id, paymentId));
-      await this.syncPaid(tx as unknown as typeof db, row.orderId);
+  async voidPayment(paymentId: string, reason: string, actor: Actor): Promise<OrderWithDetails | undefined> {
+    const orderId = await db.transaction(async (tx) => {
+      // Conditional on voided_at, so two people voiding at once void it once.
+      const [row] = await tx
+        .update(payments)
+        .set({
+          voidedAt: new Date().toISOString(),
+          voidedBy: actor.id,
+          voidedByName: actor.name,
+          voidReason: reason,
+        })
+        .where(and(eq(payments.id, paymentId), isNull(payments.voidedAt)))
+        .returning({ orderId: payments.orderId });
+      if (!row) {
+        const [exists] = await tx.select({ id: payments.id }).from(payments).where(eq(payments.id, paymentId)).limit(1);
+        if (exists) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
+        return undefined;
+      }
+      await this.syncPaid(tx as unknown as typeof db, row.orderId, actor);
+      return row.orderId;
     });
-    return true;
+    return orderId ? this.getOrder(orderId) : undefined;
   }
 
   // ------------------------------------------------------------- expenses
@@ -2455,6 +2524,69 @@ export class PgStorage implements IStorage {
       todayRevenue: r?.today_revenue ?? 0,
       totalPatients: r?.total_patients ?? 0,
       unpaidAmount: r?.unpaid ?? 0,
+    };
+  }
+
+  async getReceptionDay(day: string): Promise<ReceptionDay> {
+    // One statement: the desk's home screen refreshes all day, and on Neon
+    // every extra round trip is felt.
+    const { rows } = await db.execute<{
+      patients_today: number;
+      new_total: number;
+      new_latest: { id: string; patient_number: number; full_name: string; phone: string; created_at: string }[];
+      orders: number;
+      paid: number;
+      partial: number;
+      unpaid: number;
+      billed: number;
+      collected: number;
+    }>(sql`
+      WITH today_orders AS (
+        SELECT o.total_amount, o.paid_amount FROM orders o
+        WHERE o.status <> 'cancelled'
+          AND (o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date
+      ), new_patients AS (
+        SELECT p.id, p.patient_number, p.full_name, p.phone, p.created_at FROM patients p
+        WHERE (p.created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date
+      )
+      SELECT
+        (SELECT count(DISTINCT v.patient_id) FROM visits v WHERE v.visit_date = ${day}::text)::int AS patients_today,
+        (SELECT count(*) FROM new_patients)::int                                             AS new_total,
+        (SELECT coalesce(json_agg(n ORDER BY n.created_at DESC), '[]'::json)
+           FROM (SELECT * FROM new_patients np ORDER BY np.created_at DESC LIMIT 6) n)         AS new_latest,
+        (SELECT count(*) FROM today_orders)::int                                              AS orders,
+        (SELECT count(*) FROM today_orders t WHERE t.paid_amount >= t.total_amount)::int      AS paid,
+        (SELECT count(*) FROM today_orders t
+           WHERE t.paid_amount > 0 AND t.paid_amount < t.total_amount)::int                   AS partial,
+        (SELECT count(*) FROM today_orders t WHERE t.paid_amount = 0 AND t.total_amount > 0)::int AS unpaid,
+        (SELECT coalesce(sum(t.total_amount), 0) FROM today_orders t)::int                     AS billed,
+        (SELECT coalesce(sum(least(t.paid_amount, t.total_amount)), 0) FROM today_orders t)::int AS collected
+    `);
+    const r = rows[0];
+    const billed = r?.billed ?? 0;
+    const collected = r?.collected ?? 0;
+    return {
+      date: day,
+      patientsToday: r?.patients_today ?? 0,
+      newPatients: {
+        total: r?.new_total ?? 0,
+        latest: (r?.new_latest ?? []).map((n) => ({
+          id: n.id,
+          patientNumber: n.patient_number,
+          fullName: n.full_name,
+          phone: n.phone,
+          createdAt: iso(n.created_at),
+        })),
+      },
+      payments: {
+        orders: r?.orders ?? 0,
+        paid: r?.paid ?? 0,
+        partial: r?.partial ?? 0,
+        unpaid: r?.unpaid ?? 0,
+        billed,
+        collected,
+        due: Math.max(0, billed - collected),
+      },
     };
   }
 

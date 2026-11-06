@@ -35,7 +35,7 @@ export function useAppointmentStatus() {
       return (await res.json()) as AppointmentWithDetails;
     },
     onSuccess: (a, v) => {
-      invalidateApi("/api/appointments", "/api/cabinet", "/api/doctors");
+      invalidateApi("/api/appointments", "/api/cabinet", "/api/doctors", "/api/reception");
       toast({
         title: SUCCESS_TITLES[v.status] ?? APPOINTMENT_STATUS_LABELS[v.status],
         description: `№${a.queueNumber} · ${a.patientName}`,
@@ -43,7 +43,7 @@ export function useAppointmentStatus() {
     },
     onError: (err: Error) => {
       // Someone else may have moved it: show what is true now.
-      invalidateApi("/api/appointments", "/api/cabinet");
+      invalidateApi("/api/appointments", "/api/cabinet", "/api/reception");
       toast({ variant: "destructive", title: "Bajarilmadi", description: err.message });
     },
   });

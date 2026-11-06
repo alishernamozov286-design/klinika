@@ -11,6 +11,7 @@ import type {
   InsertDepartment,
   InsertDoctor,
   DashboardStatsData,
+  ReceptionDay,
   Expense,
   ExpenseSummary,
   InsertExpense,
@@ -63,6 +64,8 @@ import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRa
 import { nameKey, patientAge } from "@shared/patient-identity";
 import { nextQueueNumber } from "@shared/appointment";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
+import { patientHistoryProblem } from "@shared/patient-links";
+import { PAYMENT_ALREADY_VOIDED, TEST_IN_USE, ledgerTotal, orderDeleteProblem } from "@shared/ledger";
 import { type DbShape, readDbSync, writeDb } from "./db";
 import { hashPassword } from "./password";
 import { LEGACY_ADMIN, SUPER_ADMIN, SYSTEM_ROLES } from "@shared/permissions";
@@ -97,6 +100,9 @@ import {
   resolveFlag,
 } from "./storage-types";
 import type { LockState } from "@shared/lockout";
+
+/** A ledger row as written: voiding is a later, separate act. */
+const UNVOIDED = { voidedAt: null, voidedBy: null, voidedByName: null, voidReason: null } as const;
 
 function contains(haystack: string | null | undefined, needle: string): boolean {
   return (haystack ?? "").toLowerCase().includes(needle);
@@ -189,6 +195,10 @@ export class FileStorage implements IStorage {
           unit: ref?.unit ?? null,
           referenceRange: ref?.referenceRange ?? null,
           isActive: true,
+          createdAt: new Date().toISOString(),
+          createdBy: null,
+          updatedAt: null,
+          updatedBy: null,
         };
       });
       createdTests = this.db.tests.length;
@@ -205,6 +215,9 @@ export class FileStorage implements IStorage {
           role: u.role,
           isActive: true,
           createdAt: new Date().toISOString(),
+          createdBy: null,
+          updatedAt: null,
+          updatedBy: null,
           failedAttempts: 0,
           lockedUntil: null,
           lockLevel: 0,
@@ -228,6 +241,7 @@ export class FileStorage implements IStorage {
         permissions: [...def.permissions],
         isSystem: true,
         createdAt: now,
+        createdBy: null,
         updatedAt: null,
         updatedBy: null,
       });
@@ -275,6 +289,7 @@ export class FileStorage implements IStorage {
       permissions: [...input.permissions],
       isSystem: input.isSystem ?? false,
       createdAt: new Date().toISOString(),
+      createdBy: actor.id,
       updatedAt: null,
       updatedBy: actor.id,
     };
@@ -324,6 +339,7 @@ export class FileStorage implements IStorage {
       description: input.description ?? null,
       isActive: input.isActive ?? true,
       createdAt: new Date().toISOString(),
+      createdBy: actor.id,
       updatedAt: null,
       updatedBy: actor.id,
     };
@@ -402,6 +418,7 @@ export class FileStorage implements IStorage {
       schedule: input.schedule.map((s) => ({ ...s })),
       isActive: input.isActive ?? true,
       createdAt: new Date().toISOString(),
+      createdBy: actor.id,
       updatedAt: null,
       updatedBy: actor.id,
     };
@@ -926,7 +943,7 @@ export class FileStorage implements IStorage {
     return this.db.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
   }
 
-  async createUser(input: InsertUser): Promise<PublicUser> {
+  async createUser(input: InsertUser, actor?: Actor): Promise<PublicUser> {
     const user: User = {
       id: randomUUID(),
       username: input.username,
@@ -935,6 +952,9 @@ export class FileStorage implements IStorage {
       role: input.role,
       isActive: input.isActive ?? true,
       createdAt: new Date().toISOString(),
+      createdBy: actor?.id ?? null,
+      updatedAt: null,
+      updatedBy: null,
       failedAttempts: 0,
       lockedUntil: null,
       lockLevel: 0,
@@ -946,14 +966,20 @@ export class FileStorage implements IStorage {
     return pub;
   }
 
-  async updateUser(id: string, input: UpdateUserInput): Promise<PublicUser | undefined> {
+  async updateUser(id: string, input: UpdateUserInput, actor?: Actor): Promise<PublicUser | undefined> {
     const user = this.db.users.find((u) => u.id === id);
     if (!user) return undefined;
+    const touched =
+      Boolean(input.username || input.fullName || input.role || input.password) || input.isActive !== undefined;
     if (input.username) user.username = input.username;
     if (input.fullName) user.fullName = input.fullName;
     if (input.role) user.role = input.role;
     if (input.isActive !== undefined) user.isActive = input.isActive;
     if (input.password) user.password = await hashPassword(input.password);
+    if (touched) {
+      user.updatedAt = new Date().toISOString();
+      user.updatedBy = actor?.id ?? null;
+    }
     await this.persist();
     const { password: _password, ...pub } = user;
     return pub;
@@ -1079,12 +1105,19 @@ export class FileStorage implements IStorage {
   async mergePatients(
     sourceId: string,
     targetId: string,
+    actor?: Actor,
   ): Promise<{ orders: number; contacts: number; appointments: number } | undefined> {
     const source = this.db.patients.find((p) => p.id === sourceId);
     const target = this.db.patients.find((p) => p.id === targetId);
     if (!source || !target || source.id === target.id) return undefined;
+    const stamp = { updatedAt: new Date().toISOString(), updatedBy: actor?.id ?? null };
     let orders = 0;
-    for (const o of this.db.orders) if (o.patientId === sourceId) (o.patientId = targetId), orders++;
+    for (const o of this.db.orders) {
+      if (o.patientId !== sourceId) continue;
+      Object.assign(o, { patientId: targetId }, stamp);
+      orders++;
+    }
+    Object.assign(target, stamp);
     let contacts = 0;
     for (const c of this.db.patientContacts) {
       if (c.patientId !== sourceId) continue;
@@ -1149,6 +1182,7 @@ export class FileStorage implements IStorage {
       passport: input.passport ?? null,
       pinfl: input.pinfl ?? null,
       createdAt: new Date().toISOString(),
+      createdBy: actor?.id ?? null,
       updatedAt: null,
       updatedBy: actor?.id ?? null,
       telegramChatId: null,
@@ -1181,15 +1215,14 @@ export class FileStorage implements IStorage {
   }
 
   async deletePatient(id: string): Promise<boolean> {
-    if (this.db.orders.some((o) => o.patientId === id)) {
-      throw new Error("Bu bemorda buyurtmalar mavjud — avval buyurtmalarni o'chiring");
-    }
-    if (this.db.appointments.some((a) => a.patientId === id)) {
-      throw new Error("Bu bemorda qabullar tarixi bor — kartani o'chirib bo'lmaydi");
-    }
-    if (this.db.patientAllergies.some((a) => a.patientId === id)) {
-      throw new Error("Bu bemorda tibbiy ma'lumotlar (allergiyalar) bor — kartani o'chirib bo'lmaydi");
-    }
+    const mine = (rows: { patientId: string }[]) => rows.filter((r) => r.patientId === id).length;
+    const problem = patientHistoryProblem({
+      orders: mine(this.db.orders),
+      appointments: mine(this.db.appointments),
+      medical_records: mine(this.db.medicalRecords),
+      patient_allergies: mine(this.db.patientAllergies),
+    });
+    if (problem) throw new StorageConflict(problem);
     const before = this.db.patients.length;
     this.db.patients = this.db.patients.filter((p) => p.id !== id);
     if (this.db.patients.length === before) return false;
@@ -1210,7 +1243,7 @@ export class FileStorage implements IStorage {
     return this.db.tests.find((t) => t.id === id);
   }
 
-  async createTest(input: InsertTest): Promise<Test> {
+  async createTest(input: InsertTest, actor: Actor): Promise<Test> {
     const test: Test = {
       id: randomUUID(),
       name: input.name,
@@ -1219,15 +1252,24 @@ export class FileStorage implements IStorage {
       unit: input.unit ?? null,
       referenceRange: input.referenceRange ?? null,
       isActive: input.isActive ?? true,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      updatedAt: null,
+      updatedBy: null,
     };
     this.db.tests.push(test);
     await this.persist();
     return test;
   }
 
-  async updateTest(id: string, input: Partial<InsertTest>): Promise<Test | undefined> {
+  async updateTest(id: string, input: Partial<InsertTest>, actor: Actor): Promise<Test | undefined> {
     const test = this.db.tests.find((t) => t.id === id);
     if (!test) return undefined;
+    const fields = ["name", "price", "category", "unit", "referenceRange", "isActive"] as const;
+    if (fields.some((k) => input[k] !== undefined)) {
+      test.updatedAt = new Date().toISOString();
+      test.updatedBy = actor.id;
+    }
     if (input.name !== undefined) test.name = input.name;
     if (input.price !== undefined) test.price = input.price;
     if (input.category !== undefined) test.category = input.category;
@@ -1239,6 +1281,7 @@ export class FileStorage implements IStorage {
   }
 
   async deleteTest(id: string): Promise<boolean> {
+    if (this.db.orderTests.some((i) => i.testId === id)) throw new StorageConflict(TEST_IN_USE);
     const before = this.db.tests.length;
     this.db.tests = this.db.tests.filter((t) => t.id !== id);
     if (this.db.tests.length === before) return false;
@@ -1274,10 +1317,7 @@ export class FileStorage implements IStorage {
   private syncPaid(orderId: string): void {
     const order = this.db.orders.find((o) => o.id === orderId);
     if (!order) return;
-    const sum = this.db.payments
-      .filter((p) => p.orderId === orderId)
-      .reduce((acc, p) => acc + p.amount, 0);
-    order.paidAmount = Math.max(0, sum);
+    order.paidAmount = Math.max(0, ledgerTotal(this.db.payments.filter((p) => p.orderId === orderId)));
   }
 
   async listOrders(query: OrderQuery = {}): Promise<OrderListResponse> {
@@ -1366,6 +1406,8 @@ export class FileStorage implements IStorage {
       referrer: input.referrer ?? null,
       createdBy: input.createdBy ?? null,
       createdAt: now,
+      updatedAt: null,
+      updatedBy: null,
       completedAt: null,
       telegramSentAt: null,
     };
@@ -1407,6 +1449,7 @@ export class FileStorage implements IStorage {
         createdBy: input.createdBy ?? null,
         createdByName: this.db.users.find((u) => u.id === input.createdBy)?.fullName ?? "—",
         createdAt: now,
+        ...UNVOIDED,
       });
     }
     this.syncPaid(order.id);
@@ -1435,9 +1478,19 @@ export class FileStorage implements IStorage {
     return this.hydrate(order, true);
   }
 
-  async updateOrder(id: string, input: UpdateOrderInput): Promise<OrderWithDetails | undefined> {
+  async updateOrder(id: string, input: UpdateOrderInput, actor?: Actor): Promise<OrderWithDetails | undefined> {
     const order = this.db.orders.find((o) => o.id === id);
     if (!order) return undefined;
+    const touched =
+      input.testIds !== undefined ||
+      input.discount !== undefined ||
+      input.notes !== undefined ||
+      input.referrer !== undefined ||
+      Boolean(input.status);
+    if (touched) {
+      order.updatedAt = new Date().toISOString();
+      order.updatedBy = actor?.id ?? null;
+    }
 
     if (input.testIds) this.replaceOrderTests(id, input.testIds);
 
@@ -1528,6 +1581,8 @@ export class FileStorage implements IStorage {
       if (value && actor) item.enteredBy = actor.name;
     }
 
+    order.updatedAt = now;
+    order.updatedBy = actor?.id ?? null;
     const items = this.db.orderTests.filter((i) => i.orderId === id);
     const filled = items.filter((i) => Boolean(i.result)).length;
     if (order.status !== "cancelled") {
@@ -1548,11 +1603,14 @@ export class FileStorage implements IStorage {
   }
 
   async deleteOrder(id: string): Promise<boolean> {
-    const before = this.db.orders.length;
+    if (!this.db.orders.some((o) => o.id === id)) return false;
+    const problem = orderDeleteProblem(
+      this.db.payments.filter((p) => p.orderId === id).length,
+      this.db.orderTests.filter((i) => i.orderId === id && i.result).length,
+    );
+    if (problem) throw new StorageConflict(problem);
     this.db.orders = this.db.orders.filter((o) => o.id !== id);
-    if (this.db.orders.length === before) return false;
     this.db.orderTests = this.db.orderTests.filter((i) => i.orderId !== id);
-    this.db.payments = this.db.payments.filter((p) => p.orderId !== id);
     this.db.samples = this.db.samples.filter((s) => s.orderId !== id);
     await this.persist();
     return true;
@@ -1637,9 +1695,7 @@ export class FileStorage implements IStorage {
     const order = this.db.orders.find((o) => o.id === orderId);
     if (!order) return undefined;
 
-    const paid = this.db.payments
-      .filter((p) => p.orderId === orderId)
-      .reduce((s, p) => s + p.amount, 0);
+    const paid = ledgerTotal(this.db.payments.filter((p) => p.orderId === orderId));
 
     // Neither direction may take the ledger somewhere impossible: no paying
     // past the bill, no refunding money that was never taken.
@@ -1660,19 +1716,32 @@ export class FileStorage implements IStorage {
       createdBy: actor.id,
       createdByName: actor.name,
       createdAt: new Date().toISOString(),
+      ...UNVOIDED,
     });
+    this.touchOrder(order, actor);
     this.syncPaid(orderId);
     await this.persist();
     return this.hydrate(order, true);
   }
 
-  async deletePayment(paymentId: string): Promise<boolean> {
+  async voidPayment(paymentId: string, reason: string, actor: Actor): Promise<OrderWithDetails | undefined> {
     const row = this.db.payments.find((p) => p.id === paymentId);
-    if (!row) return false;
-    this.db.payments = this.db.payments.filter((p) => p.id !== paymentId);
+    if (!row) return undefined;
+    if (row.voidedAt) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
+    row.voidedAt = new Date().toISOString();
+    row.voidedBy = actor.id;
+    row.voidedByName = actor.name;
+    row.voidReason = reason;
+    const order = this.db.orders.find((o) => o.id === row.orderId);
+    if (order) this.touchOrder(order, actor);
     this.syncPaid(row.orderId);
     await this.persist();
-    return true;
+    return order && this.hydrate(order, true);
+  }
+
+  private touchOrder(order: Order, actor: Actor): void {
+    order.updatedAt = new Date().toISOString();
+    order.updatedBy = actor.id;
   }
 
   // ------------------------------------------------------------- expenses
@@ -1930,6 +1999,38 @@ export class FileStorage implements IStorage {
       unpaidAmount: this.db.orders
         .filter((o) => o.status !== "cancelled")
         .reduce((sum, o) => sum + Math.max(0, o.totalAmount - o.paidAmount), 0),
+    };
+  }
+
+  async getReceptionDay(day: string): Promise<ReceptionDay> {
+    const orders = this.db.orders.filter((o) => o.status !== "cancelled" && localDay(o.createdAt) === day);
+    const fresh = this.db.patients
+      .filter((p) => localDay(p.createdAt) === day)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const billed = orders.reduce((s, o) => s + o.totalAmount, 0);
+    const collected = orders.reduce((s, o) => s + Math.min(o.paidAmount, o.totalAmount), 0);
+    return {
+      date: day,
+      patientsToday: new Set(this.db.visits.filter((v) => v.visitDate === day).map((v) => v.patientId)).size,
+      newPatients: {
+        total: fresh.length,
+        latest: fresh.slice(0, 6).map((p) => ({
+          id: p.id,
+          patientNumber: p.patientNumber,
+          fullName: p.fullName,
+          phone: p.phone,
+          createdAt: p.createdAt,
+        })),
+      },
+      payments: {
+        orders: orders.length,
+        paid: orders.filter((o) => o.paidAmount >= o.totalAmount).length,
+        partial: orders.filter((o) => o.paidAmount > 0 && o.paidAmount < o.totalAmount).length,
+        unpaid: orders.filter((o) => o.paidAmount === 0 && o.totalAmount > 0).length,
+        billed,
+        collected,
+        due: Math.max(0, billed - collected),
+      },
     };
   }
 

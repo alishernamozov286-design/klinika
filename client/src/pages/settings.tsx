@@ -709,8 +709,8 @@ function TestsPanel() {
         title="Tahlilni o'chirish"
         description={
           <>
-            <strong>{deleting?.name}</strong> narxlar ro'yxatidan o'chiriladi. Eski buyurtmalarga
-            ta'sir qilmaydi. Vaqtincha yashirish uchun "Faol" tugmasini o'chirish yetarli.
+            <strong>{deleting?.name}</strong> narxlar ro'yxatidan o'chiriladi. Buyurtmalarda ishlatilgan
+            tahlilni o'chirib bo'lmaydi, uni "Faol" tugmasi bilan yashiring: tarix saqlanadi.
           </>
         }
         onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}

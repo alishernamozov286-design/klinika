@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
+  Ban,
   CircleDollarSign,
   ClipboardCheck,
   Loader2,
   Printer,
   Receipt,
   Send,
-  Trash2,
   XCircle,
 } from "lucide-react";
-import { PAYMENT_METHODS, type OrderWithDetails, type PaymentMethod } from "@shared/schema";
+import { PAYMENT_METHODS, type OrderWithDetails, type Payment, type PaymentMethod } from "@shared/schema";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -41,7 +43,7 @@ import { cn } from "@/lib/utils";
 export function OrderDetailDialog({
   open,
   onOpenChange,
-  order,
+  order: snapshot,
   onEnterResults,
   onPrint,
 }: {
@@ -54,13 +56,24 @@ export function OrderDetailDialog({
   const { toast } = useToast();
   const { can } = useAuth();
 
+  // Callers hand over a row from a list, and list rows carry no payment
+  // ledger. The dialog loads the full order itself, so the ledger is there
+  // and every payment, void or edit made here shows up at once (the
+  // mutations invalidate /api/orders, which covers this key too).
+  const { data: full } = useQuery<OrderWithDetails>({
+    queryKey: [`/api/orders/${snapshot?.id}`],
+    enabled: open && Boolean(snapshot),
+    refetchOnMount: "always",
+  });
+  const order = snapshot && full?.id === snapshot.id ? full : snapshot;
+
   const mutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
       const res = await apiRequest("PATCH", `/api/orders/${order!.id}`, payload);
       return (await res.json()) as OrderWithDetails;
     },
     onSuccess: () => {
-      invalidateApi("/api/orders", "/api/stats");
+      invalidateApi("/api/orders", "/api/stats", "/api/reception");
       toast({ title: "Buyurtma yangilandi" });
     },
     onError: (err: Error) => {
@@ -299,7 +312,7 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
       return (await res.json()) as OrderWithDetails;
     },
     onSuccess: (saved) => {
-      invalidateApi("/api/orders", "/api/stats");
+      invalidateApi("/api/orders", "/api/stats", "/api/reception");
       toast({
         title: "To'lov qayd etildi",
         description: `Qoldiq: ${money(Math.max(0, saved.totalAmount - saved.paidAmount))}`,
@@ -310,19 +323,7 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
     },
   });
 
-  const remove = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/payments/${id}`);
-    },
-    onSuccess: () => {
-      invalidateApi("/api/orders", "/api/stats");
-      toast({ title: "To'lov yozuvi o'chirildi" });
-    },
-    onError: (err: Error) => {
-      toast({ variant: "destructive", title: "O'chirilmadi", description: err.message });
-    },
-  });
-
+  const [voiding, setVoiding] = useState<Payment | null>(null);
   const rows = order.payments ?? [];
 
   return (
@@ -338,12 +339,17 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
       ) : (
         <div className="space-y-1.5">
           {rows.map((p) => (
-            <div key={p.id} className="flex items-center gap-3 rounded-lg border p-2.5">
+            <div
+              key={p.id}
+              className={cn("flex items-center gap-3 rounded-lg border p-2.5", p.voidedAt && "border-dashed bg-muted/30")}
+              data-testid={`payment-row-${p.id}`}
+            >
               <div className="min-w-0 flex-1">
                 <p
                   className={cn(
                     "text-sm font-semibold tabular",
                     p.amount < 0 && "text-rose-600 dark:text-rose-400",
+                    p.voidedAt && "text-muted-foreground line-through decoration-1",
                   )}
                 >
                   {p.amount < 0 ? "−" : "+"}
@@ -356,16 +362,24 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
                   {p.createdByName ?? "—"}
                   {p.note ? ` · ${p.note}` : ""}
                 </p>
+                {p.voidedAt && (
+                  <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
+                    Bekor qilingan · <span className="tabular">{formatDateTime(p.voidedAt)}</span> ·{" "}
+                    {p.voidedByName ?? "—"}
+                    {p.voidReason ? ` · ${p.voidReason}` : ""}
+                  </p>
+                )}
               </div>
-              {can("payments.delete") && (
+              {can("payments.delete") && !p.voidedAt && (
                 <button
                   type="button"
-                  onClick={() => remove.mutate(p.id)}
-                  disabled={remove.isPending}
-                  className="shrink-0 text-muted-foreground hover:text-destructive"
-                  aria-label="To'lov yozuvini o'chirish"
+                  onClick={() => setVoiding(p)}
+                  className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  aria-label="To'lov yozuvini bekor qilish"
+                  title="Bekor qilish"
+                  data-testid={`button-void-payment-${p.id}`}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Ban className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
@@ -420,6 +434,91 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
           )}
         </div>
       )}
+
+      <VoidPaymentDialog payment={voiding} onOpenChange={(o) => !o && setVoiding(null)} />
     </div>
+  );
+}
+
+/**
+ * Strikes out a mistyped ledger entry. Nothing is deleted (TZ §10): the row
+ * stays in the history with who voided it and why. Money actually handed back
+ * to the patient is a refund, which is a different act.
+ */
+function VoidPaymentDialog({
+  payment,
+  onOpenChange,
+}: {
+  payment: Payment | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [reason, setReason] = useState("");
+  const close = () => {
+    setReason("");
+    onOpenChange(false);
+  };
+
+  const voidIt = useMutation({
+    mutationFn: async (v: { id: string; reason: string }) => {
+      const res = await apiRequest("POST", `/api/payments/${v.id}/void`, { reason: v.reason });
+      return (await res.json()) as OrderWithDetails;
+    },
+    onSuccess: (saved) => {
+      invalidateApi("/api/orders", "/api/stats", "/api/patients", "/api/reception");
+      toast({
+        title: "To'lov bekor qilindi",
+        description: `Yozuv tarixda qoldi. To'langan: ${money(saved.paidAmount)}`,
+      });
+      close();
+    },
+    onError: (err: Error) => {
+      invalidateApi("/api/orders");
+      toast({ variant: "destructive", title: "Bekor qilinmadi", description: err.message });
+    },
+  });
+
+  const ready = reason.trim().length >= 5;
+
+  return (
+    <Dialog open={Boolean(payment)} onOpenChange={(o) => !o && close()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>To'lov yozuvini bekor qilish</DialogTitle>
+          <DialogDescription>
+            {payment &&
+              `${payment.amount < 0 ? "−" : "+"}${money(Math.abs(payment.amount))} (${payment.method}), ${formatDateTime(payment.createdAt)}. `}
+            Faqat xato kiritilgan yozuv uchun. Yozuv o'chirilmaydi, tarixda chizilgan holda qoladi va to'langan summaga qo'shilmaydi. Bemorga pul qaytarilgan bo'lsa, "qaytarish" amalidan foydalaning.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="void-reason">Sabab</Label>
+          <Textarea
+            id="void-reason"
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Masalan: summa ikki marta kiritilgan"
+            autoFocus
+            maxLength={300}
+            data-testid="input-void-reason"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={close}>
+            Ortga
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!ready || voidIt.isPending}
+            onClick={() => payment && voidIt.mutate({ id: payment.id, reason: reason.trim() })}
+            data-testid="button-confirm-void-payment"
+          >
+            {voidIt.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Bekor qilish
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

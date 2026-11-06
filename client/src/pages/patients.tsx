@@ -105,7 +105,7 @@ export default function Patients() {
       await apiRequest("DELETE", `/api/patients/${id}`);
     },
     onSuccess: () => {
-      invalidateApi("/api/patients", "/api/stats");
+      invalidateApi("/api/patients", "/api/stats", "/api/reception");
       toast({ title: "Bemor o'chirildi" });
       setDeleting(null);
     },

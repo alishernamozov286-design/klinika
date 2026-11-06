@@ -36,6 +36,7 @@ function fallbackRoles(): Map<string, RoleRecord> {
         permissions: [...r.permissions],
         isSystem: true,
         createdAt: now,
+        createdBy: null,
         updatedAt: null,
         updatedBy: null,
       },

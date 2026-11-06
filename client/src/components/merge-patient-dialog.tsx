@@ -69,7 +69,7 @@ export function MergePatientDialog({ source, onClose }: { source: Patient | null
       return (await res.json()) as { orders: number; contacts: number };
     },
     onSuccess: (moved) => {
-      invalidateApi("/api/patients", "/api/orders", "/api/stats");
+      invalidateApi("/api/patients", "/api/orders", "/api/stats", "/api/reception");
       toast({
         title: "Kartalar birlashtirildi",
         description: `№${target!.patientNumber} ${target!.fullName} · ${moved.orders} ta buyurtma ko'chirildi`,

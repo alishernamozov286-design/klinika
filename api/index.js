@@ -119,7 +119,7 @@ var init_permissions = __esm({
       "orders.delete": {
         group: "orders",
         label: "O'chirish",
-        description: "Buyurtmani butunlay o'chirish",
+        description: "Xato kiritilgan buyurtmani o'chirish (faqat to'lovi va natijasi bo'lmasa)",
         sensitive: true
       },
       "samples.manage": {
@@ -160,8 +160,8 @@ var init_permissions = __esm({
       },
       "payments.delete": {
         group: "finance",
-        label: "To'lov yozuvini o'chirish",
-        description: "Xato kiritilgan to'lov yozuvini o'chirish",
+        label: "To'lov yozuvini bekor qilish",
+        description: "Xato kiritilgan to'lovni sabab bilan bekor qilish (yozuv tarixda qoladi)",
         sensitive: true
       },
       "expenses.read": {
@@ -546,7 +546,8 @@ __export(schema_exports, {
   updateUserSchema: () => updateUserSchema,
   userMfa: () => userMfa,
   users: () => users,
-  visits: () => visits
+  visits: () => visits,
+  voidPaymentSchema: () => voidPaymentSchema
 });
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, integer, timestamp, boolean, index, json, uniqueIndex } from "drizzle-orm/pg-core";
@@ -587,7 +588,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_FIELD_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_FIELD_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -700,6 +701,10 @@ var init_schema = __esm({
       role: text("role").notNull().default("registrator"),
       isActive: boolean("is_active").notNull().default(true),
       createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
+      /** Profile edits by an admin. Sign-in lock bookkeeping below does not count. */
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by"),
       /**
        * Escalating lockout state, kept on the row rather than in memory.
        *
@@ -722,6 +727,8 @@ var init_schema = __esm({
       /** One of the TZ §3 roles. These cannot be deleted; their key is fixed. */
       isSystem: boolean("is_system").notNull().default(false),
       createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      /** Null for the built-in roles, which the system seeds. */
+      createdBy: varchar("created_by"),
       updatedAt: isoTimestamp("updated_at"),
       updatedBy: varchar("updated_by")
     });
@@ -741,6 +748,7 @@ var init_schema = __esm({
       description: text("description"),
       isActive: boolean("is_active").notNull().default(true),
       createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
       updatedAt: isoTimestamp("updated_at"),
       updatedBy: varchar("updated_by")
     });
@@ -759,6 +767,7 @@ var init_schema = __esm({
         schedule: json("schedule").$type().notNull().default(sql`'[]'::json`),
         isActive: boolean("is_active").notNull().default(true),
         createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
         updatedAt: isoTimestamp("updated_at"),
         updatedBy: varchar("updated_by")
       },
@@ -916,6 +925,7 @@ var init_schema = __esm({
       /** JShShIR — the 14-digit personal number; the surest key against duplicates. */
       pinfl: text("pinfl"),
       createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
       updatedAt: isoTimestamp("updated_at"),
       updatedBy: varchar("updated_by"),
       // Set by the Telegram bot when the patient shares their contact; null means
@@ -944,7 +954,12 @@ var init_schema = __esm({
       category: text("category").notNull(),
       unit: text("unit"),
       referenceRange: text("reference_range"),
-      isActive: boolean("is_active").notNull().default(true)
+      isActive: boolean("is_active").notNull().default(true),
+      /** Null on catalogue rows that predate these columns (B1.10). */
+      createdAt: isoTimestamp("created_at").defaultNow(),
+      createdBy: varchar("created_by"),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
     });
     visits = pgTable(
       "visits",
@@ -978,6 +993,9 @@ var init_schema = __esm({
       referrer: text("referrer"),
       createdBy: varchar("created_by"),
       createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      /** Staff edits: tests, discount, status, results, payments. Telegram delivery is not one. */
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by"),
       completedAt: isoTimestamp("completed_at"),
       // When the ready results were delivered over Telegram. Doubles as the
       // "already sent" guard, so re-saving a result never spams the patient.
@@ -999,7 +1017,10 @@ var init_schema = __esm({
           answerable for, and orders.createdBy only covers the registration. */
       enteredBy: varchar("entered_by"),
       completedAt: isoTimestamp("completed_at")
-    });
+    }, (t) => ({
+      // Backs the "has any order used this test?" check that guards deletion.
+      testIdx: index("IDX_order_tests_test").on(t.testId)
+    }));
     samples = pgTable(
       "samples",
       {
@@ -1040,7 +1061,11 @@ var init_schema = __esm({
       note: text("note"),
       createdBy: varchar("created_by"),
       createdByName: text("created_by_name"),
-      createdAt: isoTimestamp("created_at").defaultNow().notNull()
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      voidedAt: isoTimestamp("voided_at"),
+      voidedBy: varchar("voided_by"),
+      voidedByName: text("voided_by_name"),
+      voidReason: text("void_reason")
     });
     expenses = pgTable("expenses", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1120,6 +1145,7 @@ var init_schema = __esm({
       id: true,
       patientNumber: true,
       createdAt: true,
+      createdBy: true,
       updatedAt: true,
       updatedBy: true,
       telegramChatId: true,
@@ -1138,7 +1164,7 @@ var init_schema = __esm({
       gender: z.enum(["erkak", "ayol"]).nullish(),
       address: z.string().trim().nullish()
     });
-    insertTestSchema = createInsertSchema(tests).omit({ id: true }).extend({
+    insertTestSchema = createInsertSchema(tests).omit({ id: true, createdAt: true, createdBy: true, updatedAt: true, updatedBy: true }).extend({
       name: z.string().trim().min(2, "Tahlil nomini kiriting"),
       price: z.coerce.number().int().min(0, "Narx manfiy bo'lmasligi kerak"),
       category: z.string().trim().min(2, "Kategoriyani tanlang"),
@@ -1184,6 +1210,9 @@ var init_schema = __esm({
       method: z.enum(PAYMENT_METHODS).default("naqd"),
       note: z.string().trim().nullish()
     });
+    voidPaymentSchema = z.object({
+      reason: z.string().trim().min(5, "Bekor qilish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun")
+    });
     insertExpenseSchema = z.object({
       category: z.enum(EXPENSE_CATEGORIES),
       amount: z.coerce.number().int().min(1, "Summani kiriting").max(1e10, "Summani tekshiring"),
@@ -1217,7 +1246,17 @@ var init_schema = __esm({
         })
       ).min(1)
     });
-    insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true }).extend({
+    insertUserSchema = createInsertSchema(users).omit({
+      id: true,
+      createdAt: true,
+      createdBy: true,
+      updatedAt: true,
+      updatedBy: true,
+      failedAttempts: true,
+      lockedUntil: true,
+      lockLevel: true,
+      lastFailedAt: true
+    }).extend({
       username: z.string().trim().min(3, "Login kamida 3 ta belgidan iborat bo'lishi kerak").regex(/^[a-z0-9_.-]+$/i, "Faqat lotin harflari, raqam va _ . - belgilari"),
       password: z.string().min(5, "Parol kamida 5 ta belgidan iborat bo'lishi kerak"),
       fullName: z.string().trim().min(3, "F.I.Sh kiriting"),
@@ -1880,6 +1919,53 @@ var init_sample = __esm({
   }
 });
 
+// shared/patient-links.ts
+function patientHistoryProblem(counts) {
+  const held = BLOCKING_TABLES.filter((t) => (counts[t] ?? 0) > 0).map((t) => PATIENT_LINKS[t].label);
+  if (held.length === 0) return null;
+  return `Bemor kartasida ${held.join(", ")} bor, uni o'chirib bo'lmaydi. Takroriy karta bo'lsa, uni asosiy kartaga birlashtiring.`;
+}
+var PATIENT_LINKS, BLOCKING_TABLES;
+var init_patient_links = __esm({
+  "shared/patient-links.ts"() {
+    "use strict";
+    PATIENT_LINKS = {
+      patient_contacts: { merge: "move-keep-target-emergency", delete: "cascade" },
+      /** A visit is only the day's envelope; without orders or appointments it holds nothing. */
+      visits: { merge: "combine-same-day", delete: "cascade" },
+      orders: { merge: "move", delete: "block", label: "laboratoriya buyurtmalari" },
+      appointments: { merge: "move", delete: "block", label: "qabullar" },
+      medical_records: { merge: "move", delete: "block", label: "ko'rik yozuvlari" },
+      patient_allergies: { merge: "move", delete: "block", label: "allergiyalar" }
+    };
+    BLOCKING_TABLES = Object.keys(PATIENT_LINKS).filter(
+      (t) => PATIENT_LINKS[t].delete === "block"
+    );
+  }
+});
+
+// shared/ledger.ts
+function orderDeleteProblem(paymentRows, resultLines) {
+  if (paymentRows > 0) {
+    return "Buyurtmada to'lov yozuvlari bor, uni o'chirib bo'lmaydi. Buyurtmani bekor qiling: moliyaviy tarix saqlanadi.";
+  }
+  if (resultLines > 0) {
+    return "Buyurtmada tahlil natijalari bor, uni o'chirib bo'lmaydi. Buyurtmani bekor qiling: natijalar saqlanadi.";
+  }
+  return null;
+}
+function ledgerTotal(rows) {
+  return rows.reduce((sum, p) => p.voidedAt ? sum : sum + p.amount, 0);
+}
+var PAYMENT_ALREADY_VOIDED, TEST_IN_USE;
+var init_ledger = __esm({
+  "shared/ledger.ts"() {
+    "use strict";
+    PAYMENT_ALREADY_VOIDED = "Bu to'lov allaqachon bekor qilingan";
+    TEST_IN_USE = "Bu tahlil buyurtmalarda ishlatilgan, uni o'chirib bo'lmaydi. Uni faolsizlantiring: katalogdan yo'qoladi, tarix saqlanadi.";
+  }
+});
+
 // shared/appointment.ts
 function weekdayOf(date) {
   const d = (/* @__PURE__ */ new Date(`${date}T00:00:00Z`)).getUTCDay();
@@ -2055,18 +2141,20 @@ __export(storage_pg_exports, {
   PgStorage: () => PgStorage,
   isMissingTable: () => isMissingTable
 });
-import { and, asc, desc, eq, gte, inArray, lte, or, sql as sql2 } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql as sql2 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
+var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapPayment, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
     init_tests_data();
     init_schema();
     init_sample();
+    init_patient_links();
+    init_ledger();
     init_appointment();
     init_patient_identity();
     init_db_pg();
@@ -2074,7 +2162,16 @@ var init_storage_pg = __esm({
     init_permissions();
     init_storage_types();
     iso = (value) => value ? new Date(value).toISOString() : value;
-    mapUser = (row) => ({ ...row, createdAt: iso(row.createdAt) });
+    mapUser = (row) => ({
+      ...row,
+      createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt)
+    });
+    mapTest = (row) => ({
+      ...row,
+      createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt)
+    });
     mapPatient = (row) => ({
       ...row,
       createdAt: iso(row.createdAt),
@@ -2089,6 +2186,7 @@ var init_storage_pg = __esm({
       ...row,
       status: row.status,
       createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt),
       completedAt: iso(row.completedAt),
       telegramSentAt: iso(row.telegramSentAt)
     });
@@ -2110,6 +2208,12 @@ var init_storage_pg = __esm({
       return pub;
     };
     dayExpr = sql2`(${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date`;
+    mapPayment = (row) => ({
+      ...row,
+      method: row.method,
+      createdAt: iso(row.createdAt) ?? row.createdAt,
+      voidedAt: iso(row.voidedAt)
+    });
     mapRole = (row) => ({
       ...row,
       createdAt: iso(row.createdAt) ?? row.createdAt,
@@ -2311,6 +2415,7 @@ var init_storage_pg = __esm({
           description: input.description ?? null,
           permissions: [...input.permissions],
           isSystem: input.isSystem ?? false,
+          createdBy: actor.id,
           updatedBy: actor.id
         }).returning();
         return mapRole(row);
@@ -2348,6 +2453,7 @@ var init_storage_pg = __esm({
           kind: input.kind,
           description: input.description ?? null,
           isActive: input.isActive ?? true,
+          createdBy: actor.id,
           updatedBy: actor.id
         }).returning();
         return mapDepartment(row);
@@ -2394,6 +2500,7 @@ var init_storage_pg = __esm({
           slotMinutes: input.slotMinutes,
           schedule: input.schedule,
           isActive: input.isActive ?? true,
+          createdBy: actor.id,
           updatedBy: actor.id
         }).returning({ id: doctors.id });
         return await this.getDoctor(row.id);
@@ -2714,17 +2821,18 @@ var init_storage_pg = __esm({
         const [row] = await db.select().from(users).where(sql2`lower(${users.username}) = lower(${username})`).limit(1);
         return row && mapUser(row);
       }
-      async createUser(input) {
+      async createUser(input, actor) {
         const [row] = await db.insert(users).values({
           username: input.username,
           password: await hashPassword(input.password),
           fullName: input.fullName,
           role: input.role,
-          isActive: input.isActive ?? true
+          isActive: input.isActive ?? true,
+          createdBy: actor?.id ?? null
         }).returning();
         return strip(row);
       }
-      async updateUser(id, input) {
+      async updateUser(id, input, actor) {
         const patch = {};
         if (input.username) patch.username = input.username;
         if (input.fullName) patch.fullName = input.fullName;
@@ -2735,6 +2843,8 @@ var init_storage_pg = __esm({
           const current = await this.getUser(id);
           return current ? strip(current) : void 0;
         }
+        patch.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        patch.updatedBy = actor?.id ?? null;
         const [row] = await db.update(users).set(patch).where(eq(users.id, id)).returning();
         return row ? strip(row) : void 0;
       }
@@ -2890,12 +3000,7 @@ var init_storage_pg = __esm({
           details,
           list.items,
           visitRows.map((v) => ({ ...v, createdAt: iso(v.createdAt) ?? v.createdAt })),
-          paymentRows.map((r) => ({
-            ...r.payment,
-            method: r.payment.method,
-            createdAt: iso(r.payment.createdAt),
-            orderNumber: r.orderNumber
-          })),
+          paymentRows.map((r) => ({ ...mapPayment(r.payment), orderNumber: r.orderNumber })),
           appointmentList
         );
       }
@@ -2939,15 +3044,16 @@ var init_storage_pg = __esm({
           });
         }
       }
-      async mergePatients(sourceId, targetId) {
+      async mergePatients(sourceId, targetId, actor) {
         if (sourceId === targetId) return void 0;
+        const stamp2 = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor?.id ?? null };
         return db.transaction(async (tx) => {
           const [[source], [target]] = await Promise.all([
             tx.select().from(patients).where(eq(patients.id, sourceId)).limit(1),
             tx.select().from(patients).where(eq(patients.id, targetId)).limit(1)
           ]);
           if (!source || !target) return void 0;
-          const moved = await tx.update(orders).set({ patientId: targetId }).where(eq(orders.patientId, sourceId)).returning({ id: orders.id });
+          const moved = await tx.update(orders).set({ patientId: targetId, ...stamp2 }).where(eq(orders.patientId, sourceId)).returning({ id: orders.id });
           const [{ hasEmergency }] = await tx.select({ hasEmergency: sql2`count(*) > 0` }).from(patientContacts).where(and(eq(patientContacts.patientId, targetId), eq(patientContacts.isEmergency, true)));
           const movedContacts = await tx.update(patientContacts).set({ patientId: targetId }).where(
             hasEmergency ? and(eq(patientContacts.patientId, sourceId), eq(patientContacts.isEmergency, false)) : eq(patientContacts.patientId, sourceId)
@@ -2990,7 +3096,7 @@ var init_storage_pg = __esm({
             fill.telegramChatId = source.telegramChatId;
             fill.telegramLinkedAt = source.telegramLinkedAt;
           }
-          if (Object.keys(fill).length) await tx.update(patients).set(fill).where(eq(patients.id, targetId));
+          await tx.update(patients).set({ ...fill, ...stamp2 }).where(eq(patients.id, targetId));
           return { orders: moved.length, contacts: movedContacts.length, appointments: movedAppointments };
         });
       }
@@ -3018,6 +3124,7 @@ var init_storage_pg = __esm({
           birthDate: input.birthDate ?? null,
           passport: input.passport ?? null,
           pinfl: input.pinfl ?? null,
+          createdBy: actor?.id ?? null,
           updatedBy: actor?.id ?? null
         }).returning();
         await this.setEmergencyContact(db, row.id, input.emergencyContact);
@@ -3042,45 +3149,54 @@ var init_storage_pg = __esm({
         return mapPatient(row);
       }
       async deletePatient(id) {
-        const [{ count }] = await db.select({ count: sql2`count(*)::int` }).from(orders).where(eq(orders.patientId, id));
-        if (count > 0) {
-          throw new Error("Bu bemorda buyurtmalar mavjud \u2014 avval buyurtmalarni o'chiring");
-        }
-        if (await appointmentsTableExists(db)) {
-          const [booked] = await db.select({ id: appointments.id }).from(appointments).where(eq(appointments.patientId, id)).limit(1);
-          if (booked) throw new Error("Bu bemorda qabullar tarixi bor \u2014 kartani o'chirib bo'lmaydi");
-        }
-        if (await tableExists(db, "patient_allergies")) {
-          const [allergy] = await db.select({ id: patientAllergies.id }).from(patientAllergies).where(eq(patientAllergies.patientId, id)).limit(1);
-          if (allergy) throw new Error("Bu bemorda tibbiy ma'lumotlar (allergiyalar) bor \u2014 kartani o'chirib bo'lmaydi");
-        }
-        const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
-        if (rows.length) {
-          await db.delete(patientContacts).where(eq(patientContacts.patientId, id));
-          await db.delete(visits).where(eq(visits.patientId, id));
-        }
-        return rows.length > 0;
+        return db.transaction(async (tx) => {
+          const [locked] = await tx.select({ id: patients.id }).from(patients).where(eq(patients.id, id)).for("update");
+          if (!locked) return false;
+          const { rows: present } = await tx.execute(sql2`
+        SELECT t.name FROM unnest(string_to_array(${BLOCKING_TABLES.join(",")}, ',')) AS t(name)
+        WHERE to_regclass('public.' || t.name) IS NOT NULL`);
+          const counts = {};
+          if (present.length) {
+            const { rows: rows2 } = await tx.execute(
+              sql2.join(
+                present.map(
+                  ({ name }) => sql2`SELECT ${name}::text AS name, count(*)::int AS n FROM ${sql2.identifier(name)} x WHERE x.patient_id = ${id}`
+                ),
+                sql2` UNION ALL `
+              )
+            );
+            for (const r of rows2) counts[r.name] = r.n;
+          }
+          const problem = patientHistoryProblem(counts);
+          if (problem) throw new StorageConflict(problem);
+          await tx.delete(patientContacts).where(eq(patientContacts.patientId, id));
+          await tx.delete(visits).where(eq(visits.patientId, id));
+          const rows = await tx.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
+          return rows.length > 0;
+        });
       }
       // ---------------------------------------------------------------- tests
       async listTests(opts = {}) {
-        return db.select().from(tests).where(opts.activeOnly ? eq(tests.isActive, true) : void 0).orderBy(asc(tests.category), asc(tests.name));
+        const rows = await db.select().from(tests).where(opts.activeOnly ? eq(tests.isActive, true) : void 0).orderBy(asc(tests.category), asc(tests.name));
+        return rows.map(mapTest);
       }
       async getTest(id) {
         const [row] = await db.select().from(tests).where(eq(tests.id, id)).limit(1);
-        return row;
+        return row && mapTest(row);
       }
-      async createTest(input) {
+      async createTest(input, actor) {
         const [row] = await db.insert(tests).values({
           name: input.name,
           price: input.price,
           category: input.category,
           unit: input.unit ?? null,
           referenceRange: input.referenceRange ?? null,
-          isActive: input.isActive ?? true
+          isActive: input.isActive ?? true,
+          createdBy: actor.id
         }).returning();
-        return row;
+        return mapTest(row);
       }
-      async updateTest(id, input) {
+      async updateTest(id, input, actor) {
         const patch = {};
         if (input.name !== void 0) patch.name = input.name;
         if (input.price !== void 0) patch.price = input.price;
@@ -3089,12 +3205,21 @@ var init_storage_pg = __esm({
         if (input.referenceRange !== void 0) patch.referenceRange = input.referenceRange ?? null;
         if (input.isActive !== void 0) patch.isActive = input.isActive;
         if (Object.keys(patch).length === 0) return this.getTest(id);
+        patch.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        patch.updatedBy = actor.id;
         const [row] = await db.update(tests).set(patch).where(eq(tests.id, id)).returning();
-        return row;
+        return row && mapTest(row);
       }
       async deleteTest(id) {
-        const rows = await db.delete(tests).where(eq(tests.id, id)).returning({ id: tests.id });
-        return rows.length > 0;
+        const { rows } = await db.execute(sql2`
+      WITH used AS (
+        SELECT EXISTS (SELECT 1 FROM order_tests ot WHERE ot.test_id = ${id}) AS used
+      ), gone AS (
+        DELETE FROM tests t WHERE t.id = ${id} AND NOT (SELECT u.used FROM used u) RETURNING t.id
+      )
+      SELECT EXISTS (SELECT 1 FROM gone) AS deleted, (SELECT u.used FROM used u) AS used`);
+        if (rows[0]?.used) throw new StorageConflict(TEST_IN_USE);
+        return Boolean(rows[0]?.deleted);
       }
       // --------------------------------------------------------------- orders
       /** Attaches patient + line items + sample to a set of orders in three extra queries. */
@@ -3200,20 +3325,19 @@ var init_storage_pg = __esm({
       }
       async listPayments(orderId) {
         const rows = await db.select().from(payments).where(eq(payments.orderId, orderId)).orderBy(desc(payments.createdAt));
-        return rows.map((r) => ({
-          ...r,
-          method: r.method,
-          createdAt: iso(r.createdAt)
-        }));
+        return rows.map(mapPayment);
       }
       /**
        * orders.paidAmount is a cache of the ledger. Recomputing it from the rows
        * after every change is what keeps the two from drifting — incrementing it in
        * place silently loses a payment whenever a write fails halfway.
        */
-      async syncPaid(tx, orderId) {
+      async syncPaid(tx, orderId, actor) {
         await tx.update(orders).set({
-          paidAmount: sql2`greatest(0, (SELECT coalesce(sum(amount), 0)::int FROM ${payments} WHERE order_id = ${orderId}))`
+          paidAmount: sql2`greatest(0, (SELECT coalesce(sum(p.amount), 0)::int FROM payments p
+          WHERE p.order_id = ${orderId} AND p.voided_at IS NULL))`,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedBy: actor.id
         }).where(eq(orders.id, orderId));
       }
       async createOrder(input) {
@@ -3267,7 +3391,7 @@ var init_storage_pg = __esm({
         });
         return await this.getOrder(orderId);
       }
-      async updateOrder(id, input) {
+      async updateOrder(id, input, actor) {
         const [current] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
         if (!current) return void 0;
         if (input.testIds) await this.replaceOrderTests(id, input.testIds);
@@ -3283,7 +3407,9 @@ var init_storage_pg = __esm({
           patch.status = input.status;
           patch.completedAt = input.status === "completed" ? (/* @__PURE__ */ new Date()).toISOString() : null;
         }
-        if (Object.keys(patch).length > 0) {
+        if (Object.keys(patch).length > 0 || input.testIds) {
+          patch.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          patch.updatedBy = actor?.id ?? null;
           await db.update(orders).set(patch).where(eq(orders.id, id));
         }
         return this.getOrder(id);
@@ -3344,21 +3470,31 @@ var init_storage_pg = __esm({
               ...value && actor ? { enteredBy: actor.name } : {}
             }).where(and(eq(orderTests.id, incoming.id), eq(orderTests.orderId, id)));
           }
+          const patch = { updatedAt: now, updatedBy: actor?.id ?? null };
           if (current.status !== "cancelled") {
             const [{ total, filled }] = await tx.select({
               total: sql2`count(*)::int`,
               filled: sql2`count(${orderTests.result})::int`
             }).from(orderTests).where(eq(orderTests.orderId, id));
             const status = total > 0 && filled === total ? "completed" : filled > 0 ? "in_progress" : "pending";
-            await tx.update(orders).set({ status, completedAt: status === "completed" ? now : null }).where(eq(orders.id, id));
+            patch.status = status;
+            patch.completedAt = status === "completed" ? now : null;
           }
+          await tx.update(orders).set(patch).where(eq(orders.id, id));
         });
         return this.getOrder(id);
       }
       async deleteOrder(id) {
         return db.transaction(async (tx) => {
+          const [locked] = await tx.select({ id: orders.id }).from(orders).where(eq(orders.id, id)).for("update");
+          if (!locked) return false;
+          const { rows: [held] } = await tx.execute(sql2`
+        SELECT
+          (SELECT count(*) FROM payments p WHERE p.order_id = ${id})::int AS paid,
+          (SELECT count(*) FROM order_tests ot WHERE ot.order_id = ${id} AND ot.result IS NOT NULL)::int AS results`);
+          const problem = orderDeleteProblem(held?.paid ?? 0, held?.results ?? 0);
+          if (problem) throw new StorageConflict(problem);
           await tx.delete(orderTests).where(eq(orderTests.orderId, id));
-          await tx.delete(payments).where(eq(payments.orderId, id));
           await tx.delete(samples).where(eq(samples.orderId, id));
           const rows = await tx.delete(orders).where(eq(orders.id, id)).returning({ id: orders.id });
           return rows.length > 0;
@@ -3417,7 +3553,7 @@ var init_storage_pg = __esm({
       async addPayment(orderId, input, actor) {
         const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
         if (!order) return void 0;
-        const [{ paid }] = await db.select({ paid: sql2`coalesce(sum(${payments.amount}), 0)::int` }).from(payments).where(eq(payments.orderId, orderId));
+        const [{ paid }] = await db.select({ paid: sql2`coalesce(sum(${payments.amount}), 0)::int` }).from(payments).where(and(eq(payments.orderId, orderId), isNull(payments.voidedAt)));
         const room = order.totalAmount - paid;
         const amount = input.amount > 0 ? Math.min(input.amount, room) : Math.max(input.amount, -paid);
         if (amount === 0) {
@@ -3434,18 +3570,27 @@ var init_storage_pg = __esm({
             createdBy: actor.id,
             createdByName: actor.name
           });
-          await this.syncPaid(tx, orderId);
+          await this.syncPaid(tx, orderId, actor);
         });
         return this.getOrder(orderId);
       }
-      async deletePayment(paymentId) {
-        const [row] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
-        if (!row) return false;
-        await db.transaction(async (tx) => {
-          await tx.delete(payments).where(eq(payments.id, paymentId));
-          await this.syncPaid(tx, row.orderId);
+      async voidPayment(paymentId, reason, actor) {
+        const orderId = await db.transaction(async (tx) => {
+          const [row] = await tx.update(payments).set({
+            voidedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            voidedBy: actor.id,
+            voidedByName: actor.name,
+            voidReason: reason
+          }).where(and(eq(payments.id, paymentId), isNull(payments.voidedAt))).returning({ orderId: payments.orderId });
+          if (!row) {
+            const [exists] = await tx.select({ id: payments.id }).from(payments).where(eq(payments.id, paymentId)).limit(1);
+            if (exists) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
+            return void 0;
+          }
+          await this.syncPaid(tx, row.orderId, actor);
+          return row.orderId;
         });
-        return true;
+        return orderId ? this.getOrder(orderId) : void 0;
       }
       // ------------------------------------------------------------- expenses
       async listExpenses(query = {}) {
@@ -3664,6 +3809,56 @@ var init_storage_pg = __esm({
           unpaidAmount: r?.unpaid ?? 0
         };
       }
+      async getReceptionDay(day) {
+        const { rows } = await db.execute(sql2`
+      WITH today_orders AS (
+        SELECT o.total_amount, o.paid_amount FROM orders o
+        WHERE o.status <> 'cancelled'
+          AND (o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date
+      ), new_patients AS (
+        SELECT p.id, p.patient_number, p.full_name, p.phone, p.created_at FROM patients p
+        WHERE (p.created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date
+      )
+      SELECT
+        (SELECT count(DISTINCT v.patient_id) FROM visits v WHERE v.visit_date = ${day}::text)::int AS patients_today,
+        (SELECT count(*) FROM new_patients)::int                                             AS new_total,
+        (SELECT coalesce(json_agg(n ORDER BY n.created_at DESC), '[]'::json)
+           FROM (SELECT * FROM new_patients np ORDER BY np.created_at DESC LIMIT 6) n)         AS new_latest,
+        (SELECT count(*) FROM today_orders)::int                                              AS orders,
+        (SELECT count(*) FROM today_orders t WHERE t.paid_amount >= t.total_amount)::int      AS paid,
+        (SELECT count(*) FROM today_orders t
+           WHERE t.paid_amount > 0 AND t.paid_amount < t.total_amount)::int                   AS partial,
+        (SELECT count(*) FROM today_orders t WHERE t.paid_amount = 0 AND t.total_amount > 0)::int AS unpaid,
+        (SELECT coalesce(sum(t.total_amount), 0) FROM today_orders t)::int                     AS billed,
+        (SELECT coalesce(sum(least(t.paid_amount, t.total_amount)), 0) FROM today_orders t)::int AS collected
+    `);
+        const r = rows[0];
+        const billed = r?.billed ?? 0;
+        const collected = r?.collected ?? 0;
+        return {
+          date: day,
+          patientsToday: r?.patients_today ?? 0,
+          newPatients: {
+            total: r?.new_total ?? 0,
+            latest: (r?.new_latest ?? []).map((n) => ({
+              id: n.id,
+              patientNumber: n.patient_number,
+              fullName: n.full_name,
+              phone: n.phone,
+              createdAt: iso(n.created_at)
+            }))
+          },
+          payments: {
+            orders: r?.orders ?? 0,
+            paid: r?.paid ?? 0,
+            partial: r?.partial ?? 0,
+            unpaid: r?.unpaid ?? 0,
+            billed,
+            collected,
+            due: Math.max(0, billed - collected)
+          }
+        };
+      }
       async getRevenueReport(from, to) {
         const inRange = and(
           sql2`${orders.status} <> 'cancelled'`,
@@ -3860,7 +4055,7 @@ function isWaiting(order) {
 function isReady(order) {
   return order.items.length > 0 && order.items.every((i) => i.result);
 }
-var digitsOf, copyRole, normalizePatient, normalizeExpense, FileStorage;
+var UNVOIDED, digitsOf, copyRole, normalizePatient, normalizeExpense, FileStorage;
 var init_storage_file = __esm({
   "server/storage-file.ts"() {
     "use strict";
@@ -3869,10 +4064,13 @@ var init_storage_file = __esm({
     init_patient_identity();
     init_appointment();
     init_sample();
+    init_patient_links();
+    init_ledger();
     init_db();
     init_password();
     init_permissions();
     init_storage_types();
+    UNVOIDED = { voidedAt: null, voidedBy: null, voidedByName: null, voidReason: null };
     digitsOf = (value) => (value ?? "").replace(/\D/g, "");
     copyRole = (r) => ({ ...r, permissions: [...r.permissions] });
     normalizePatient = (p) => ({
@@ -3918,7 +4116,11 @@ var init_storage_file = __esm({
               category: t.category,
               unit: ref?.unit ?? null,
               referenceRange: ref?.referenceRange ?? null,
-              isActive: true
+              isActive: true,
+              createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+              createdBy: null,
+              updatedAt: null,
+              updatedBy: null
             };
           });
           createdTests = this.db.tests.length;
@@ -3934,6 +4136,9 @@ var init_storage_file = __esm({
               role: u.role,
               isActive: true,
               createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+              createdBy: null,
+              updatedAt: null,
+              updatedBy: null,
               failedAttempts: 0,
               lockedUntil: null,
               lockLevel: 0,
@@ -3955,6 +4160,7 @@ var init_storage_file = __esm({
             permissions: [...def.permissions],
             isSystem: true,
             createdAt: now,
+            createdBy: null,
             updatedAt: null,
             updatedBy: null
           });
@@ -3996,6 +4202,7 @@ var init_storage_file = __esm({
           permissions: [...input.permissions],
           isSystem: input.isSystem ?? false,
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
           updatedAt: null,
           updatedBy: actor.id
         };
@@ -4037,6 +4244,7 @@ var init_storage_file = __esm({
           description: input.description ?? null,
           isActive: input.isActive ?? true,
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
           updatedAt: null,
           updatedBy: actor.id
         };
@@ -4102,6 +4310,7 @@ var init_storage_file = __esm({
           schedule: input.schedule.map((s) => ({ ...s })),
           isActive: input.isActive ?? true,
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
           updatedAt: null,
           updatedBy: actor.id
         };
@@ -4529,7 +4738,7 @@ var init_storage_file = __esm({
       async getUserByUsername(username) {
         return this.db.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
       }
-      async createUser(input) {
+      async createUser(input, actor) {
         const user = {
           id: randomUUID(),
           username: input.username,
@@ -4538,6 +4747,9 @@ var init_storage_file = __esm({
           role: input.role,
           isActive: input.isActive ?? true,
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor?.id ?? null,
+          updatedAt: null,
+          updatedBy: null,
           failedAttempts: 0,
           lockedUntil: null,
           lockLevel: 0,
@@ -4548,14 +4760,19 @@ var init_storage_file = __esm({
         const { password: _password, ...pub } = user;
         return pub;
       }
-      async updateUser(id, input) {
+      async updateUser(id, input, actor) {
         const user = this.db.users.find((u) => u.id === id);
         if (!user) return void 0;
+        const touched = Boolean(input.username || input.fullName || input.role || input.password) || input.isActive !== void 0;
         if (input.username) user.username = input.username;
         if (input.fullName) user.fullName = input.fullName;
         if (input.role) user.role = input.role;
         if (input.isActive !== void 0) user.isActive = input.isActive;
         if (input.password) user.password = await hashPassword(input.password);
+        if (touched) {
+          user.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          user.updatedBy = actor?.id ?? null;
+        }
         await this.persist();
         const { password: _password, ...pub } = user;
         return pub;
@@ -4647,12 +4864,18 @@ var init_storage_file = __esm({
           this.db.patientContacts.push(row);
         }
       }
-      async mergePatients(sourceId, targetId) {
+      async mergePatients(sourceId, targetId, actor) {
         const source = this.db.patients.find((p) => p.id === sourceId);
         const target = this.db.patients.find((p) => p.id === targetId);
         if (!source || !target || source.id === target.id) return void 0;
+        const stamp2 = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor?.id ?? null };
         let orders2 = 0;
-        for (const o of this.db.orders) if (o.patientId === sourceId) o.patientId = targetId, orders2++;
+        for (const o of this.db.orders) {
+          if (o.patientId !== sourceId) continue;
+          Object.assign(o, { patientId: targetId }, stamp2);
+          orders2++;
+        }
+        Object.assign(target, stamp2);
         let contacts = 0;
         for (const c of this.db.patientContacts) {
           if (c.patientId !== sourceId) continue;
@@ -4709,6 +4932,7 @@ var init_storage_file = __esm({
           passport: input.passport ?? null,
           pinfl: input.pinfl ?? null,
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor?.id ?? null,
           updatedAt: null,
           updatedBy: actor?.id ?? null,
           telegramChatId: null,
@@ -4739,15 +4963,14 @@ var init_storage_file = __esm({
         return { ...patient };
       }
       async deletePatient(id) {
-        if (this.db.orders.some((o) => o.patientId === id)) {
-          throw new Error("Bu bemorda buyurtmalar mavjud \u2014 avval buyurtmalarni o'chiring");
-        }
-        if (this.db.appointments.some((a) => a.patientId === id)) {
-          throw new Error("Bu bemorda qabullar tarixi bor \u2014 kartani o'chirib bo'lmaydi");
-        }
-        if (this.db.patientAllergies.some((a) => a.patientId === id)) {
-          throw new Error("Bu bemorda tibbiy ma'lumotlar (allergiyalar) bor \u2014 kartani o'chirib bo'lmaydi");
-        }
+        const mine = (rows) => rows.filter((r) => r.patientId === id).length;
+        const problem = patientHistoryProblem({
+          orders: mine(this.db.orders),
+          appointments: mine(this.db.appointments),
+          medical_records: mine(this.db.medicalRecords),
+          patient_allergies: mine(this.db.patientAllergies)
+        });
+        if (problem) throw new StorageConflict(problem);
         const before = this.db.patients.length;
         this.db.patients = this.db.patients.filter((p) => p.id !== id);
         if (this.db.patients.length === before) return false;
@@ -4764,7 +4987,7 @@ var init_storage_file = __esm({
       async getTest(id) {
         return this.db.tests.find((t) => t.id === id);
       }
-      async createTest(input) {
+      async createTest(input, actor) {
         const test = {
           id: randomUUID(),
           name: input.name,
@@ -4772,15 +4995,24 @@ var init_storage_file = __esm({
           category: input.category,
           unit: input.unit ?? null,
           referenceRange: input.referenceRange ?? null,
-          isActive: input.isActive ?? true
+          isActive: input.isActive ?? true,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: null
         };
         this.db.tests.push(test);
         await this.persist();
         return test;
       }
-      async updateTest(id, input) {
+      async updateTest(id, input, actor) {
         const test = this.db.tests.find((t) => t.id === id);
         if (!test) return void 0;
+        const fields = ["name", "price", "category", "unit", "referenceRange", "isActive"];
+        if (fields.some((k) => input[k] !== void 0)) {
+          test.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          test.updatedBy = actor.id;
+        }
         if (input.name !== void 0) test.name = input.name;
         if (input.price !== void 0) test.price = input.price;
         if (input.category !== void 0) test.category = input.category;
@@ -4791,6 +5023,7 @@ var init_storage_file = __esm({
         return test;
       }
       async deleteTest(id) {
+        if (this.db.orderTests.some((i) => i.testId === id)) throw new StorageConflict(TEST_IN_USE);
         const before = this.db.tests.length;
         this.db.tests = this.db.tests.filter((t) => t.id !== id);
         if (this.db.tests.length === before) return false;
@@ -4821,8 +5054,7 @@ var init_storage_file = __esm({
       syncPaid(orderId) {
         const order = this.db.orders.find((o) => o.id === orderId);
         if (!order) return;
-        const sum = this.db.payments.filter((p) => p.orderId === orderId).reduce((acc, p) => acc + p.amount, 0);
-        order.paidAmount = Math.max(0, sum);
+        order.paidAmount = Math.max(0, ledgerTotal(this.db.payments.filter((p) => p.orderId === orderId)));
       }
       async listOrders(query = {}) {
         const search = query.search?.trim().toLowerCase();
@@ -4890,6 +5122,8 @@ var init_storage_file = __esm({
           referrer: input.referrer ?? null,
           createdBy: input.createdBy ?? null,
           createdAt: now,
+          updatedAt: null,
+          updatedBy: null,
           completedAt: null,
           telegramSentAt: null
         };
@@ -4922,7 +5156,8 @@ var init_storage_file = __esm({
             note: null,
             createdBy: input.createdBy ?? null,
             createdByName: this.db.users.find((u) => u.id === input.createdBy)?.fullName ?? "\u2014",
-            createdAt: now
+            createdAt: now,
+            ...UNVOIDED
           });
         }
         this.syncPaid(order.id);
@@ -4946,9 +5181,14 @@ var init_storage_file = __esm({
         await this.persist();
         return this.hydrate(order, true);
       }
-      async updateOrder(id, input) {
+      async updateOrder(id, input, actor) {
         const order = this.db.orders.find((o) => o.id === id);
         if (!order) return void 0;
+        const touched = input.testIds !== void 0 || input.discount !== void 0 || input.notes !== void 0 || input.referrer !== void 0 || Boolean(input.status);
+        if (touched) {
+          order.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          order.updatedBy = actor?.id ?? null;
+        }
         if (input.testIds) this.replaceOrderTests(id, input.testIds);
         if (input.discount !== void 0 || input.testIds) {
           const subtotal = this.db.orderTests.filter((i) => i.orderId === id).reduce((s, i) => s + i.price, 0);
@@ -5022,6 +5262,8 @@ var init_storage_file = __esm({
           item.completedAt = value ? now : null;
           if (value && actor) item.enteredBy = actor.name;
         }
+        order.updatedAt = now;
+        order.updatedBy = actor?.id ?? null;
         const items = this.db.orderTests.filter((i) => i.orderId === id);
         const filled = items.filter((i) => Boolean(i.result)).length;
         if (order.status !== "cancelled") {
@@ -5040,11 +5282,14 @@ var init_storage_file = __esm({
         return this.hydrate(order, true);
       }
       async deleteOrder(id) {
-        const before = this.db.orders.length;
+        if (!this.db.orders.some((o) => o.id === id)) return false;
+        const problem = orderDeleteProblem(
+          this.db.payments.filter((p) => p.orderId === id).length,
+          this.db.orderTests.filter((i) => i.orderId === id && i.result).length
+        );
+        if (problem) throw new StorageConflict(problem);
         this.db.orders = this.db.orders.filter((o) => o.id !== id);
-        if (this.db.orders.length === before) return false;
         this.db.orderTests = this.db.orderTests.filter((i) => i.orderId !== id);
-        this.db.payments = this.db.payments.filter((p) => p.orderId !== id);
         this.db.samples = this.db.samples.filter((s) => s.orderId !== id);
         await this.persist();
         return true;
@@ -5101,7 +5346,7 @@ var init_storage_file = __esm({
       async addPayment(orderId, input, actor) {
         const order = this.db.orders.find((o) => o.id === orderId);
         if (!order) return void 0;
-        const paid = this.db.payments.filter((p) => p.orderId === orderId).reduce((s, p) => s + p.amount, 0);
+        const paid = ledgerTotal(this.db.payments.filter((p) => p.orderId === orderId));
         const room = order.totalAmount - paid;
         const amount = input.amount > 0 ? Math.min(input.amount, room) : Math.max(input.amount, -paid);
         if (amount === 0) {
@@ -5117,19 +5362,31 @@ var init_storage_file = __esm({
           note: input.note?.trim() || null,
           createdBy: actor.id,
           createdByName: actor.name,
-          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          ...UNVOIDED
         });
+        this.touchOrder(order, actor);
         this.syncPaid(orderId);
         await this.persist();
         return this.hydrate(order, true);
       }
-      async deletePayment(paymentId) {
+      async voidPayment(paymentId, reason, actor) {
         const row = this.db.payments.find((p) => p.id === paymentId);
-        if (!row) return false;
-        this.db.payments = this.db.payments.filter((p) => p.id !== paymentId);
+        if (!row) return void 0;
+        if (row.voidedAt) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
+        row.voidedAt = (/* @__PURE__ */ new Date()).toISOString();
+        row.voidedBy = actor.id;
+        row.voidedByName = actor.name;
+        row.voidReason = reason;
+        const order = this.db.orders.find((o) => o.id === row.orderId);
+        if (order) this.touchOrder(order, actor);
         this.syncPaid(row.orderId);
         await this.persist();
-        return true;
+        return order && this.hydrate(order, true);
+      }
+      touchOrder(order, actor) {
+        order.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        order.updatedBy = actor.id;
       }
       // ------------------------------------------------------------- expenses
       allExpenses() {
@@ -5342,6 +5599,35 @@ var init_storage_file = __esm({
           todayRevenue: todayOrders.reduce((sum, o) => sum + o.paidAmount, 0),
           totalPatients: this.db.patients.length,
           unpaidAmount: this.db.orders.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + Math.max(0, o.totalAmount - o.paidAmount), 0)
+        };
+      }
+      async getReceptionDay(day) {
+        const orders2 = this.db.orders.filter((o) => o.status !== "cancelled" && localDay(o.createdAt) === day);
+        const fresh = this.db.patients.filter((p) => localDay(p.createdAt) === day).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        const billed = orders2.reduce((s, o) => s + o.totalAmount, 0);
+        const collected = orders2.reduce((s, o) => s + Math.min(o.paidAmount, o.totalAmount), 0);
+        return {
+          date: day,
+          patientsToday: new Set(this.db.visits.filter((v) => v.visitDate === day).map((v) => v.patientId)).size,
+          newPatients: {
+            total: fresh.length,
+            latest: fresh.slice(0, 6).map((p) => ({
+              id: p.id,
+              patientNumber: p.patientNumber,
+              fullName: p.fullName,
+              phone: p.phone,
+              createdAt: p.createdAt
+            }))
+          },
+          payments: {
+            orders: orders2.length,
+            paid: orders2.filter((o) => o.paidAmount >= o.totalAmount).length,
+            partial: orders2.filter((o) => o.paidAmount > 0 && o.paidAmount < o.totalAmount).length,
+            unpaid: orders2.filter((o) => o.paidAmount === 0 && o.totalAmount > 0).length,
+            billed,
+            collected,
+            due: Math.max(0, billed - collected)
+          }
         };
       }
       async getRevenueReport(from, to) {
@@ -5623,6 +5909,7 @@ function fallbackRoles() {
         permissions: [...r.permissions],
         isSystem: true,
         createdAt: now,
+        createdBy: null,
         updatedAt: null,
         updatedBy: null
       }
@@ -6408,6 +6695,54 @@ async function logPatientView(req, patient, what) {
 
 // server/routes-clinic.ts
 init_schema();
+
+// shared/reception.ts
+var RECEPTION_LIST_LIMIT = 8;
+function summarizeQueue(list, opts) {
+  const limit = opts.limit ?? RECEPTION_LIST_LIMIT;
+  const counts = {
+    total: 0,
+    scheduled: 0,
+    late: 0,
+    arrived: 0,
+    inProgress: 0,
+    completed: 0,
+    noShow: 0,
+    cancelled: 0
+  };
+  for (const a of list) {
+    if (a.status !== "cancelled") counts.total++;
+    switch (a.status) {
+      case "scheduled":
+        counts.scheduled++;
+        if (opts.isToday && a.startTime < opts.now) counts.late++;
+        break;
+      case "arrived":
+        counts.arrived++;
+        break;
+      case "in_progress":
+        counts.inProgress++;
+        break;
+      case "completed":
+        counts.completed++;
+        break;
+      case "no_show":
+        counts.noShow++;
+        break;
+      case "cancelled":
+        counts.cancelled++;
+        break;
+    }
+  }
+  const waiting = list.filter((a) => a.status === "in_progress" || a.status === "arrived").sort((a, b) => {
+    if (a.status !== b.status) return a.status === "in_progress" ? -1 : 1;
+    return (a.arrivedAt ?? "").localeCompare(b.arrivedAt ?? "") || a.queueNumber - b.queueNumber;
+  }).slice(0, limit);
+  const upcoming = list.filter((a) => a.status === "scheduled").sort((a, b) => a.startTime.localeCompare(b.startTime) || a.queueNumber - b.queueNumber).slice(0, limit);
+  return { counts, waiting, upcoming };
+}
+
+// server/routes-clinic.ts
 init_appointment();
 var money2 = (n) => `${n.toLocaleString("ru-RU").replace(/,/g, " ")} so'm`;
 var patientLabel = (a) => `\u2116${a.patientNumber} ${a.patientName}`;
@@ -6738,6 +7073,31 @@ function registerClinicRoutes(app) {
         return res.status(404).json({ message: "Qabul topilmadi" });
       }
       return changeStatus(req, res, appointment, status, reason);
+    })
+  );
+  app.get(
+    "/api/reception",
+    requirePermission("appointments.read", "orders.read"),
+    handle(async (req, res) => {
+      const clock = clockNow();
+      const date = stringParam(req.query.date) ?? clock.date;
+      if (!isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
+      const seesQueue = hasPermission(req, "appointments.read");
+      const [day, list] = await Promise.all([
+        storage.getReceptionDay(date),
+        seesQueue ? storage.listAppointments({ date }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve(null)
+      ]);
+      const now = fromMinutes(clock.minutes);
+      const seesMoney = hasPermission(req, "finance.view");
+      const board = {
+        date,
+        now,
+        patientsToday: day.patientsToday,
+        newPatients: hasPermission(req, "patients.read") ? day.newPatients : null,
+        payments: hasPermission(req, "orders.read") ? seesMoney ? day.payments : { ...day.payments, billed: null, collected: null, due: null } : null,
+        queue: list ? summarizeQueue(list, { isToday: date === clock.date, now }) : null
+      };
+      res.json(board);
     })
   );
   app.get(
@@ -7271,7 +7631,7 @@ async function registerRoutes(app) {
       if (!await verifyPassword(input.currentPassword, full.password)) {
         return res.status(400).json({ message: "Joriy parol noto'g'ri" });
       }
-      await storage.updateUser(me.id, { password: input.newPassword });
+      await storage.updateUser(me.id, { password: input.newPassword }, actorOf(req));
       const ended = await revokeUserSessions(sessionStore, sessionPool, me.id, { keepSid: req.sessionID });
       await audit(
         req,
@@ -7587,7 +7947,7 @@ async function registerRoutes(app) {
       }
       const [source, target] = await Promise.all([storage.getPatient(req.params.id), storage.getPatient(intoId)]);
       if (!source || !target) return res.status(404).json({ message: "Bemor topilmadi" });
-      const moved = await storage.mergePatients(source.id, target.id);
+      const moved = await storage.mergePatients(source.id, target.id, actorOf(req));
       if (!moved) return res.status(404).json({ message: "Bemor topilmadi" });
       await audit(
         req,
@@ -7621,7 +7981,7 @@ async function registerRoutes(app) {
     "/api/tests",
     requirePermission("tests.manage"),
     handle(async (req, res) => {
-      const test = await storage.createTest(insertTestSchema.parse(req.body));
+      const test = await storage.createTest(insertTestSchema.parse(req.body), actorOf(req));
       await audit(req, "create", "test", test.id, `"${test.name}" qo'shildi \u2014 ${test.price} so'm`);
       res.status(201).json(test);
     })
@@ -7632,7 +7992,7 @@ async function registerRoutes(app) {
     handle(async (req, res) => {
       const input = insertTestSchema.partial().parse(req.body);
       const before = await storage.getTest(req.params.id);
-      const test = await storage.updateTest(req.params.id, input);
+      const test = await storage.updateTest(req.params.id, input, actorOf(req));
       if (!test) return res.status(404).json({ message: "Tahlil topilmadi" });
       const priceMoved = before && before.price !== test.price;
       await audit(
@@ -7717,7 +8077,7 @@ async function registerRoutes(app) {
       if (editsOther && !hasPermission(req, "orders.update")) {
         return res.status(403).json({ message: "Buyurtmani tahrirlash uchun ruxsatingiz yo'q" });
       }
-      const order = await storage.updateOrder(req.params.id, input);
+      const order = await storage.updateOrder(req.params.id, input, actorOf(req));
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
       const changes = [];
       if (input.testIds && before.items.length !== order.items.length) {
@@ -7833,14 +8193,22 @@ async function registerRoutes(app) {
       res.status(201).json(order);
     })
   );
-  app.delete(
-    "/api/payments/:id",
+  app.post(
+    "/api/payments/:id/void",
     requirePermission("payments.delete"),
     handle(async (req, res) => {
-      const ok = await storage.deletePayment(req.params.id);
-      if (!ok) return res.status(404).json({ message: "To'lov topilmadi" });
-      await audit(req, "delete", "payment", req.params.id, "To'lov yozuvi o'chirildi");
-      res.sendStatus(204);
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const order = await storage.voidPayment(req.params.id, reason, actorOf(req));
+      if (!order) return res.status(404).json({ message: "To'lov topilmadi" });
+      const row = order.payments?.find((p) => p.id === req.params.id);
+      await audit(
+        req,
+        "void",
+        "order",
+        order.id,
+        `#${order.orderNumber}: ${row?.amount ?? "?"} so'm to'lov bekor qilindi. Sabab: ${reason}`
+      );
+      res.json(order);
     })
   );
   const expenseQuery = (req) => {
@@ -8199,7 +8567,7 @@ async function registerRoutes(app) {
       if (await storage.getUserByUsername(input.username)) {
         return res.status(409).json({ message: "Bu login allaqachon band" });
       }
-      const user = await storage.createUser(input);
+      const user = await storage.createUser(input, actorOf(req));
       const { roleName } = await toSessionUser(user);
       await audit(req, "create", "user", user.id, `${user.fullName} (${roleName}) qo'shildi`);
       res.status(201).json(user);
@@ -8238,7 +8606,7 @@ async function registerRoutes(app) {
           return res.status(409).json({ message: "Bu login allaqachon band" });
         }
       }
-      const user = await storage.updateUser(req.params.id, input);
+      const user = await storage.updateUser(req.params.id, input, actorOf(req));
       forgetSessionUser(req.params.id);
       if (!user) return res.status(404).json({ message: "Foydalanuvchi topilmadi" });
       if (input.password || deactivates) {

@@ -40,6 +40,7 @@ import { PatientDialog } from "@/components/patient-dialog";
 import { OrderDetailDialog } from "@/components/order-detail-dialog";
 import { ResultsDialog } from "@/components/results-dialog";
 import { PrintDialog } from "@/components/print-dialog";
+import { ReceptionBoard } from "@/components/reception-board";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { formatDate, formatPhone, formatTime, formatWeekdayDate, money, timeAgo } from "@/lib/format";
@@ -71,6 +72,8 @@ export default function Home() {
   });
 
   const seesOrders = can("orders.read");
+  // Registratura bosh sahifasi (TZ §4.1.1) for whoever works the queue.
+  const seesReception = can("appointments.read");
   // The server withholds the money figures from roles without finance.view;
   // the cards follow the same rule rather than showing a misleading 0.
   const seesFinance = can("finance.view");
@@ -180,13 +183,20 @@ export default function Home() {
         </div>
       </section>
 
+      {seesReception && <ReceptionBoard />}
+
       {/* ----------------------------------------------------------- stats */}
       {/* Lab counters only mean something to roles that work with orders. */}
+      {seesOrders && seesReception && (
+        <p className="-mb-2 pt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Laboratoriya
+        </p>
+      )}
       {seesOrders && (
         <div className={cn("grid gap-4 sm:grid-cols-2", seesFinance ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
           <StatCard
             index={0}
-            label="Bugungi bemorlar"
+            label={seesReception ? "Laboratoriya bemorlari" : "Bugungi bemorlar"}
             value={stats?.todayPatients ?? 0}
             hint={`Bazada jami ${stats?.totalPatients ?? 0} ta bemor`}
             icon={Users}
@@ -238,7 +248,7 @@ export default function Home() {
 
       {/* ------------------------------------------------- recent + actions */}
       <div className="grid gap-5 xl:grid-cols-3">
-        {!seesOrders ? (
+        {!seesOrders && seesReception ? null : !seesOrders ? (
           <SectionCard className="xl:col-span-3" icon={ShieldCheck} title="Sizning ish maydoningiz">
             <EmptyState
               icon={ShieldCheck}

@@ -41,16 +41,10 @@ import { RecordStatusBadge } from "@/components/medical-record";
 import { ApiError, apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
-import { ageGender, dayKey, formatDay, formatDayLong, formatTime, shiftDay } from "@/lib/format";
+import { ageGender, dayKey, elapsed, formatDay, formatDayLong, formatTime, shiftDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /** "12 daq." since a timestamp, ticking with `now`. */
-function elapsed(from: string | null, now: number): string {
-  if (!from) return "—";
-  const min = Math.max(0, Math.floor((now - new Date(from).getTime()) / 60000));
-  return min < 60 ? `${min} daq.` : `${Math.floor(min / 60)} soat ${min % 60} daq.`;
-}
-
 /**
  * Shifokor kabineti (TZ §5.1.1): today's list, the waiting room, the
  * patient in the chair, and appointments left open on earlier days.
@@ -115,7 +109,7 @@ export default function Cabinet() {
   const callNext = useMutation({
     mutationFn: async () => (await (await apiRequest("POST", "/api/cabinet/call-next")).json()) as AppointmentWithDetails,
     onSuccess: (a) => {
-      invalidateApi("/api/cabinet", "/api/appointments");
+      invalidateApi("/api/cabinet", "/api/appointments", "/api/reception");
       toast({ title: `Navbat №${a.queueNumber} — qabulga chaqirildi`, description: a.patientName });
       // The doctor called them in to examine them: open the examination window.
       navigate(`/cabinet/visit/${a.id}`);

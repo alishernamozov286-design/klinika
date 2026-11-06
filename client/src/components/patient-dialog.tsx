@@ -215,7 +215,7 @@ export function PatientDialog({
       return (await res.json()) as Patient;
     },
     onSuccess: (saved) => {
-      invalidateApi("/api/patients", "/api/stats");
+      invalidateApi("/api/patients", "/api/stats", "/api/reception");
       const justLinked = Boolean(saved.telegramChatId) && !patient?.telegramChatId;
       // The number is what the registrar reads back to the patient, so it
       // leads the title on create.

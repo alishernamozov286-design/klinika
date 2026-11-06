@@ -132,14 +132,37 @@ describe("payments", () => {
     expect(after!.paidAmount).toBe(0);
   });
 
-  it("re-derives the total when a ledger row is deleted", async () => {
+  it("voids a ledger row: kept with who and why, no longer counted (TZ §10)", async () => {
     const { order } = await makeOrder(["3", "22"], 10000);
     const withSecond = await storage.addPayment(order.id, { amount: 5000, method: "naqd" }, ACTOR);
     const target = withSecond!.payments!.find((p) => p.amount === 5000)!;
+    expect(target.voidedAt).toBeNull();
 
-    await storage.deletePayment(target.id);
-    const after = await storage.getOrder(order.id);
+    const after = await storage.voidPayment(target.id, "Ikki marta kiritilgan", ACTOR);
     expect(after!.paidAmount).toBe(10000);
+    expect(after!.payments).toHaveLength(2);
+    const voided = after!.payments!.find((p) => p.id === target.id)!;
+    expect(voided.voidedAt).toBeTruthy();
+    expect(voided.voidedBy).toBe(ACTOR.id);
+    expect(voided.voidedByName).toBe(ACTOR.name);
+    expect(voided.voidReason).toBe("Ikki marta kiritilgan");
+    expect(after!.updatedBy).toBe(ACTOR.id);
+  });
+
+  it("refuses to void the same row twice, and misses an unknown one", async () => {
+    const { order } = await makeOrder(["3"], 10000);
+    const row = order.payments![0];
+    await storage.voidPayment(row.id, "Xato summa", ACTOR);
+    await expect(storage.voidPayment(row.id, "Yana bir bor", ACTOR)).rejects.toThrow(/allaqachon bekor/);
+    expect(await storage.voidPayment("no-such-row", "Xato summa", ACTOR)).toBeUndefined();
+  });
+
+  it("leaves a voided row out of the room left to pay", async () => {
+    const { order } = await makeOrder(["3"], 10000);
+    await storage.voidPayment(order.payments![0].id, "Xato summa", ACTOR);
+    // The whole bill can be paid again: the voided 10 000 no longer counts.
+    const after = await storage.addPayment(order.id, { amount: order.totalAmount, method: "naqd" }, ACTOR);
+    expect(after!.paidAmount).toBe(order.totalAmount);
   });
 });
 
@@ -413,6 +436,87 @@ describe("samples", () => {
     const { order } = await makeOrder(["1"]);
     await storage.deleteOrder(order.id);
     expect(await storage.getOrderByBarcode(`LAB-${order.orderNumber}`)).toBeUndefined();
+  });
+});
+
+describe("nothing financial or medical is erased (TZ §10, B1.10)", () => {
+  it("refuses to delete an order with a payment, even a voided one", async () => {
+    const { order } = await makeOrder(["3"], 10000);
+    await expect(storage.deleteOrder(order.id)).rejects.toThrow(/to'lov yozuvlari bor/);
+    await storage.voidPayment(order.payments![0].id, "Xato summa", ACTOR);
+    await expect(storage.deleteOrder(order.id)).rejects.toThrow(/to'lov yozuvlari bor/);
+    expect(await storage.getOrder(order.id)).toBeDefined();
+  });
+
+  it("refuses to delete an order with a result", async () => {
+    const { order } = await makeOrder(["3"]);
+    await storage.saveResults(order.id, [{ id: order.items[0].id, result: "140" }], ACTOR);
+    await expect(storage.deleteOrder(order.id)).rejects.toThrow(/natijalari bor/);
+  });
+
+  it("deletes an order entered by mistake: no money, no result", async () => {
+    const { order } = await makeOrder(["3"]);
+    expect(await storage.deleteOrder(order.id)).toBe(true);
+    expect(await storage.getOrder(order.id)).toBeUndefined();
+    expect(await storage.deleteOrder(order.id)).toBe(false);
+  });
+
+  it("keeps a catalogue test that an order used; an unused one can go", async () => {
+    await makeOrder(["3"]);
+    await expect(storage.deleteTest("3")).rejects.toThrow(/buyurtmalarda ishlatilgan/);
+    const fresh = await storage.createTest({ name: "Yangi tahlil", price: 1000, category: "Boshqa", isActive: true }, ACTOR);
+    expect(await storage.deleteTest(fresh.id)).toBe(true);
+  });
+});
+
+describe("who and when on every important row (TZ §10, B1.10)", () => {
+  it("stamps a test's creator and its later editor", async () => {
+    const created = await storage.createTest({ name: "Ferritin", price: 50000, category: "Biokimyo", isActive: true }, ACTOR);
+    expect(created.createdBy).toBe(ACTOR.id);
+    expect(created.createdAt).toBeTruthy();
+    expect(created.updatedAt).toBeNull();
+
+    const editor = { id: "u2", name: "Mudir" };
+    const edited = await storage.updateTest(created.id, { price: 55000 }, editor);
+    expect(edited!.updatedBy).toBe("u2");
+    expect(edited!.updatedAt).toBeTruthy();
+    expect(edited!.createdBy).toBe(ACTOR.id);
+  });
+
+  it("stamps an order on edit, on results and on payment — not on creation", async () => {
+    const { order } = await makeOrder(["3", "22"]);
+    expect(order.updatedAt).toBeNull();
+
+    const edited = await storage.updateOrder(order.id, { discount: 1000 }, { id: "u2", name: "Registrator" });
+    expect(edited!.updatedBy).toBe("u2");
+
+    const resulted = await storage.saveResults(order.id, [{ id: order.items[0].id, result: "5.1" }], ACTOR);
+    expect(resulted!.updatedBy).toBe(ACTOR.id);
+
+    const paid = await storage.addPayment(order.id, { amount: 1000, method: "naqd" }, { id: "u3", name: "Kassir" });
+    expect(paid!.updatedBy).toBe("u3");
+  });
+
+  it("stamps the staff account's creator and editor, not sign-in lockouts", async () => {
+    const admin = { id: "admin-1", name: "Admin" };
+    const user = await storage.createUser(
+      { username: "yangi.xodim", password: "parol123", fullName: "Yangi Xodim", role: "registrator", isActive: true },
+      admin,
+    );
+    expect(user.createdBy).toBe("admin-1");
+    expect(user.updatedAt).toBeNull();
+
+    await storage.setLockState(user.id, { failedAttempts: 3, lockedUntil: null, lockLevel: 0 });
+    expect((await storage.getUser(user.id))!.updatedAt).toBeNull();
+
+    const edited = await storage.updateUser(user.id, { fullName: "Yangi Xodim Ismi" }, admin);
+    expect(edited!.updatedBy).toBe("admin-1");
+    expect(edited!.updatedAt).toBeTruthy();
+  });
+
+  it("records who registered a patient", async () => {
+    const patient = await storage.createPatient({ fullName: "Karimov Anvar", phone: "+998 90 111 22 33" }, ACTOR);
+    expect(patient.createdBy).toBe(ACTOR.id);
   });
 });
 
@@ -1014,7 +1118,7 @@ describe("appointments (B2.7)", () => {
     const result = await storage.mergePatients(dup.id, patient.id);
     expect(result?.appointments).toBe(1);
     expect(await storage.listAppointments({ patientId: patient.id })).toHaveLength(1);
-    await expect(storage.deletePatient(patient.id)).rejects.toThrow(/qabullar tarixi/);
+    await expect(storage.deletePatient(patient.id)).rejects.toThrow(/kartasida qabullar bor/);
   });
 
   it("counts a service's appointments", async () => {
@@ -1202,5 +1306,46 @@ describe("allergies (B3.2)", () => {
     await storage.mergePatients(dup.id, real.id);
     expect((await storage.listAllergies(real.id)).map((a) => a.allergen)).toEqual(["Aspirin"]);
     expect(await storage.listRecords({ patientId: real.id })).toHaveLength(1);
+  });
+});
+
+describe("registratura day (TZ §4.1.1, B2.11)", () => {
+  const today = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+
+  it("counts today's patients, new cards and how today's bills stand", async () => {
+    const empty = await storage.getReceptionDay(today());
+    expect(empty.patientsToday).toBe(0);
+    expect(empty.payments.orders).toBe(0);
+
+    // Three orders today: settled, part-paid, unpaid. One more cancelled.
+    const settled = await makeOrder(["3"]);
+    await storage.addPayment(settled.order.id, { amount: settled.order.totalAmount, method: "naqd" }, ACTOR);
+    const part = await makeOrder(["3", "22"], 10000);
+    const unpaid = await makeOrder(["22"]);
+    const cancelled = await makeOrder(["3"]);
+    await storage.updateOrder(cancelled.order.id, { status: "cancelled" }, ACTOR);
+
+    const day = await storage.getReceptionDay(today());
+    expect(day.patientsToday).toBe(4); // a cancelled order's patient still came in
+    expect(day.newPatients.total).toBe(4);
+    expect(day.newPatients.latest[0].patientNumber).toBeGreaterThan(0);
+    expect(day.payments).toMatchObject({ orders: 3, paid: 1, partial: 1, unpaid: 1 });
+
+    const billed = settled.order.totalAmount + part.order.totalAmount + unpaid.order.totalAmount;
+    expect(day.payments.billed).toBe(billed);
+    expect(day.payments.collected).toBe(settled.order.totalAmount + 10000);
+    expect(day.payments.due).toBe(billed - settled.order.totalAmount - 10000);
+  });
+
+  it("looks at the requested day only", async () => {
+    await makeOrder(["3"], 5000);
+    const other = await storage.getReceptionDay("2001-01-01");
+    expect(other.patientsToday).toBe(0);
+    expect(other.newPatients.total).toBe(0);
+    expect(other.payments.orders).toBe(0);
   });
 });

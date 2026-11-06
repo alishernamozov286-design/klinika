@@ -162,6 +162,13 @@ export function timeAgo(value: string | Date): string {
 }
 
 /** Local calendar day as YYYY-MM-DD — must match the server's localDay(). */
+/** How long since `from`, for waiting rooms: "12 daq.", "1 soat 5 daq.". */
+export function elapsed(from: string | null | undefined, now: number = Date.now()): string {
+  if (!from) return "—";
+  const min = Math.max(0, Math.floor((now - new Date(from).getTime()) / 60000));
+  return min < 60 ? `${min} daq.` : `${Math.floor(min / 60)} soat ${min % 60} daq.`;
+}
+
 export function dayKey(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }

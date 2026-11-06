@@ -5,6 +5,7 @@ import type {
   AuditEntry,
   CreatePaymentInput,
   DashboardStatsData,
+  ReceptionDay,
   Expense,
   ExpenseSummary,
   InsertExpense,
@@ -369,8 +370,9 @@ export interface IStorage {
   listUsers(): Promise<PublicUser[]>;
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(input: InsertUser): Promise<PublicUser>;
-  updateUser(id: string, input: UpdateUserInput): Promise<PublicUser | undefined>;
+  /** `actor` is absent only for the seed accounts and the CLI scripts. */
+  createUser(input: InsertUser, actor?: Actor): Promise<PublicUser>;
+  updateUser(id: string, input: UpdateUserInput, actor?: Actor): Promise<PublicUser | undefined>;
   deleteUser(id: string): Promise<boolean>;
 
   /**
@@ -492,6 +494,7 @@ export interface IStorage {
   mergePatients(
     sourceId: string,
     targetId: string,
+    actor?: Actor,
   ): Promise<{ orders: number; contacts: number; appointments: number } | undefined>;
   getPatient(id: string): Promise<Patient | undefined>;
   /** Matched on the 9 national digits, so formatting never blocks a match. */
@@ -503,8 +506,9 @@ export interface IStorage {
 
   listTests(opts?: { activeOnly?: boolean }): Promise<Test[]>;
   getTest(id: string): Promise<Test | undefined>;
-  createTest(input: InsertTest): Promise<Test>;
-  updateTest(id: string, input: Partial<InsertTest>): Promise<Test | undefined>;
+  createTest(input: InsertTest, actor: Actor): Promise<Test>;
+  updateTest(id: string, input: Partial<InsertTest>, actor: Actor): Promise<Test | undefined>;
+  /** A test that any order has used is kept for history: StorageConflict, deactivate it instead. */
   deleteTest(id: string): Promise<boolean>;
 
   listOrders(query?: OrderQuery): Promise<OrderListResponse>;
@@ -517,9 +521,13 @@ export interface IStorage {
    * mis-click is not recoverable, so the storage layer refuses rather than
    * trusting the caller.
    */
-  updateOrder(id: string, input: UpdateOrderInput): Promise<OrderWithDetails | undefined>;
+  updateOrder(id: string, input: UpdateOrderInput, actor?: Actor): Promise<OrderWithDetails | undefined>;
   /** `actor` is stamped on every line this call fills in. */
   saveResults(id: string, results: ResultInput[], actor?: Actor): Promise<OrderWithDetails | undefined>;
+  /**
+   * Only an order entered by mistake goes: one with a payment (even a voided
+   * one) or a result throws StorageConflict — that order is cancelled instead.
+   */
   deleteOrder(id: string): Promise<boolean>;
 
   /**
@@ -541,7 +549,11 @@ export interface IStorage {
 
   /** Cash ledger. Adding or removing a row re-derives orders.paidAmount. */
   addPayment(orderId: string, input: CreatePaymentInput, actor: Actor): Promise<OrderWithDetails | undefined>;
-  deletePayment(paymentId: string): Promise<boolean>;
+  /**
+   * Strikes a mistyped entry from the paid total. The row stays in the ledger
+   * with who voided it and why; voiding twice is a StorageConflict.
+   */
+  voidPayment(paymentId: string, reason: string, actor: Actor): Promise<OrderWithDetails | undefined>;
 
   /** `total_amount` sums the active rows of the match, whatever the status filter. */
   listExpenses(query?: ExpenseQuery): Promise<Paged<Expense> & { total_amount: number }>;
@@ -577,6 +589,8 @@ export interface IStorage {
   markTelegramSent(orderId: string): Promise<void>;
 
   getDashboardStats(): Promise<DashboardStatsData>;
+  /** Registratura bosh sahifasi (TZ §4.1.1): one day's counts, in one round trip. */
+  getReceptionDay(day: string): Promise<ReceptionDay>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

@@ -457,7 +457,7 @@ export default function PatientCardPage() {
                     </TableHeader>
                     <TableBody>
                       {card.payments.map((pay) => (
-                        <TableRow key={pay.id}>
+                        <TableRow key={pay.id} className={cn(pay.voidedAt && "opacity-60")}>
                           <TableCell className="tabular text-muted-foreground">{formatDateTime(pay.createdAt)}</TableCell>
                           <TableCell className="tabular">#{pay.orderNumber}</TableCell>
                           <TableCell>{PAYMENT_METHOD_LABELS[pay.method as PaymentMethod] ?? pay.method}</TableCell>
@@ -466,9 +466,19 @@ export default function PatientCardPage() {
                           <TableCell className="text-right">
                             <Money
                               value={pay.amount}
-                              className={cn("font-semibold", pay.amount < 0 && "text-rose-600 dark:text-rose-400")}
+                              className={cn(
+                                "font-semibold",
+                                pay.amount < 0 && "text-rose-600 dark:text-rose-400",
+                                pay.voidedAt && "line-through decoration-1",
+                              )}
                             />
-                            {pay.amount < 0 && <span className="block text-[11px] text-rose-600 dark:text-rose-400">qaytarilgan</span>}
+                            {pay.voidedAt ? (
+                              <span className="block text-[11px] text-muted-foreground" title={pay.voidReason ?? undefined}>
+                                bekor qilingan
+                              </span>
+                            ) : (
+                              pay.amount < 0 && <span className="block text-[11px] text-rose-600 dark:text-rose-400">qaytarilgan</span>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}

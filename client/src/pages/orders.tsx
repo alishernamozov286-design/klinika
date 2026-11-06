@@ -126,7 +126,7 @@ export default function Orders() {
       await apiRequest("DELETE", `/api/orders/${id}`);
     },
     onSuccess: () => {
-      invalidateApi("/api/orders", "/api/stats");
+      invalidateApi("/api/orders", "/api/stats", "/api/reception");
       toast({ title: "Buyurtma o'chirildi" });
       setDeleting(null);
     },
@@ -415,8 +415,9 @@ export default function Orders() {
         title="Buyurtmani o'chirish"
         description={
           <>
-            Buyurtma <strong>#{deleting?.orderNumber}</strong> va uning barcha natijalari butunlay
-            o'chiriladi. Bu amalni qaytarib bo'lmaydi.
+            Buyurtma <strong>#{deleting?.orderNumber}</strong> butunlay o'chiriladi. Faqat xato kiritilgan,
+            to'lovi va natijasi yo'q buyurtmani o'chirish mumkin. Qolganlari bekor qilinadi: moliyaviy va
+            tibbiy tarix saqlanadi.
           </>
         }
         onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}

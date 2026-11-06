@@ -26,13 +26,16 @@ import {
   type DoctorDaySlots,
   type DoctorWithDetails,
   type PriceListItem,
+  type ReceptionBoard,
   type Service,
 } from "@shared/schema";
+import { summarizeQueue } from "@shared/reception";
 import {
   bookingProblem,
   buildSlots,
   checkTransition,
   clockNow,
+  fromMinutes,
   holdsSlot,
   isValidDay,
   needsReason,
@@ -452,6 +455,49 @@ export function registerClinicRoutes(app: Express) {
   );
 
   // ------------------------------------------------------ doctor's cabinet
+
+  /**
+   * Registratura bosh sahifasi (TZ §4.1.1): today's patients, the queue, who
+   * has arrived, new registrations and how today's bills stand.
+   *
+   * One endpoint for the whole board, so the desk's home screen is two
+   * parallel queries. Each section follows its own permission — the queue
+   * needs appointments.read, the bills orders.read (money finance.view), new
+   * registrations patients.read — and comes back null without it.
+   */
+  app.get(
+    "/api/reception",
+    requirePermission("appointments.read", "orders.read"),
+    handle(async (req, res) => {
+      const clock = clockNow();
+      const date = stringParam(req.query.date) ?? clock.date;
+      if (!isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
+
+      const seesQueue = hasPermission(req, "appointments.read");
+      const [day, list] = await Promise.all([
+        storage.getReceptionDay(date),
+        seesQueue
+          ? storage.listAppointments({ date }).catch((e) => emptyIfMissing(e, [] as AppointmentWithDetails[]))
+          : Promise.resolve(null),
+      ]);
+
+      const now = fromMinutes(clock.minutes);
+      const seesMoney = hasPermission(req, "finance.view");
+      const board: ReceptionBoard = {
+        date,
+        now,
+        patientsToday: day.patientsToday,
+        newPatients: hasPermission(req, "patients.read") ? day.newPatients : null,
+        payments: hasPermission(req, "orders.read")
+          ? seesMoney
+            ? day.payments
+            : { ...day.payments, billed: null, collected: null, due: null }
+          : null,
+        queue: list ? summarizeQueue(list, { isToday: date === clock.date, now }) : null,
+      };
+      res.json(board);
+    }),
+  );
 
   /**
    * The doctor's day (TZ §5.1.1): today's list, who is waiting, who has been

@@ -124,7 +124,7 @@ export const PERMISSIONS = {
   "orders.delete": {
     group: "orders",
     label: "O'chirish",
-    description: "Buyurtmani butunlay o'chirish",
+    description: "Xato kiritilgan buyurtmani o'chirish (faqat to'lovi va natijasi bo'lmasa)",
     sensitive: true,
   },
 
@@ -167,8 +167,8 @@ export const PERMISSIONS = {
   },
   "payments.delete": {
     group: "finance",
-    label: "To'lov yozuvini o'chirish",
-    description: "Xato kiritilgan to'lov yozuvini o'chirish",
+    label: "To'lov yozuvini bekor qilish",
+    description: "Xato kiritilgan to'lovni sabab bilan bekor qilish (yozuv tarixda qoladi)",
     sensitive: true,
   },
   "expenses.read": {

@@ -218,6 +218,10 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("registrator"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
+  /** Profile edits by an admin. Sign-in lock bookkeeping below does not count. */
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
 
   /**
    * Escalating lockout state, kept on the row rather than in memory.
@@ -249,6 +253,8 @@ export const roles = pgTable("roles", {
   /** One of the TZ §3 roles. These cannot be deleted; their key is fixed. */
   isSystem: boolean("is_system").notNull().default(false),
   createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  /** Null for the built-in roles, which the system seeds. */
+  createdBy: varchar("created_by"),
   updatedAt: isoTimestamp("updated_at"),
   updatedBy: varchar("updated_by"),
 });
@@ -289,6 +295,7 @@ export const departments = pgTable("departments", {
   description: text("description"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
   updatedAt: isoTimestamp("updated_at"),
   updatedBy: varchar("updated_by"),
 });
@@ -314,6 +321,7 @@ export const doctors = pgTable(
     schedule: json("schedule").$type<ScheduleSlot[]>().notNull().default(sql`'[]'::json`),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
     updatedAt: isoTimestamp("updated_at"),
     updatedBy: varchar("updated_by"),
   },
@@ -508,6 +516,7 @@ export const patients = pgTable("patients", {
   /** JShShIR — the 14-digit personal number; the surest key against duplicates. */
   pinfl: text("pinfl"),
   createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
   updatedAt: isoTimestamp("updated_at"),
   updatedBy: varchar("updated_by"),
   // Set by the Telegram bot when the patient shares their contact; null means
@@ -544,6 +553,11 @@ export const tests = pgTable("tests", {
   unit: text("unit"),
   referenceRange: text("reference_range"),
   isActive: boolean("is_active").notNull().default(true),
+  /** Null on catalogue rows that predate these columns (B1.10). */
+  createdAt: isoTimestamp("created_at").defaultNow(),
+  createdBy: varchar("created_by"),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
 });
 
 /**
@@ -585,6 +599,9 @@ export const orders = pgTable("orders", {
   referrer: text("referrer"),
   createdBy: varchar("created_by"),
   createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  /** Staff edits: tests, discount, status, results, payments. Telegram delivery is not one. */
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
   completedAt: isoTimestamp("completed_at"),
   // When the ready results were delivered over Telegram. Doubles as the
   // "already sent" guard, so re-saving a result never spams the patient.
@@ -607,7 +624,10 @@ export const orderTests = pgTable("order_tests", {
       answerable for, and orders.createdBy only covers the registration. */
   enteredBy: varchar("entered_by"),
   completedAt: isoTimestamp("completed_at"),
-});
+}, (t) => ({
+  // Backs the "has any order used this test?" check that guards deletion.
+  testIdx: index("IDX_order_tests_test").on(t.testId),
+}));
 
 /**
  * The physical tube behind an order.
@@ -662,6 +682,11 @@ export const samples = pgTable(
  * the fast path every list already reads, but it is derived from these — a
  * single number cannot answer "who took the 50 000 yesterday", which is the
  * question a till reconciliation actually asks.
+ *
+ * Rows are never updated or deleted (TZ §10). A mistyped entry is *voided*:
+ * it stays in the ledger with who voided it and why, and stops counting
+ * towards the paid total. Money actually handed back is a refund instead — a
+ * new negative row.
  */
 export const payments = pgTable("payments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -673,6 +698,10 @@ export const payments = pgTable("payments", {
   createdBy: varchar("created_by"),
   createdByName: text("created_by_name"),
   createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  voidedAt: isoTimestamp("voided_at"),
+  voidedBy: varchar("voided_by"),
+  voidedByName: text("voided_by_name"),
+  voidReason: text("void_reason"),
 });
 
 /** Money out. Without it the reports only ever show turnover, never profit. */
@@ -1164,6 +1193,7 @@ export const insertPatientSchema = createInsertSchema(patients)
     id: true,
     patientNumber: true,
     createdAt: true,
+    createdBy: true,
     updatedAt: true,
     updatedBy: true,
     telegramChatId: true,
@@ -1199,7 +1229,7 @@ export const insertPatientSchema = createInsertSchema(patients)
   });
 
 export const insertTestSchema = createInsertSchema(tests)
-  .omit({ id: true })
+  .omit({ id: true, createdAt: true, createdBy: true, updatedAt: true, updatedBy: true })
   .extend({
     name: z.string().trim().min(2, "Tahlil nomini kiriting"),
     price: z.coerce.number().int().min(0, "Narx manfiy bo'lmasligi kerak"),
@@ -1274,6 +1304,11 @@ export const createPaymentSchema = z.object({
   amount: z.coerce.number().int().refine((n) => n !== 0, "Summani kiriting"),
   method: z.enum(PAYMENT_METHODS).default("naqd"),
   note: z.string().trim().nullish(),
+});
+
+/** Why a ledger entry is struck out; required, because the row stays forever. */
+export const voidPaymentSchema = z.object({
+  reason: z.string().trim().min(5, "Bekor qilish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun"),
 });
 
 export const insertExpenseSchema = z.object({
@@ -1364,8 +1399,19 @@ export const saveResultsSchema = z.object({
     .min(1),
 });
 
+// Stamps and sign-in lock state are the server's to write, never the client's.
 export const insertUserSchema = createInsertSchema(users)
-  .omit({ id: true, createdAt: true })
+  .omit({
+    id: true,
+    createdAt: true,
+    createdBy: true,
+    updatedAt: true,
+    updatedBy: true,
+    failedAttempts: true,
+    lockedUntil: true,
+    lockLevel: true,
+    lastFailedAt: true,
+  })
   .extend({
     username: z
       .string()
@@ -1677,6 +1723,63 @@ export type DashboardStatsData = {
   totalPatients: number;
   /** Null for users without finance.view — the server withholds it. */
   unpaidAmount: number | null;
+};
+
+/**
+ * Registratura bosh sahifasi (TZ §4.1.1): the desk's day at a glance —
+ * today's patients, the queue, who has arrived, new registrations, and how
+ * today's bills stand. Sections the viewer may not see come back null.
+ */
+export type ReceptionNewPatient = Pick<Patient, "id" | "patientNumber" | "fullName" | "phone" | "createdAt">;
+
+export type ReceptionPayments = {
+  /** Today's lab orders that were not cancelled. */
+  orders: number;
+  paid: number;
+  partial: number;
+  unpaid: number;
+  /** Money figures: null without finance.view. */
+  billed: number | null;
+  collected: number | null;
+  due: number | null;
+};
+
+/** What the storage layer counts for one day; the route adds the queue. */
+export type ReceptionDay = {
+  date: string;
+  /** Distinct patients with a visit that day: a lab order, an arrival, or both. */
+  patientsToday: number;
+  newPatients: { total: number; latest: ReceptionNewPatient[] };
+  payments: ReceptionPayments;
+};
+
+export type ReceptionQueueCounts = {
+  /** Every booking of the day except cancelled ones. */
+  total: number;
+  scheduled: number;
+  /** Booked for a time already past and not yet arrived. */
+  late: number;
+  arrived: number;
+  inProgress: number;
+  completed: number;
+  noShow: number;
+  cancelled: number;
+};
+
+export type ReceptionBoard = {
+  date: string;
+  /** Server clock (HH:MM): "late" is judged against it, not the browser's. */
+  now: string;
+  patientsToday: number;
+  newPatients: ReceptionDay["newPatients"] | null;
+  payments: ReceptionPayments | null;
+  queue: {
+    counts: ReceptionQueueCounts;
+    /** Arrived and in the chair, longest-waiting first. */
+    waiting: AppointmentWithDetails[];
+    /** Still to come, by booked time. */
+    upcoming: AppointmentWithDetails[];
+  } | null;
 };
 
 export type RevenuePoint = {
