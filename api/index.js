@@ -27,6 +27,7 @@ var init_permissions = __esm({
     PERMISSION_GROUPS = [
       { key: "patients", label: "Bemorlar", description: "Bemorlar bazasi va shaxsiy kartalar" },
       { key: "appointments", label: "Navbat va qabul", description: "Shifokor qabuliga yozish, navbat va shifokor kabineti" },
+      { key: "medical", label: "Tibbiy karta", description: "Ko'rik yozuvlari, tashxislar va allergiyalar (TZ \xA75)" },
       { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
       { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
       { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
@@ -73,6 +74,27 @@ var init_permissions = __esm({
         group: "appointments",
         label: "Qabul o'tkazish",
         description: "Shifokor kabineti: o'z navbatidagi bemorni chaqirish va qabulni yakunlash"
+      },
+      "records.read": {
+        group: "medical",
+        label: "Ko'rish",
+        description: "Elektron tibbiy karta: ko'riklar, tashxislar, allergiyalar"
+      },
+      "records.write": {
+        group: "medical",
+        label: "Ko'rik yozish",
+        description: "O'z qabulidagi bemorga ko'rik yozuvi va allergiya kiritish"
+      },
+      "records.sign": {
+        group: "medical",
+        label: "Tasdiqlash",
+        description: "O'z ko'rik yozuvini tasdiqlash (tasdiqlangach qulflanadi)"
+      },
+      "records.amend": {
+        group: "medical",
+        label: "Tuzatish",
+        description: "Tasdiqlangan yozuvga sababli tuzatish kiritish; eski nusxa saqlanadi",
+        sensitive: true
       },
       "orders.read": {
         group: "orders",
@@ -226,6 +248,7 @@ var init_permissions = __esm({
           "doctors.manage",
           "services.manage",
           "appointments.read",
+          "records.read",
           "patients.read",
           "orders.read",
           "orders.cancel",
@@ -260,7 +283,15 @@ var init_permissions = __esm({
         key: "shifokor",
         name: "Shifokor",
         description: "Tibbiy karta va buyurtmalar, bemor tahlil natijalarini ko'rish",
-        permissions: ["patients.read", "orders.read", "appointments.serve"]
+        permissions: [
+          "patients.read",
+          "orders.read",
+          "appointments.serve",
+          "records.read",
+          "records.write",
+          "records.sign",
+          "records.amend"
+        ]
       },
       {
         key: "laborant",
@@ -435,6 +466,10 @@ __export(schema_exports, {
   ORDER_STATUS_LABELS: () => ORDER_STATUS_LABELS,
   PAYMENT_METHODS: () => PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS: () => PAYMENT_METHOD_LABELS,
+  RECORD_FIELDS: () => RECORD_FIELDS,
+  RECORD_FIELD_LABELS: () => RECORD_FIELD_LABELS,
+  RECORD_STATUSES: () => RECORD_STATUSES,
+  RECORD_STATUS_LABELS: () => RECORD_STATUS_LABELS,
   RESULT_FLAGS: () => RESULT_FLAGS,
   SAMPLE_REJECT_REASONS: () => SAMPLE_REJECT_REASONS,
   SAMPLE_STATUSES: () => SAMPLE_STATUSES,
@@ -445,6 +480,7 @@ __export(schema_exports, {
   WEEKDAYS: () => WEEKDAYS,
   WEEKDAY_LABELS: () => WEEKDAY_LABELS,
   WEEKDAY_SHORT: () => WEEKDAY_SHORT,
+  amendRecordSchema: () => amendRecordSchema,
   appSettings: () => appSettings,
   appointmentStatusSchema: () => appointmentStatusSchema,
   appointments: () => appointments,
@@ -459,6 +495,7 @@ __export(schema_exports, {
   doctors: () => doctors,
   emergencyContactSchema: () => emergencyContactSchema,
   expenses: () => expenses,
+  insertAllergySchema: () => insertAllergySchema,
   insertDepartmentSchema: () => insertDepartmentSchema,
   insertDoctorSchema: () => insertDoctorSchema,
   insertExpenseSchema: () => insertExpenseSchema,
@@ -471,6 +508,8 @@ __export(schema_exports, {
   labSettingsSchema: () => labSettingsSchema,
   localDayString: () => localDayString,
   loginSchema: () => loginSchema,
+  medicalRecordVersions: () => medicalRecordVersions,
+  medicalRecords: () => medicalRecords,
   mfaCodeSchema: () => mfaCodeSchema,
   mfaDisableSchema: () => mfaDisableSchema,
   mfaPasswordSchema: () => mfaPasswordSchema,
@@ -478,18 +517,23 @@ __export(schema_exports, {
   normalizeUzPhone: () => normalizeUzPhone,
   orderTests: () => orderTests,
   orders: () => orders,
+  patientAllergies: () => patientAllergies,
   patientContacts: () => patientContacts,
   patients: () => patients,
   payments: () => payments,
   previousRange: () => previousRange,
+  recordFieldsSchema: () => recordFieldsSchema,
+  removeAllergySchema: () => removeAllergySchema,
   rescheduleAppointmentSchema: () => rescheduleAppointmentSchema,
   roles: () => roles,
   samples: () => samples,
+  saveRecordSchema: () => saveRecordSchema,
   saveResultsSchema: () => saveResultsSchema,
   scheduleSchema: () => scheduleSchema,
   securitySettingsSchema: () => securitySettingsSchema,
   services: () => services,
   sessions: () => sessions,
+  signRecordSchema: () => signRecordSchema,
   telegramContacts: () => telegramContacts,
   tests: () => tests,
   updateDepartmentSchema: () => updateDepartmentSchema,
@@ -543,7 +587,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_FIELD_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -615,6 +659,27 @@ var init_schema = __esm({
       completed: "Yakunlandi",
       no_show: "Kelmadi",
       cancelled: "Bekor qilindi"
+    };
+    RECORD_STATUSES = ["draft", "signed"];
+    RECORD_STATUS_LABELS = {
+      draft: "Qoralama",
+      signed: "Tasdiqlangan"
+    };
+    RECORD_FIELDS = [
+      "complaints",
+      "anamnesis",
+      "examination",
+      "preliminaryDiagnosis",
+      "finalDiagnosis",
+      "recommendations"
+    ];
+    RECORD_FIELD_LABELS = {
+      complaints: "Shikoyatlar",
+      anamnesis: "Anamnez",
+      examination: "Ko'rik natijalari",
+      preliminaryDiagnosis: "Dastlabki tashxis",
+      finalDiagnosis: "Yakuniy tashxis",
+      recommendations: "Tavsiyalar"
     };
     WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
     WEEKDAY_SHORT = { 1: "Du", 2: "Se", 3: "Ch", 4: "Pa", 5: "Ju", 6: "Sh", 7: "Ya" };
@@ -759,6 +824,76 @@ var init_schema = __esm({
         // word when two registrars take the same slot at the same moment.
         slotIdx: uniqueIndex("UQ_appointments_slot").on(t.doctorId, t.date, t.startTime).where(sql`status NOT IN ('cancelled', 'no_show')`)
       })
+    );
+    medicalRecords = pgTable(
+      "medical_records",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        patientId: varchar("patient_id").notNull(),
+        appointmentId: varchar("appointment_id").notNull(),
+        doctorId: varchar("doctor_id").notNull(),
+        visitId: varchar("visit_id"),
+        status: text("status").notNull().default("draft"),
+        version: integer("version").notNull().default(1),
+        revision: integer("revision").notNull().default(0),
+        complaints: text("complaints"),
+        anamnesis: text("anamnesis"),
+        examination: text("examination"),
+        preliminaryDiagnosis: text("preliminary_diagnosis"),
+        finalDiagnosis: text("final_diagnosis"),
+        recommendations: text("recommendations"),
+        signedAt: isoTimestamp("signed_at"),
+        signedBy: varchar("signed_by"),
+        /** The last correction: when, and why. */
+        amendedAt: isoTimestamp("amended_at"),
+        amendReason: text("amend_reason"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by")
+      },
+      (t) => ({
+        appointmentIdx: uniqueIndex("UQ_medical_records_appointment").on(t.appointmentId),
+        patientIdx: index("IDX_medical_records_patient").on(t.patientId),
+        doctorStatusIdx: index("IDX_medical_records_doctor_status").on(t.doctorId, t.status)
+      })
+    );
+    medicalRecordVersions = pgTable(
+      "medical_record_versions",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        recordId: varchar("record_id").notNull(),
+        version: integer("version").notNull(),
+        complaints: text("complaints"),
+        anamnesis: text("anamnesis"),
+        examination: text("examination"),
+        preliminaryDiagnosis: text("preliminary_diagnosis"),
+        finalDiagnosis: text("final_diagnosis"),
+        recommendations: text("recommendations"),
+        signedAt: isoTimestamp("signed_at"),
+        signedBy: varchar("signed_by"),
+        /** Who replaced this version, when, and why. */
+        replacedAt: isoTimestamp("replaced_at").defaultNow().notNull(),
+        replacedBy: varchar("replaced_by"),
+        replaceReason: text("replace_reason").notNull()
+      },
+      (t) => ({ recordVersionIdx: uniqueIndex("UQ_medical_record_versions").on(t.recordId, t.version) })
+    );
+    patientAllergies = pgTable(
+      "patient_allergies",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        patientId: varchar("patient_id").notNull(),
+        allergen: text("allergen").notNull(),
+        reaction: text("reaction"),
+        isActive: boolean("is_active").notNull().default(true),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        removedAt: isoTimestamp("removed_at"),
+        removedBy: varchar("removed_by"),
+        removeReason: text("remove_reason")
+      },
+      (t) => ({ patientIdx: index("IDX_patient_allergies_patient").on(t.patientId) })
     );
     patients = pgTable("patients", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1170,6 +1305,30 @@ var init_schema = __esm({
     appointmentStatusSchema = z.object({
       status: z.enum(APPOINTMENT_STATUSES),
       reason: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    recordText = z.string().max(4e3, "Matn juda uzun (ko'pi bilan 4000 belgi)").nullish().transform((v) => v?.trim() ? v.trim() : null);
+    recordFieldsSchema = z.object({
+      complaints: recordText,
+      anamnesis: recordText,
+      examination: recordText,
+      preliminaryDiagnosis: recordText,
+      finalDiagnosis: recordText,
+      recommendations: recordText
+    });
+    saveRecordSchema = recordFieldsSchema.partial().extend({
+      revision: z.number().int().min(0)
+    });
+    signRecordSchema = z.object({ revision: z.number().int().min(0) });
+    amendRecordSchema = recordFieldsSchema.extend({
+      revision: z.number().int().min(0),
+      reason: z.string().trim().min(5, "Tuzatish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun")
+    });
+    insertAllergySchema = z.object({
+      allergen: z.string().trim().min(2, "Allergenni kiriting").max(120, "Juda uzun"),
+      reaction: z.string().trim().max(200, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    removeAllergySchema = z.object({
+      reason: z.string().trim().min(3, "Sababini yozing").max(200, "Juda uzun")
     });
     securitySettingsSchema = z.object({
       sessionIdleMinutes: z.coerce.number().int().min(5, "Kamida 5 daqiqa").max(480, "Ko'pi bilan 8 soat"),
@@ -1897,10 +2056,11 @@ __export(storage_pg_exports, {
   isMissingTable: () => isMissingTable
 });
 import { and, asc, desc, eq, gte, inArray, lte, or, sql as sql2 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, lockDoctorDay, appointmentsTableExists, mapDoctor, PgStorage;
+var iso, mapUser, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -2024,10 +2184,45 @@ var init_storage_pg = __esm({
       serviceName: r.serviceName ?? null
     });
     lockDoctorDay = (tx, doctorId, date) => tx.execute(sql2`SELECT pg_advisory_xact_lock(hashtext(${`appointments:${doctorId}:${date}`}))`);
-    appointmentsTableExists = async (tx) => {
-      const { rows } = await tx.execute(sql2`SELECT to_regclass('public.appointments') IS NOT NULL AS ok`);
+    tableExists = async (tx, table) => {
+      const { rows } = await tx.execute(sql2`SELECT to_regclass(${"public." + table}) IS NOT NULL AS ok`);
       return Boolean(rows[0]?.ok);
     };
+    appointmentsTableExists = (tx) => tableExists(tx, "appointments");
+    mapRecord = (row) => ({
+      ...row,
+      status: row.status,
+      signedAt: iso(row.signedAt),
+      amendedAt: iso(row.amendedAt),
+      createdAt: iso(row.createdAt) ?? row.createdAt,
+      updatedAt: iso(row.updatedAt)
+    });
+    signer = alias(users, "signer");
+    recordSelect = () => db.select({
+      r: medicalRecords,
+      patientNumber: patients.patientNumber,
+      patientName: patients.fullName,
+      doctorName: users.fullName,
+      doctorUserId: doctors.userId,
+      specialty: doctors.specialty,
+      date: appointments.date,
+      startTime: appointments.startTime,
+      signedByName: signer.fullName
+    }).from(medicalRecords).leftJoin(patients, eq(patients.id, medicalRecords.patientId)).leftJoin(doctors, eq(doctors.id, medicalRecords.doctorId)).leftJoin(users, eq(users.id, doctors.userId)).leftJoin(appointments, eq(appointments.id, medicalRecords.appointmentId)).leftJoin(signer, eq(signer.id, medicalRecords.signedBy));
+    mapRecordRow = (r) => ({
+      ...mapRecord(r.r),
+      patientNumber: r.patientNumber ?? 0,
+      patientName: r.patientName ?? "\u2014",
+      doctorName: r.doctorName ?? "\u2014",
+      doctorUserId: r.doctorUserId ?? "",
+      specialty: r.specialty ?? "",
+      date: r.date ?? (iso(r.r.createdAt) ?? r.r.createdAt).slice(0, 10),
+      startTime: r.startTime ?? "",
+      signedByName: r.signedByName ?? null
+    });
+    recordConflict = (status) => new StorageConflict(
+      status === "signed" ? "Yozuv allaqachon tasdiqlangan. Sahifani yangilang" : "Yozuv boshqa oynada o'zgartirilgan. Sahifani yangilang \u2014 oxirgi saqlangan matn ko'rinadi"
+    );
     mapDoctor = (row) => ({
       ...row.doctor,
       schedule: row.doctor.schedule ?? [],
@@ -2385,6 +2580,122 @@ var init_storage_pg = __esm({
         if (!updated.length) throw new StorageConflict("Qabul holati boshqa joyda o'zgartirilgan. Sahifani yangilang");
         return await this.getAppointment(id);
       }
+      // ---------------------------------------------------- examination records
+      async listRecords(q) {
+        const where = [];
+        if (q.appointmentIds && q.appointmentIds.length === 0) return [];
+        if (q.patientId) where.push(eq(medicalRecords.patientId, q.patientId));
+        if (q.appointmentIds) where.push(inArray(medicalRecords.appointmentId, q.appointmentIds));
+        if (q.doctorId) where.push(eq(medicalRecords.doctorId, q.doctorId));
+        if (q.status) where.push(eq(medicalRecords.status, q.status));
+        const rows = await recordSelect().where(where.length ? and(...where) : void 0).orderBy(desc(appointments.date), desc(appointments.startTime), desc(medicalRecords.createdAt)).limit(Math.min(q.limit ?? 500, 2e3));
+        return rows.map(mapRecordRow);
+      }
+      async getRecord(id) {
+        const [row] = await recordSelect().where(eq(medicalRecords.id, id)).limit(1);
+        return row && mapRecordRow(row);
+      }
+      async getRecordByAppointment(appointmentId) {
+        const [row] = await recordSelect().where(eq(medicalRecords.appointmentId, appointmentId)).limit(1);
+        return row && mapRecordRow(row);
+      }
+      async openRecord(input, actor) {
+        await db.insert(medicalRecords).values({
+          patientId: input.patientId,
+          appointmentId: input.appointmentId,
+          doctorId: input.doctorId,
+          visitId: input.visitId,
+          createdBy: actor.id
+        }).onConflictDoNothing({ target: medicalRecords.appointmentId });
+        return await this.getRecordByAppointment(input.appointmentId);
+      }
+      async saveRecordDraft(id, revision, fields, actor) {
+        const rows = await db.update(medicalRecords).set({ ...fields, revision: revision + 1, updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id }).where(and(eq(medicalRecords.id, id), eq(medicalRecords.status, "draft"), eq(medicalRecords.revision, revision))).returning({ id: medicalRecords.id });
+        if (!rows.length) throw recordConflict((await this.getRecord(id))?.status);
+        return await this.getRecord(id);
+      }
+      async signRecord(id, revision, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const rows = await db.update(medicalRecords).set({ status: "signed", signedAt: now, signedBy: actor.id, revision: revision + 1, updatedAt: now, updatedBy: actor.id }).where(and(eq(medicalRecords.id, id), eq(medicalRecords.status, "draft"), eq(medicalRecords.revision, revision))).returning({ id: medicalRecords.id });
+        if (!rows.length) throw recordConflict((await this.getRecord(id))?.status);
+        return await this.getRecord(id);
+      }
+      async amendRecord(id, revision, fields, reason, actor) {
+        await db.transaction(async (tx) => {
+          const [current] = await tx.select().from(medicalRecords).where(eq(medicalRecords.id, id)).limit(1).for("update");
+          if (!current) throw new StorageConflict("Yozuv topilmadi");
+          if (current.status !== "signed") throw new StorageConflict("Faqat tasdiqlangan yozuvga tuzatish kiritiladi");
+          if (current.revision !== revision) throw recordConflict(void 0);
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          await tx.insert(medicalRecordVersions).values({
+            recordId: id,
+            version: current.version,
+            complaints: current.complaints,
+            anamnesis: current.anamnesis,
+            examination: current.examination,
+            preliminaryDiagnosis: current.preliminaryDiagnosis,
+            finalDiagnosis: current.finalDiagnosis,
+            recommendations: current.recommendations,
+            signedAt: current.signedAt,
+            signedBy: current.signedBy,
+            replacedAt: now,
+            replacedBy: actor.id,
+            replaceReason: reason
+          });
+          await tx.update(medicalRecords).set({
+            ...fields,
+            version: current.version + 1,
+            revision: current.revision + 1,
+            signedAt: now,
+            signedBy: actor.id,
+            amendedAt: now,
+            amendReason: reason,
+            updatedAt: now,
+            updatedBy: actor.id
+          }).where(eq(medicalRecords.id, id));
+        });
+        return await this.getRecord(id);
+      }
+      async listRecordVersions(recordId) {
+        const rows = await db.select({ v: medicalRecordVersions, replacedByName: users.fullName }).from(medicalRecordVersions).leftJoin(users, eq(users.id, medicalRecordVersions.replacedBy)).where(eq(medicalRecordVersions.recordId, recordId)).orderBy(desc(medicalRecordVersions.version));
+        return rows.map((r) => ({
+          ...r.v,
+          signedAt: iso(r.v.signedAt),
+          replacedAt: iso(r.v.replacedAt) ?? r.v.replacedAt,
+          replacedByName: r.replacedByName ?? null
+        }));
+      }
+      // ------------------------------------------------------------- allergies
+      allergySelect() {
+        return db.select({ a: patientAllergies, createdByName: users.fullName }).from(patientAllergies).leftJoin(users, eq(users.id, patientAllergies.createdBy));
+      }
+      mapAllergy(r) {
+        return {
+          ...r.a,
+          createdAt: iso(r.a.createdAt) ?? r.a.createdAt,
+          removedAt: iso(r.a.removedAt),
+          createdByName: r.createdByName ?? null
+        };
+      }
+      async listAllergies(patientId, opts = {}) {
+        const rows = await this.allergySelect().where(
+          opts.includeInactive ? eq(patientAllergies.patientId, patientId) : and(eq(patientAllergies.patientId, patientId), eq(patientAllergies.isActive, true))
+        ).orderBy(desc(patientAllergies.isActive), desc(patientAllergies.createdAt));
+        return rows.map((r) => this.mapAllergy(r));
+      }
+      async getAllergy(id) {
+        const [row] = await this.allergySelect().where(eq(patientAllergies.id, id)).limit(1);
+        return row && this.mapAllergy(row);
+      }
+      async addAllergy(patientId, input, actor) {
+        const [row] = await db.insert(patientAllergies).values({ patientId, allergen: input.allergen, reaction: input.reaction, createdBy: actor.id }).returning({ id: patientAllergies.id });
+        return await this.getAllergy(row.id);
+      }
+      async deactivateAllergy(id, reason, actor) {
+        const rows = await db.update(patientAllergies).set({ isActive: false, removedAt: (/* @__PURE__ */ new Date()).toISOString(), removedBy: actor.id, removeReason: reason }).where(and(eq(patientAllergies.id, id), eq(patientAllergies.isActive, true))).returning({ id: patientAllergies.id });
+        if (!rows.length) throw new StorageConflict("Bu yozuv allaqachon faol emas");
+        return await this.getAllergy(id);
+      }
       async doctorHasAppointments(doctorId) {
         if (!await appointmentsTableExists(db)) return false;
         const [row] = await db.select({ id: appointments.id }).from(appointments).where(eq(appointments.doctorId, doctorId)).limit(1);
@@ -2655,6 +2966,16 @@ var init_storage_pg = __esm({
             const movedAp = await tx.update(appointments).set({ patientId: targetId }).where(eq(appointments.patientId, sourceId)).returning({ id: appointments.id });
             movedAppointments = movedAp.length;
           }
+          if (await tableExists(tx, "medical_records")) {
+            await tx.execute(sql2`
+          UPDATE medical_records mr SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND mr.visit_id = sv.id`);
+            await tx.update(medicalRecords).set({ patientId: targetId }).where(eq(medicalRecords.patientId, sourceId));
+          }
+          if (await tableExists(tx, "patient_allergies")) {
+            await tx.update(patientAllergies).set({ patientId: targetId }).where(eq(patientAllergies.patientId, sourceId));
+          }
           await tx.execute(sql2`
         DELETE FROM ${visits} sv USING ${visits} tv
         WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
@@ -2728,6 +3049,10 @@ var init_storage_pg = __esm({
         if (await appointmentsTableExists(db)) {
           const [booked] = await db.select({ id: appointments.id }).from(appointments).where(eq(appointments.patientId, id)).limit(1);
           if (booked) throw new Error("Bu bemorda qabullar tarixi bor \u2014 kartani o'chirib bo'lmaydi");
+        }
+        if (await tableExists(db, "patient_allergies")) {
+          const [allergy] = await db.select({ id: patientAllergies.id }).from(patientAllergies).where(eq(patientAllergies.patientId, id)).limit(1);
+          if (allergy) throw new Error("Bu bemorda tibbiy ma'lumotlar (allergiyalar) bor \u2014 kartani o'chirib bo'lmaydi");
         }
         const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
         if (rows.length) {
@@ -3482,6 +3807,9 @@ var init_db = __esm({
       doctors: [],
       services: [],
       appointments: [],
+      medicalRecords: [],
+      medicalRecordVersions: [],
+      patientAllergies: [],
       security: null,
       patients: [],
       patientContacts: [],
@@ -3987,6 +4315,169 @@ var init_storage_file = __esm({
       async doctorHasAppointments(doctorId) {
         return this.db.appointments.some((a) => a.doctorId === doctorId);
       }
+      // ---------------------------------------------------- examination records
+      recordDetails(r) {
+        const doctor = this.db.doctors.find((d) => d.id === r.doctorId);
+        const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : void 0;
+        const appt = this.db.appointments.find((a) => a.id === r.appointmentId);
+        const signer2 = r.signedBy ? this.db.users.find((u) => u.id === r.signedBy) : void 0;
+        const patient = this.db.patients.find((p) => p.id === r.patientId);
+        return {
+          ...r,
+          patientNumber: patient?.patientNumber ?? 0,
+          patientName: patient?.fullName ?? "\u2014",
+          doctorName: user?.fullName ?? "\u2014",
+          doctorUserId: doctor?.userId ?? "",
+          specialty: doctor?.specialty ?? "",
+          date: appt?.date ?? r.createdAt.slice(0, 10),
+          startTime: appt?.startTime ?? "",
+          signedByName: signer2?.fullName ?? null
+        };
+      }
+      /** Same wording as the Postgres store: "already signed", else "saved elsewhere". */
+      recordConflict(status) {
+        return new StorageConflict(
+          status === "signed" ? "Yozuv allaqachon tasdiqlangan. Sahifani yangilang" : "Yozuv boshqa oynada o'zgartirilgan. Sahifani yangilang \u2014 oxirgi saqlangan matn ko'rinadi"
+        );
+      }
+      async listRecords(q) {
+        return this.db.medicalRecords.filter(
+          (r) => (!q.patientId || r.patientId === q.patientId) && (!q.appointmentIds || q.appointmentIds.includes(r.appointmentId)) && (!q.doctorId || r.doctorId === q.doctorId) && (!q.status || r.status === q.status)
+        ).map((r) => this.recordDetails(r)).sort(
+          (a, b) => b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime) || b.createdAt.localeCompare(a.createdAt)
+        ).slice(0, Math.min(q.limit ?? 500, 2e3));
+      }
+      async getRecord(id) {
+        const r = this.db.medicalRecords.find((x) => x.id === id);
+        return r && this.recordDetails({ ...r });
+      }
+      async getRecordByAppointment(appointmentId) {
+        const r = this.db.medicalRecords.find((x) => x.appointmentId === appointmentId);
+        return r && this.recordDetails({ ...r });
+      }
+      async openRecord(input, actor) {
+        const existing = this.db.medicalRecords.find((r2) => r2.appointmentId === input.appointmentId);
+        if (existing) return this.recordDetails({ ...existing });
+        const r = {
+          id: randomUUID(),
+          patientId: input.patientId,
+          appointmentId: input.appointmentId,
+          doctorId: input.doctorId,
+          visitId: input.visitId,
+          status: "draft",
+          version: 1,
+          revision: 0,
+          complaints: null,
+          anamnesis: null,
+          examination: null,
+          preliminaryDiagnosis: null,
+          finalDiagnosis: null,
+          recommendations: null,
+          signedAt: null,
+          signedBy: null,
+          amendedAt: null,
+          amendReason: null,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: null
+        };
+        this.db.medicalRecords.push(r);
+        await this.persist();
+        return this.recordDetails({ ...r });
+      }
+      async saveRecordDraft(id, revision, fields, actor) {
+        const r = this.db.medicalRecords.find((x) => x.id === id);
+        if (!r || r.status !== "draft" || r.revision !== revision) throw this.recordConflict(r?.status);
+        for (const [k, v] of Object.entries(fields)) if (v !== void 0) r[k] = v;
+        r.revision = revision + 1;
+        r.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        r.updatedBy = actor.id;
+        await this.persist();
+        return this.recordDetails({ ...r });
+      }
+      async signRecord(id, revision, actor) {
+        const r = this.db.medicalRecords.find((x) => x.id === id);
+        if (!r || r.status !== "draft" || r.revision !== revision) throw this.recordConflict(r?.status);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        Object.assign(r, { status: "signed", signedAt: now, signedBy: actor.id, revision: revision + 1, updatedAt: now, updatedBy: actor.id });
+        await this.persist();
+        return this.recordDetails({ ...r });
+      }
+      async amendRecord(id, revision, fields, reason, actor) {
+        const r = this.db.medicalRecords.find((x) => x.id === id);
+        if (!r) throw new StorageConflict("Yozuv topilmadi");
+        if (r.status !== "signed") throw new StorageConflict("Faqat tasdiqlangan yozuvga tuzatish kiritiladi");
+        if (r.revision !== revision) throw this.recordConflict();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        this.db.medicalRecordVersions.push({
+          id: randomUUID(),
+          recordId: id,
+          version: r.version,
+          complaints: r.complaints,
+          anamnesis: r.anamnesis,
+          examination: r.examination,
+          preliminaryDiagnosis: r.preliminaryDiagnosis,
+          finalDiagnosis: r.finalDiagnosis,
+          recommendations: r.recommendations,
+          signedAt: r.signedAt,
+          signedBy: r.signedBy,
+          replacedAt: now,
+          replacedBy: actor.id,
+          replaceReason: reason
+        });
+        Object.assign(r, {
+          ...fields,
+          version: r.version + 1,
+          revision: r.revision + 1,
+          signedAt: now,
+          signedBy: actor.id,
+          amendedAt: now,
+          amendReason: reason,
+          updatedAt: now,
+          updatedBy: actor.id
+        });
+        await this.persist();
+        return this.recordDetails({ ...r });
+      }
+      async listRecordVersions(recordId) {
+        return this.db.medicalRecordVersions.filter((v) => v.recordId === recordId).sort((a, b) => b.version - a.version).map((v) => ({ ...v, replacedByName: this.db.users.find((u) => u.id === v.replacedBy)?.fullName ?? null }));
+      }
+      // ------------------------------------------------------------- allergies
+      allergyDetails(a) {
+        return { ...a, createdByName: this.db.users.find((u) => u.id === a.createdBy)?.fullName ?? null };
+      }
+      async listAllergies(patientId, opts = {}) {
+        return this.db.patientAllergies.filter((a) => a.patientId === patientId && (opts.includeInactive || a.isActive)).sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.createdAt.localeCompare(a.createdAt)).map((a) => this.allergyDetails(a));
+      }
+      async getAllergy(id) {
+        const a = this.db.patientAllergies.find((x) => x.id === id);
+        return a && this.allergyDetails(a);
+      }
+      async addAllergy(patientId, input, actor) {
+        const a = {
+          id: randomUUID(),
+          patientId,
+          allergen: input.allergen,
+          reaction: input.reaction,
+          isActive: true,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          removedAt: null,
+          removedBy: null,
+          removeReason: null
+        };
+        this.db.patientAllergies.push(a);
+        await this.persist();
+        return this.allergyDetails(a);
+      }
+      async deactivateAllergy(id, reason, actor) {
+        const a = this.db.patientAllergies.find((x) => x.id === id);
+        if (!a || !a.isActive) throw new StorageConflict("Bu yozuv allaqachon faol emas");
+        Object.assign(a, { isActive: false, removedAt: (/* @__PURE__ */ new Date()).toISOString(), removedBy: actor.id, removeReason: reason });
+        await this.persist();
+        return this.allergyDetails(a);
+      }
       async deleteDoctor(id) {
         const before = this.db.doctors.length;
         this.db.doctors = this.db.doctors.filter((d) => d.id !== id);
@@ -4175,6 +4666,7 @@ var init_storage_file = __esm({
           if (same) {
             for (const o of this.db.orders) if (o.visitId === v.id) o.visitId = same.id;
             for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
+            for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
             this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
           } else {
             v.patientId = targetId;
@@ -4189,6 +4681,8 @@ var init_storage_file = __esm({
         }
         let appointments2 = 0;
         for (const a of this.db.appointments) if (a.patientId === sourceId) a.patientId = targetId, appointments2++;
+        for (const r of this.db.medicalRecords) if (r.patientId === sourceId) r.patientId = targetId;
+        for (const a of this.db.patientAllergies) if (a.patientId === sourceId) a.patientId = targetId;
         this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
         await this.persist();
         return { orders: orders2, contacts, appointments: appointments2 };
@@ -4250,6 +4744,9 @@ var init_storage_file = __esm({
         }
         if (this.db.appointments.some((a) => a.patientId === id)) {
           throw new Error("Bu bemorda qabullar tarixi bor \u2014 kartani o'chirib bo'lmaydi");
+        }
+        if (this.db.patientAllergies.some((a) => a.patientId === id)) {
+          throw new Error("Bu bemorda tibbiy ma'lumotlar (allergiyalar) bor \u2014 kartani o'chirib bo'lmaydi");
         }
         const before = this.db.patients.length;
         this.db.patients = this.db.patients.filter((p) => p.id !== id);
@@ -5898,6 +6395,16 @@ var emptyIfMissing = (err, empty) => {
   if (err?.code === "42P01") return empty;
   throw err;
 };
+var VIEW_LOG_EVERY_MS = 10 * 6e4;
+var lastViewLogged = /* @__PURE__ */ new Map();
+async function logPatientView(req, patient, what) {
+  const key = `${req.user.id}:${patient.id}:${what}`;
+  const now = Date.now();
+  if (now - (lastViewLogged.get(key) ?? 0) < VIEW_LOG_EVERY_MS) return;
+  lastViewLogged.set(key, now);
+  if (lastViewLogged.size > 2e4) lastViewLogged.clear();
+  await audit(req, "view", "patient", patient.id, `\u2116${patient.patientNumber} ${patient.fullName} ${what}`);
+}
 
 // server/routes-clinic.ts
 init_schema();
@@ -6256,7 +6763,18 @@ function registerClinicRoutes(app) {
         storage.listAppointments({ doctorId: doctor.id, date }).catch((e) => emptyIfMissing(e, [])),
         storage.listAppointments({ doctorId: doctor.id, beforeDate: clockNow().date, statuses: ["in_progress"] }).catch((e) => emptyIfMissing(e, []))
       ]);
-      const cabinet = { doctor, date, appointments: appointments2, unfinished };
+      const [dayRecords, draftRecords] = await Promise.all([
+        storage.listRecords({ appointmentIds: appointments2.map((a) => a.id) }).catch((e) => emptyIfMissing(e, [])),
+        storage.listRecords({ doctorId: doctor.id, status: "draft" }).catch((e) => emptyIfMissing(e, []))
+      ]);
+      const cabinet = {
+        doctor,
+        date,
+        appointments: appointments2,
+        unfinished,
+        recordStatus: Object.fromEntries(dayRecords.map((r) => [r.appointmentId, r.status])),
+        draftRecords
+      };
       res.json(cabinet);
     })
   );
@@ -6271,6 +6789,263 @@ function registerClinicRoutes(app) {
       if (!next) return res.status(409).json({ message: "Navbatda kutayotgan bemor yo'q" });
       return changeStatus(req, res, next, "in_progress", null);
     })
+  );
+}
+
+// server/routes-medical.ts
+init_schema();
+
+// shared/medical-record.ts
+init_schema();
+var norm = (v) => (v ?? "").trim();
+function signProblem(fields) {
+  if (!norm(fields.complaints)) return "Shikoyatlarni kiriting";
+  if (!norm(fields.preliminaryDiagnosis) && !norm(fields.finalDiagnosis)) {
+    return "Dastlabki yoki yakuniy tashxisni kiriting";
+  }
+  return null;
+}
+function changedFields(before, after) {
+  return RECORD_FIELDS.filter((f) => norm(before[f]) !== norm(after[f]));
+}
+var fieldList = (fields) => fields.map((f) => RECORD_FIELD_LABELS[f]).join(", ");
+function diagnosisHistory(records) {
+  const out = [];
+  for (const r of records) {
+    if (r.status !== "signed") continue;
+    const base = { recordId: r.id, date: r.date, doctorName: r.doctorName, specialty: r.specialty };
+    if (norm(r.finalDiagnosis)) out.push({ ...base, kind: "final", text: norm(r.finalDiagnosis) });
+    else if (norm(r.preliminaryDiagnosis)) out.push({ ...base, kind: "preliminary", text: norm(r.preliminaryDiagnosis) });
+  }
+  return out.sort((a, b) => b.date.localeCompare(a.date));
+}
+function pickFields(source) {
+  return Object.fromEntries(RECORD_FIELDS.map((f) => [f, source[f] ?? null]));
+}
+
+// server/routes-medical.ts
+init_patient_identity();
+init_storage_types();
+var WRITABLE_APPOINTMENT = /* @__PURE__ */ new Set(["in_progress", "completed"]);
+var patientLabel2 = (p) => `\u2116${p.patientNumber} ${p.fullName ?? p.patientName}`;
+var isAuthor = (req, x) => x.doctorUserId === req.user.id;
+var DRAFT_LOG_EVERY_MS = 10 * 6e4;
+var lastDraftLogged = /* @__PURE__ */ new Map();
+function shouldLogDraft(req, recordId) {
+  const key = `${req.user.id}:${recordId}`;
+  const now = Date.now();
+  if (now - (lastDraftLogged.get(key) ?? 0) < DRAFT_LOG_EVERY_MS) return false;
+  lastDraftLogged.set(key, now);
+  if (lastDraftLogged.size > 2e4) lastDraftLogged.clear();
+  return true;
+}
+var visibleTo = (req) => (r) => r.status === "signed" || isAuthor(req, r);
+function registerMedicalRoutes(app) {
+  app.get(
+    "/api/appointments/:id/examination",
+    requirePermission("records.read", "appointments.serve"),
+    handle(async (req, res) => {
+      const appointment = await storage.getAppointment(req.params.id);
+      if (!appointment) return res.status(404).json({ message: "Qabul topilmadi" });
+      const own = isAuthor(req, appointment);
+      if (!own && !hasPermission(req, "records.read")) return res.status(404).json({ message: "Qabul topilmadi" });
+      const record = await storage.getRecordByAppointment(appointment.id).catch((e) => emptyIfMissing(e, void 0));
+      await logPatientView(req, { id: appointment.patientId, patientNumber: appointment.patientNumber, fullName: appointment.patientName }, "ko'rik yozuvi ochildi");
+      const data = {
+        appointment,
+        record: record && visibleTo(req)(record) ? record : null,
+        canWrite: own && hasPermission(req, "records.write") && WRITABLE_APPOINTMENT.has(appointment.status),
+        canAmend: own && hasPermission(req, "records.amend")
+      };
+      res.json(data);
+    })
+  );
+  app.post(
+    "/api/appointments/:id/record",
+    requirePermission("records.write"),
+    handle(async (req, res) => {
+      const appointment = await storage.getAppointment(req.params.id);
+      if (!appointment || !isAuthor(req, appointment)) return res.status(404).json({ message: "Qabul topilmadi" });
+      if (!WRITABLE_APPOINTMENT.has(appointment.status)) {
+        return res.status(400).json({ message: "Ko'rik yozuvini faqat qabul boshlangandan keyin ochish mumkin" });
+      }
+      const existed = await storage.getRecordByAppointment(appointment.id);
+      const record = existed ?? await storage.openRecord(
+        {
+          patientId: appointment.patientId,
+          appointmentId: appointment.id,
+          doctorId: appointment.doctorId,
+          visitId: appointment.visitId
+        },
+        { id: req.user.id, name: req.user.fullName }
+      );
+      if (!existed) {
+        await audit(req, "create", "record", record.id, `${patientLabel2(appointment)} \u2014 ko'rik yozuvi ochildi (${appointment.date} ${appointment.startTime})`);
+      }
+      res.status(existed ? 200 : 201).json(record);
+    })
+  );
+  app.patch(
+    "/api/records/:id",
+    requirePermission("records.write"),
+    handle(async (req, res) => {
+      const { revision, ...fields } = saveRecordSchema.parse(req.body);
+      const before = await storage.getRecord(req.params.id);
+      if (!before || !isAuthor(req, before)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      if (before.status !== "draft") {
+        return res.status(409).json({ message: `Yozuv tasdiqlangan. O'zgartirish uchun "Tuzatish kiritish"dan foydalaning` });
+      }
+      const record = await storage.saveRecordDraft(before.id, revision, fields, { id: req.user.id, name: req.user.fullName });
+      const changed = changedFields(before, { ...pickFields(before), ...fields });
+      if (changed.length && shouldLogDraft(req, record.id)) {
+        await audit(req, "update", "record", record.id, `${patientLabel2(record)} \u2014 ko'rik qoralamasi tahrirlandi (${fieldList(changed)})`);
+      }
+      res.json(record);
+    })
+  );
+  app.post(
+    "/api/records/:id/sign",
+    requirePermission("records.sign"),
+    handle(async (req, res) => {
+      const { revision } = signRecordSchema.parse(req.body);
+      const before = await storage.getRecord(req.params.id);
+      if (!before || !isAuthor(req, before)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      if (before.status !== "draft") return res.status(409).json({ message: "Yozuv allaqachon tasdiqlangan" });
+      const problem = signProblem(before);
+      if (problem) return res.status(400).json({ message: `Tasdiqlab bo'lmaydi: ${problem.toLowerCase()}` });
+      const record = await storage.signRecord(before.id, revision, { id: req.user.id, name: req.user.fullName });
+      await audit(
+        req,
+        "update",
+        "record",
+        record.id,
+        `${patientLabel2(record)} \u2014 ko'rik yozuvi tasdiqlandi (${record.finalDiagnosis ? "yakuniy tashxis" : "dastlabki tashxis"}: ${record.finalDiagnosis ?? record.preliminaryDiagnosis})`
+      );
+      res.json(record);
+    })
+  );
+  app.post(
+    "/api/records/:id/amend",
+    requirePermission("records.amend"),
+    handle(async (req, res) => {
+      const { revision, reason, ...fields } = amendRecordSchema.parse(req.body);
+      const before = await storage.getRecord(req.params.id);
+      if (!before || !isAuthor(req, before)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      if (before.status !== "signed") return res.status(409).json({ message: "Qoralamani tuzatish shart emas \u2014 uni to'g'ridan-to'g'ri tahrirlang" });
+      const changed = changedFields(before, fields);
+      if (!changed.length) return res.status(400).json({ message: "Matnda o'zgarish yo'q" });
+      const problem = signProblem(fields);
+      if (problem) return res.status(400).json({ message: problem });
+      const record = await storage.amendRecord(before.id, revision, fields, reason, { id: req.user.id, name: req.user.fullName });
+      await audit(
+        req,
+        "update",
+        "record",
+        record.id,
+        `${patientLabel2(record)} \u2014 tasdiqlangan ko'rik yozuviga tuzatish (v${before.version} \u2192 v${record.version}): ${fieldList(changed)}. Sabab: ${reason}`
+      );
+      res.json(record);
+    })
+  );
+  app.get(
+    "/api/records/:id/versions",
+    requirePermission("records.read"),
+    handle(async (req, res) => {
+      const record = await storage.getRecord(req.params.id);
+      if (!record || !visibleTo(req)(record)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      res.json(await storage.listRecordVersions(record.id));
+    })
+  );
+  app.get(
+    "/api/patients/:id/medical",
+    requirePermission("records.read"),
+    handle(async (req, res) => {
+      const patient = await storage.getPatient(req.params.id);
+      if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
+      const seesLab = hasPermission(req, "orders.read");
+      const [allergies, records, orders2] = await Promise.all([
+        storage.listAllergies(patient.id, { includeInactive: true }).catch((e) => emptyIfMissing(e, [])),
+        storage.listRecords({ patientId: patient.id }).catch((e) => emptyIfMissing(e, [])),
+        seesLab ? storage.listOrders({ patientId: patient.id }) : Promise.resolve(null)
+      ]);
+      await logPatientView(req, patient, "tibbiy kartasi ochildi");
+      const visible = records.filter(visibleTo(req));
+      const card = {
+        patient: { ...pickPatient(patient), ageYears: patientAge(patient) },
+        allergies,
+        records: visible,
+        diagnoses: diagnosisHistory(visible),
+        labResults: orders2 ? labResults(orders2.items) : null
+      };
+      res.json(card);
+    })
+  );
+  app.post(
+    "/api/patients/:id/allergies",
+    requirePermission("records.write"),
+    handle(async (req, res) => {
+      const input = insertAllergySchema.parse(req.body);
+      const patient = await storage.getPatient(req.params.id);
+      if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
+      const duplicate = (await storage.listAllergies(patient.id)).find(
+        (a) => a.allergen.trim().toLowerCase() === input.allergen.trim().toLowerCase()
+      );
+      if (duplicate) return res.status(409).json({ message: `"${duplicate.allergen}" allaqachon ro'yxatda bor` });
+      const allergy = await storage.addAllergy(patient.id, input, { id: req.user.id, name: req.user.fullName });
+      await audit(
+        req,
+        "create",
+        "patient",
+        patient.id,
+        `${patientLabel2(patient)} \u2014 allergiya qo'shildi: ${allergy.allergen}${allergy.reaction ? ` (${allergy.reaction})` : ""}`
+      );
+      res.status(201).json(allergy);
+    })
+  );
+  app.post(
+    "/api/allergies/:id/deactivate",
+    requirePermission("records.write"),
+    handle(async (req, res) => {
+      const { reason } = removeAllergySchema.parse(req.body);
+      const before = await storage.getAllergy(req.params.id);
+      if (!before) return res.status(404).json({ message: "Yozuv topilmadi" });
+      const allergy = await storage.deactivateAllergy(before.id, reason, { id: req.user.id, name: req.user.fullName });
+      const patient = await storage.getPatient(before.patientId);
+      await audit(
+        req,
+        "update",
+        "patient",
+        before.patientId,
+        `${patient ? patientLabel2(patient) : "Bemor"} \u2014 allergiya faol emas deb belgilandi: ${before.allergen}. Sabab: ${reason}`
+      );
+      res.json(allergy);
+    })
+  );
+}
+function pickPatient(p) {
+  return {
+    id: p.id,
+    patientNumber: p.patientNumber,
+    fullName: p.fullName,
+    phone: p.phone,
+    gender: p.gender,
+    birthDate: p.birthDate,
+    age: p.age,
+    address: p.address
+  };
+}
+function labResults(orders2) {
+  return orders2.filter((o) => o.status !== "cancelled").sort((a, b) => b.createdAt.localeCompare(a.createdAt)).flatMap(
+    (o) => o.items.filter((i) => i.result).map((i) => ({
+      orderId: o.id,
+      orderNumber: o.orderNumber,
+      date: localDay(o.createdAt),
+      testName: i.testName,
+      result: i.result,
+      unit: i.unit,
+      referenceRange: i.referenceRange,
+      flag: i.flag
+    }))
   );
 }
 
@@ -6656,16 +7431,7 @@ async function registerRoutes(app) {
       res.json(patient);
     })
   );
-  const VIEW_LOG_EVERY_MS = 10 * 6e4;
-  const lastViewLogged = /* @__PURE__ */ new Map();
-  async function logCardView(req, patient) {
-    const key = `${req.user.id}:${patient.id}`;
-    const now = Date.now();
-    if (now - (lastViewLogged.get(key) ?? 0) < VIEW_LOG_EVERY_MS) return;
-    lastViewLogged.set(key, now);
-    if (lastViewLogged.size > 2e4) lastViewLogged.clear();
-    await audit(req, "view", "patient", patient.id, `\u2116${patient.patientNumber} ${patient.fullName} kartasi ochildi`);
-  }
+  const logCardView = (req, patient) => logPatientView(req, patient, "kartasi ochildi");
   app.get(
     "/api/patients/:id/card",
     requirePermission("patients.read"),
@@ -7927,6 +8693,7 @@ async function registerRoutes(app) {
     })
   );
   registerClinicRoutes(app);
+  registerMedicalRoutes(app);
   app.use("/api", (req, res, next) => {
     if (res.headersSent) return next();
     res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });

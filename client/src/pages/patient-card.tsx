@@ -17,6 +17,7 @@ import {
   Pencil,
   PhoneCall,
   Receipt,
+  HeartPulse,
   ShieldCheck,
   Stethoscope,
   TrendingUp,
@@ -54,6 +55,7 @@ import {
 import { PatientDialog } from "@/components/patient-dialog";
 import { OrderDialog } from "@/components/order-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
+import { MedicalCardPanel } from "@/components/medical-record";
 import { OrderDetailDialog } from "@/components/order-detail-dialog";
 import { ResultsDialog } from "@/components/results-dialog";
 import { PrintDialog } from "@/components/print-dialog";
@@ -261,6 +263,12 @@ export default function PatientCardPage() {
             <History className="mr-2 h-4 w-4" />
             Tashriflar
           </TabsTrigger>
+          {can("records.read") && (
+            <TabsTrigger value="medical" data-testid="tab-card-medical">
+              <HeartPulse className="mr-2 h-4 w-4" />
+              Tibbiy karta
+            </TabsTrigger>
+          )}
           <TabsTrigger value="appointments" data-testid="tab-card-appointments">
             <CalendarClock className="mr-2 h-4 w-4" />
             Qabullar
@@ -509,6 +517,12 @@ export default function PatientCardPage() {
         </TabsContent>
 
         {/* ------------------------------------------------------- access */}
+        {can("records.read") && (
+          <TabsContent value="medical" className="mt-6">
+            <MedicalCardPanel patientId={p.id} />
+          </TabsContent>
+        )}
+
         <TabsContent value="appointments" className="mt-6">
           <PatientAppointments patientId={p.id} canBook={can("appointments.manage")} onBook={() => setBookOpen(true)} />
         </TabsContent>
@@ -547,6 +561,7 @@ export default function PatientCardPage() {
 function PatientAppointments({ patientId, canBook, onBook }: { patientId: string; canBook: boolean; onBook: () => void }) {
   const { data = [], isLoading } = useQuery<AppointmentWithDetails[]>({
     queryKey: [`/api/appointments?patientId=${patientId}`],
+    refetchOnMount: "always",
   });
   const today = dayKey(new Date());
   const upcoming = data.filter((a) => a.date >= today && (a.status === "scheduled" || a.status === "arrived" || a.status === "in_progress"));

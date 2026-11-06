@@ -42,8 +42,9 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/schema.ts`: **barcha** jadvallar, enumlar, Zod sxemalari, yorliqlar (`*_LABELS`). Yangi jadval shu yerga qo‘shiladi.
 - `server/storage-types.ts`: `IStorage` interfeysi.
 - `server/storage-pg.ts`, `server/storage-file.ts`: **ikkala** implementatsiya. Yangi metod ikkalasiga ham yoziladi, aks holda tsc xato beradi. `storage-file.test.ts` fayl omborini testlaydi.
-- `server/routes.ts`: asosiy API. `server/routes-clinic.ts`: xizmatlar, qabullar, shifokor kabineti. Umumiy yordamchilar (`handle`, `audit`, `actorOf`, `emptyIfMissing`) — `server/route-helpers.ts`. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali. Storage'ning `StorageConflict` xatosi avtomatik 409 bo‘ladi.
+- `server/routes.ts`: asosiy API. `server/routes-clinic.ts`: xizmatlar, qabullar, shifokor kabineti. `server/routes-medical.ts`: ko'rik yozuvlari, tibbiy karta, allergiyalar. Umumiy yordamchilar (`handle`, `audit`, `actorOf`, `emptyIfMissing`, `logPatientView`) — `server/route-helpers.ts`. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali. Storage'ning `StorageConflict` xatosi avtomatik 409 bo‘ladi.
 - `shared/appointment.ts`: qabul qoidalari (bo‘sh vaqtlar to‘ri, ustma-ust tushish, holat mashinasi va kim qaysi o‘tishni qiladi). Server ham, UI ham shundan foydalanadi.
+- `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
 - `server/auth.ts`: sessiya, Passport, login blokirovkasi, `forgetSessionUser`, `requireMfaEnrollment`.
 - `server/mfa.ts`: TOTP, kalitni shifrlash, zaxira kodlar (B1.8).
 - `shared/permissions.ts`: **ruxsatlar katalogi** (`PERMISSIONS`) va TZ §3 dagi 11 ta rolning boshlang‘ich ruxsatlari (`SYSTEM_ROLES`).
@@ -72,6 +73,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   5. `super_admin` hamma ruxsatni avtomatik oladi, unga qo‘shish shart emas.
 - Rol kalitlari: `super_admin`, `rahbar`, `registrator`, `shifokor`, `laborant`, `lab_mudiri`, `omborchi`, `hamshira`, `kassir`, `buxgalter`, `auditor`. Eski `admin` = `super_admin` (`canonicalRoleKey`).
 - **Vaqt:** qabul vaqtlari devor soati sifatida saqlanadi (`date` = YYYY-MM-DD, `start_time` = SS:DD), shifokor jadvali bilan bir xil. "Bugun" va "hozir" `localDay()` / `clockNow()` orqali serverning mahalliy soatidan olinadi, shuning uchun deployda `TZ=Asia/Tashkent` bo‘lishi shart.
+- **Kesh:** ilovada global `refetchOnMount: false`, `staleTime: Infinity`. Tez o'zgaradigan ish ekranlari (navbat, kabinet, ko'rik oynasi, tibbiy karta) `refetchOnMount: "always"` bilan so'raladi, aks holda invalidatsiyadan keyin sahifaga qaytilganda eski holat ko'rinadi.
 - Baza masofaviy (Neon, so‘rov 0.3–1.8 s): bitta sahifa uchun bir nechta ketma-ket so‘rov qilma, JOIN yoki bitta CTE bilan ol.
 - **Drizzle tuzog'i:** bitta jadvalli `select` ichida `${table.column}` jadval nomisiz yoziladi. Ichki so'rovda (`(SELECT …)`, `EXISTS`) tashqi ustunni hech qachon `${…}` bilan yozma — `"orders"."id"` kabi aniq nom va ichkarida taxallus ishlat. `server/storage-pg-sql.test.ts` buni tekshiradi. Fayl ombori testlari bu xatoni ko'rmaydi, shuning uchun Postgres so'rovlarini haqiqiy bazada ham tekshir.
 - Migratsiya: sxema o‘zgarsa mavjud ma'lumotni buzmasin (yangi ustunlar nullable yoki default bilan). Real bazaga `db:push` qilishdan oldin foydalanuvchidan so‘ra.
@@ -92,7 +94,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-05. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 29 → ≈38%**.
+> Holat 2026-11-05. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 31.5 → ≈41%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 90%
 
@@ -161,18 +163,33 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [~] **B2.10** To‘lovni rasmiylashtirish (`§4.2`): lab buyurtmalari uchun bor. Bosqich 7 da umumiy hisobvaraqqa o‘tadi.
 - [ ] **B2.11** Registratura bosh sahifasi (`§4.1.1`): bugungi bemorlar, navbatdagilar, qabulga kelganlar, yangi ro‘yxatdan o‘tganlar, to‘lov holati.
 
-### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 11%
+### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 39%
 
 - [x] **B3.1** Shifokor kabineti (`§5.1.1`): bugungi qabul, kutayotganlar, qabul qilinganlar, tugallanmagan kartalar. Navbatdan bemorni "chaqirish".
   - `/cabinet` ("Mening kabinetim"): statistika, qabuldagi bemor kartasi (o'tgan vaqt, bemor kartasiga havola, yakunlash, navbatga qaytarish), "Keyingi bemorni chaqirish" (`POST /api/cabinet/call-next`: kelganlardan eng erta yozilgan), kutayotganlar (qancha kutayotgani bilan), yozilganlar, qabul qilinganlar, kun bo'yicha ko'rish.
   - Bir vaqtda faqat bitta bemor qabulda bo'ladi (409). "Tugallanmagan" hozircha oldingi kunlarda boshlanib yakunlanmagan qabullar; B3.3 dan keyin yakunlanmagan ko'rik kartalari qo'shiladi.
   - `appointments.read` egasi (rahbar) istalgan shifokor kabinetini faqat ko'rish uchun ochadi. Shifokor profili yo'q xodimga tushunarli xabar chiqadi.
-- [ ] **B3.2** Elektron tibbiy karta (`§5.1.2`, `medical_records`): bemor ma'lumotlari, allergiyalar, avvalgi tashxislar, lab natijalari, UZI/tekshiruvlar, davolash tarixi. Bitta umumlashgan ko‘rinish.
-- [ ] **B3.3** Ko‘rik oynasi (`§5.1.3`): shikoyat, anamnez, ko‘rik natijasi, dastlabki tashxis, yakuniy tashxis, tavsiyalar.
+- [~] **B3.2** Elektron tibbiy karta (`§5.1.2`, `medical_records`): bemor ma'lumotlari, allergiyalar, avvalgi tashxislar, lab natijalari, UZI/tekshiruvlar, davolash tarixi. Bitta umumlashgan ko‘rinish.
+  - `GET /api/patients/:id/medical` (`records.read`): bemor, allergiyalar (faol emaslari ham tarixda), barcha ko'riklar, tasdiqlangan ko'riklardan yig'ilgan tashxislar tarixi, lab natijalari (faqat `orders.read` bilan). Qoralamalarni faqat muallifi ko'radi. Ochilishi audit jurnaliga yoziladi ("tibbiy kartasi ochildi").
+  - Allergiyalar `patient_allergies` jadvalida. O'chirilmaydi, sabab bilan "faol emas" qilinadi. Takrorlanmaydi (katta-kichik harfga qaramay). Yozish `records.write` bilan. Ko'rik oynasining tepasida qizil ogohlantirish chiqadi.
+  - UI: bemor kartasida "Tibbiy karta" tabi, ko'rik oynasining yon paneli.
+  - **Qoldi:** UZI va boshqa tekshiruvlar (B3.5 yo'llanma, B8.2 fayl ombori bilan), davolash tarixi retseptlar bilan (B3.6). Hozir davolash ko'rikning "Tavsiyalar" maydonida.
+- [x] **B3.3** Ko‘rik oynasi (`§5.1.3`): shikoyat, anamnez, ko‘rik natijasi, dastlabki tashxis, yakuniy tashxis, tavsiyalar.
+  - `medical_records`: har bir qabulga bitta yozuv (`UQ_medical_records_appointment`), olti maydon (har biri ko'pi bilan 4000 belgi). Faqat qabulning o'z shifokori yozadi, qabul "qabulda" yoki "yakunlandi" holatida bo'lishi kerak (yakunlangandan keyin ham yozuvni tugatish mumkin).
+  - `/cabinet/visit/:appointmentId`: "Keyingi bemorni chaqirish" to'g'ridan-to'g'ri shu oynani ochadi. Qoralama yozish to'xtagach 1.2 s da va `Ctrl+S` bilan saqlanadi, saqlanmagan matn bilan sahifani tark etishdan himoyalangan.
+  - **To'qnashuv himoyasi:** har bir saqlash `revision` ni ko'rsatadi (`WHERE revision = n`). Ikkinchi oyna birinchisining matnini yozib yubora olmaydi, foydalanuvchiga ogohlantirish va "oxirgi holatni yuklash" tugmasi chiqadi.
+  - Kabinet: qabuldagi bemor uchun "Ko'rik oynasi" tugmasi, qatorlarda yozuv holati (qoralama yoki tasdiqlangan), "Tugallanmagan tibbiy kartalar" (shifokorning tasdiqlanmagan yozuvlari).
+  - Tashxis hozircha erkin matn. MKB-10 kodi B3.4 da (D-5 qarori kerak).
+  - Migratsiya: `npm run db:medical` (`db:upgrade` ichida). Jadvallar va indekslarni yaratadi, shifokor (`records.*`) va rahbarga (`records.read`) ruxsatlarni **faqat qo'shadi**. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06).
+  - Testlar: `shared/medical-record.test.ts`, `storage-file.test.ts` (yozuvlar, allergiyalar), 43 ta API E2E, brauzerda butun shifokor yo'li (chaqirish → yozish → avtosaqlash → tasdiqlash va yakunlash → tuzatish → tarix).
 - [ ] **B3.4** Tashxislar va MKB-10 (`§5.1.3`, `diagnoses`): MKB-10 katalogi + qidiruv (D-5), tashxislar tarixi.
 - [ ] **B3.5** Yo‘llanma (`§5.1.4`): lab tahlillari (lab buyurtmasini yaratadi, `§11` Shifokor→Lab), UZI, boshqa tekshiruvlar, mutaxassis konsultatsiyasi (boshqa shifokorga qabul).
 - [ ] **B3.6** Davolash va retsept (`§5.1.5`, `prescriptions`): dori nomi (ombor katalogidan, B5 dan keyin), doza, tartib, davomiylik, muolajalar.
-- [ ] **B3.7** Hujjatni tasdiqlash, imzolash, tuzatish (`§5.2`): imzolangan ko‘rik qulflanadi; tuzatish yangi versiya yaratadi, eskisi saqlanadi (`medical_record_versions`).
+- [x] **B3.7** Hujjatni tasdiqlash, imzolash, tuzatish (`§5.2`): imzolangan ko‘rik qulflanadi; tuzatish yangi versiya yaratadi, eskisi saqlanadi (`medical_record_versions`).
+  - Alohida vakolatlar: `records.write` (qoralama), `records.sign` (tasdiqlash), `records.amend` (tuzatish, `sensitive`). Tasdiqlash uchun shikoyat va kamida bitta tashxis shart (`signProblem`). Tasdiqlangan yozuv qoralama sifatida o'zgartirilmaydi.
+  - Tuzatish bitta tranzaksiyada bajariladi (`FOR UPDATE`): joriy matn `medical_record_versions` ga yoziladi (kim, qachon, sabab; versiya raqami takrorlanmas), yangi matn keyingi versiya bo'lib tuzatuvchi nomidan tasdiqlanadi. Sabab majburiy, o'zgarishsiz tuzatish rad etiladi. Audit qaysi maydonlar o'zgarganini yozadi.
+  - UI: "Tuzatish kiritish" (o'zgargan maydonlar belgilanadi), "Tarix" dialogi (joriy va barcha oldingi versiyalar).
+  - "Imzolash" — tizim ichidagi tasdiqlash (kim, qachon). Elektron raqamli imzo (ERI) TZ'da talab qilinmagan.
 - [ ] **B3.8** Ko‘rik xulosasi PDF (`§5.2`).
 - [ ] **B3.9** Natija shifokorga (`§11`, qabul mezoni 16.4): lab natijasi tasdiqlangach buyurtma bergan shifokorga bildirishnoma va kartaga biriktirish.
 
@@ -274,5 +291,6 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B2.4–B2.5, B1.6 · Bemor kartasi sahifasi, tashriflar jadvali, kartani ochish jurnali.
 - 2026-11-05 · B1.8 · Ikki bosqichli autentifikatsiya: TOTP, zaxira kodlar, rol bo'yicha majburiylik, admin reset, qulf bilan bog'langan kod xatolari.
 - 2026-11-05 · B2.6–B2.8, B3.1 · Xizmatlar katalogi va narxlar ro'yxati, qabulga yozish (bo'sh vaqtlar, navbat raqami, poyga himoyasi), navbat sahifasi, shifokor kabineti, qabullar bemor kartasi va tashriflarida. Yo'l-yo'lakay: route yordamchilari `route-helpers.ts` ga chiqarildi.
+- 2026-11-06 · B3.3, B3.7, B3.2 (qisman) · Ko'rik oynasi (avtosaqlash, revision to'qnashuvi himoyasi), tasdiqlash va versiyali tuzatish, elektron tibbiy karta (allergiyalar, tashxislar tarixi, lab natijalari), kabinetda tugallanmagan kartalar. Yo'l-yo'lakay: navbat va kabinet ekranlari eskirgan keshni ko'rsatardi (global `refetchOnMount: false`), tuzatildi.
 - 2026-11-05 · fix · Postgres'dagi ichki so'rovlar: natijalar navbati (kutilmoqda/tayyor), tahlil nomi bo'yicha qidiruv, bemorlarning oxirgi tashrifi, bo'limlardagi shifokorlar soni noto'g'ri edi; tuzatildi va himoya testi qo'shildi.
 - 2026-11-05 · fix · Telegram polling 409 xatosi butun serverni o'chirardi; endi xato yoziladi va bot o'zi qayta ulanadi (409 da 35 s, boshqa xatolarda 5 s → 5 daq).

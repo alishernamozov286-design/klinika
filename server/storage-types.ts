@@ -48,6 +48,11 @@ import type {
   UpdateUserInput,
   User,
   UserMfa,
+  MedicalRecordVersion,
+  MedicalRecordWithDetails,
+  PatientAllergy,
+  RecordFields,
+  RecordStatus,
   Appointment,
   AppointmentStatus,
   AppointmentWithDetails,
@@ -165,6 +170,17 @@ export type NewAppointment = CreateAppointmentInput & { durationMinutes: number;
  * doctor's bookings for that day. Returns why the booking cannot be made.
  */
 export type BookingCheck = (dayBookings: Appointment[]) => string | null;
+
+export type RecordQuery = {
+  patientId?: string;
+  /** Records of these appointments (an empty list matches nothing). */
+  appointmentIds?: string[];
+  doctorId?: string;
+  status?: RecordStatus;
+  limit?: number;
+};
+
+export type OpenRecordInput = { patientId: string; appointmentId: string; doctorId: string; visitId: string | null };
 
 export type AppointmentStatusChange = {
   from: AppointmentStatus;
@@ -403,6 +419,37 @@ export interface IStorage {
   setAppointmentStatus(id: string, change: AppointmentStatusChange, actor: Actor): Promise<AppointmentWithDetails>;
   /** Any appointment at all — a doctor with history is deactivated, not deleted. */
   doctorHasAppointments(doctorId: string): Promise<boolean>;
+
+  // --- examination records (B3.3, TZ §5.1.3, §5.2)
+
+  /** Newest first (by appointment day and time). */
+  listRecords(query: RecordQuery): Promise<MedicalRecordWithDetails[]>;
+  getRecord(id: string): Promise<MedicalRecordWithDetails | undefined>;
+  getRecordByAppointment(appointmentId: string): Promise<MedicalRecordWithDetails | undefined>;
+  /** Opens the appointment's record as an empty draft — or returns the one already open. */
+  openRecord(input: OpenRecordInput, actor: Actor): Promise<MedicalRecordWithDetails>;
+  /**
+   * Saves draft text, only if the record is still a draft at `revision`.
+   * StorageConflict when it was signed, or saved from elsewhere, meanwhile.
+   */
+  saveRecordDraft(id: string, revision: number, fields: Partial<RecordFields>, actor: Actor): Promise<MedicalRecordWithDetails>;
+  /** Signs (locks) a draft at `revision`. The route has checked signProblem(). */
+  signRecord(id: string, revision: number, actor: Actor): Promise<MedicalRecordWithDetails>;
+  /**
+   * Corrects a signed record: the current text is kept as a version, the new
+   * text becomes the next version, signed by the corrector. One transaction.
+   */
+  amendRecord(id: string, revision: number, fields: RecordFields, reason: string, actor: Actor): Promise<MedicalRecordWithDetails>;
+  /** Replaced versions, newest first. */
+  listRecordVersions(recordId: string): Promise<MedicalRecordVersion[]>;
+
+  // --- allergies (B3.2, TZ §5.1.2)
+
+  listAllergies(patientId: string, opts?: { includeInactive?: boolean }): Promise<PatientAllergy[]>;
+  getAllergy(id: string): Promise<PatientAllergy | undefined>;
+  addAllergy(patientId: string, input: { allergen: string; reaction: string | null }, actor: Actor): Promise<PatientAllergy>;
+  /** Marks an allergy inactive with a reason. StorageConflict if it already was. */
+  deactivateAllergy(id: string, reason: string, actor: Actor): Promise<PatientAllergy>;
 
   // --- two-factor sign-in (B1.8, TZ §12). Secrets arrive already encrypted.
 

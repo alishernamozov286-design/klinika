@@ -156,6 +156,42 @@ export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
   cancelled: "Bekor qilindi",
 };
 
+/**
+ * An examination record's life (TZ §5.2): the doctor writes a draft, then
+ * signs it. A signed record is locked; a correction makes a new version and
+ * keeps the old one (medical_record_versions).
+ */
+export const RECORD_STATUSES = ["draft", "signed"] as const;
+export type RecordStatus = (typeof RECORD_STATUSES)[number];
+
+export const RECORD_STATUS_LABELS: Record<RecordStatus, string> = {
+  draft: "Qoralama",
+  signed: "Tasdiqlangan",
+};
+
+/**
+ * The examination form (TZ §5.1.3), in the order a doctor writes it. One
+ * list drives the form, the read-only view, the version diff and the PDF.
+ */
+export const RECORD_FIELDS = [
+  "complaints",
+  "anamnesis",
+  "examination",
+  "preliminaryDiagnosis",
+  "finalDiagnosis",
+  "recommendations",
+] as const;
+export type RecordField = (typeof RECORD_FIELDS)[number];
+
+export const RECORD_FIELD_LABELS: Record<RecordField, string> = {
+  complaints: "Shikoyatlar",
+  anamnesis: "Anamnez",
+  examination: "Ko'rik natijalari",
+  preliminaryDiagnosis: "Dastlabki tashxis",
+  finalDiagnosis: "Yakuniy tashxis",
+  recommendations: "Tavsiyalar",
+};
+
 /** ISO weekday numbers, Monday first. */
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 export const WEEKDAY_SHORT: Record<number, string> = { 1: "Du", 2: "Se", 3: "Ch", 4: "Pa", 5: "Ju", 6: "Sh", 7: "Ya" };
@@ -358,6 +394,97 @@ export const appointments = pgTable(
       .on(t.doctorId, t.date, t.startTime)
       .where(sql`status NOT IN ('cancelled', 'no_show')`),
   }),
+);
+
+/**
+ * The examination record (TZ §5.1.3, §10 `medical_records`; B3.3), one per
+ * appointment. Never deleted: a draft is finished and signed, a signed record
+ * is corrected by a new version.
+ *
+ * - revision: bumped on every save. A save names the revision it was based
+ *   on, so a second open tab cannot silently overwrite the first.
+ * - version: bumped on every correction after signing; the replaced text goes
+ *   to medical_record_versions.
+ */
+export const medicalRecords = pgTable(
+  "medical_records",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    patientId: varchar("patient_id").notNull(),
+    appointmentId: varchar("appointment_id").notNull(),
+    doctorId: varchar("doctor_id").notNull(),
+    visitId: varchar("visit_id"),
+    status: text("status").notNull().default("draft"),
+    version: integer("version").notNull().default(1),
+    revision: integer("revision").notNull().default(0),
+    complaints: text("complaints"),
+    anamnesis: text("anamnesis"),
+    examination: text("examination"),
+    preliminaryDiagnosis: text("preliminary_diagnosis"),
+    finalDiagnosis: text("final_diagnosis"),
+    recommendations: text("recommendations"),
+    signedAt: isoTimestamp("signed_at"),
+    signedBy: varchar("signed_by"),
+    /** The last correction: when, and why. */
+    amendedAt: isoTimestamp("amended_at"),
+    amendReason: text("amend_reason"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+  },
+  (t) => ({
+    appointmentIdx: uniqueIndex("UQ_medical_records_appointment").on(t.appointmentId),
+    patientIdx: index("IDX_medical_records_patient").on(t.patientId),
+    doctorStatusIdx: index("IDX_medical_records_doctor_status").on(t.doctorId, t.status),
+  }),
+);
+
+/**
+ * A signed version that a correction replaced (TZ §5.2: "avval tasdiqlangan
+ * hujjatning tarixiy nusxasi saqlanadi"). Written once, never changed.
+ */
+export const medicalRecordVersions = pgTable(
+  "medical_record_versions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    recordId: varchar("record_id").notNull(),
+    version: integer("version").notNull(),
+    complaints: text("complaints"),
+    anamnesis: text("anamnesis"),
+    examination: text("examination"),
+    preliminaryDiagnosis: text("preliminary_diagnosis"),
+    finalDiagnosis: text("final_diagnosis"),
+    recommendations: text("recommendations"),
+    signedAt: isoTimestamp("signed_at"),
+    signedBy: varchar("signed_by"),
+    /** Who replaced this version, when, and why. */
+    replacedAt: isoTimestamp("replaced_at").defaultNow().notNull(),
+    replacedBy: varchar("replaced_by"),
+    replaceReason: text("replace_reason").notNull(),
+  },
+  (t) => ({ recordVersionIdx: uniqueIndex("UQ_medical_record_versions").on(t.recordId, t.version) }),
+);
+
+/**
+ * Allergies (TZ §5.1.2). A row is never deleted: one entered by mistake, or
+ * no longer true, is marked inactive with who did it and why.
+ */
+export const patientAllergies = pgTable(
+  "patient_allergies",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    patientId: varchar("patient_id").notNull(),
+    allergen: text("allergen").notNull(),
+    reaction: text("reaction"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    removedAt: isoTimestamp("removed_at"),
+    removedBy: varchar("removed_by"),
+    removeReason: text("remove_reason"),
+  },
+  (t) => ({ patientIdx: index("IDX_patient_allergies_patient").on(t.patientId) }),
 );
 
 export const patients = pgTable("patients", {
@@ -815,6 +942,74 @@ export type DoctorCabinet = {
   appointments: AppointmentWithDetails[];
   /** Started on an earlier day and never finished. */
   unfinished: AppointmentWithDetails[];
+  /** The examination record's state for each of the day's appointments that has one. */
+  recordStatus: Record<string, RecordStatus>;
+  /** "Tugallanmagan tibbiy kartalar": this doctor's records not yet signed. */
+  draftRecords: MedicalRecordWithDetails[];
+};
+
+export type MedicalRecord = Omit<typeof medicalRecords.$inferSelect, "status"> & { status: RecordStatus };
+
+/** A record with what every screen prints next to it. */
+export type MedicalRecordWithDetails = MedicalRecord & {
+  patientNumber: number;
+  patientName: string;
+  doctorName: string;
+  doctorUserId: string;
+  specialty: string;
+  /** The appointment's day and time — when the examination took place. */
+  date: string;
+  startTime: string;
+  signedByName: string | null;
+};
+
+export type MedicalRecordVersion = typeof medicalRecordVersions.$inferSelect & { replacedByName: string | null };
+
+export type PatientAllergy = typeof patientAllergies.$inferSelect & { createdByName: string | null };
+
+/** One diagnosis line in the patient's history, taken from signed records. */
+export type DiagnosisEntry = {
+  recordId: string;
+  date: string;
+  doctorName: string;
+  specialty: string;
+  kind: "preliminary" | "final";
+  text: string;
+};
+
+/** A lab result as the medical card lists it. */
+export type LabResultEntry = {
+  orderId: string;
+  orderNumber: number;
+  date: string;
+  testName: string;
+  result: string;
+  unit: string | null;
+  referenceRange: string | null;
+  flag: ResultFlag | null;
+};
+
+/** The electronic medical record (TZ §5.1.2): one summary of everything clinical. */
+export type MedicalCard = {
+  patient: Pick<
+    Patient,
+    "id" | "patientNumber" | "fullName" | "phone" | "gender" | "birthDate" | "age" | "address"
+  > & { ageYears: number | null };
+  allergies: PatientAllergy[];
+  /** Newest first. Drafts appear only to the doctor who is writing them. */
+  records: MedicalRecordWithDetails[];
+  diagnoses: DiagnosisEntry[];
+  /** Null when the viewer may not see lab orders. */
+  labResults: LabResultEntry[] | null;
+};
+
+/** The examination window's data in one request. */
+export type ExaminationData = {
+  appointment: AppointmentWithDetails;
+  record: MedicalRecordWithDetails | null;
+  /** May the viewer write and sign this record? */
+  canWrite: boolean;
+  canAmend: boolean;
 };
 
 export type Test = typeof tests.$inferSelect;
@@ -1332,6 +1527,50 @@ export const appointmentStatusSchema = z.object({
     .transform((v) => v || null),
 });
 export type AppointmentStatusInput = z.infer<typeof appointmentStatusSchema>;
+
+const recordText = z
+  .string()
+  .max(4000, "Matn juda uzun (ko'pi bilan 4000 belgi)")
+  .nullish()
+  .transform((v) => (v?.trim() ? v.trim() : null));
+
+/** The six examination fields; each optional so a draft can be saved half-written. */
+export const recordFieldsSchema = z.object({
+  complaints: recordText,
+  anamnesis: recordText,
+  examination: recordText,
+  preliminaryDiagnosis: recordText,
+  finalDiagnosis: recordText,
+  recommendations: recordText,
+});
+export type RecordFields = z.infer<typeof recordFieldsSchema>;
+
+/** A draft save: the fields plus the revision the editor started from. */
+export const saveRecordSchema = recordFieldsSchema.partial().extend({
+  revision: z.number().int().min(0),
+});
+
+export const signRecordSchema = z.object({ revision: z.number().int().min(0) });
+
+/** A correction to a signed record: the full new text and why it changed. */
+export const amendRecordSchema = recordFieldsSchema.extend({
+  revision: z.number().int().min(0),
+  reason: z.string().trim().min(5, "Tuzatish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun"),
+});
+
+export const insertAllergySchema = z.object({
+  allergen: z.string().trim().min(2, "Allergenni kiriting").max(120, "Juda uzun"),
+  reaction: z
+    .string()
+    .trim()
+    .max(200, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+});
+
+export const removeAllergySchema = z.object({
+  reason: z.string().trim().min(3, "Sababini yozing").max(200, "Juda uzun"),
+});
 
 /**
  * Session policy (TZ §12: "faol bo'lmagan seanslarni yopish").

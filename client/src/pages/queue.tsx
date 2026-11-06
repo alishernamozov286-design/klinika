@@ -95,6 +95,7 @@ export default function Queue() {
     queryKey: [`/api/appointments?date=${date}`],
     // The desk works from this screen all day; arrivals and calls change it.
     refetchInterval: 20_000,
+    refetchOnMount: "always",
   });
   const { data: doctors = [] } = useQuery<DoctorWithDetails[]>({ queryKey: ["/api/doctors?active=1"] });
 

@@ -81,6 +81,7 @@ const ENTITIES = [
   { value: "department", label: "Bo'limlar" },
   { value: "doctor", label: "Shifokorlar" },
   { value: "appointment", label: "Qabullar" },
+  { value: "record", label: "Ko'rik yozuvlari" },
   { value: "service", label: "Xizmatlar" },
   { value: "session", label: "Seanslar" },
   { value: "settings", label: "Sozlamalar" },

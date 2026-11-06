@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { defaultTests, testReferences } from "@shared/tests-data";
 import {
   appSettings,
@@ -21,6 +22,15 @@ import {
   userMfa,
   services,
   appointments,
+  medicalRecords,
+  medicalRecordVersions,
+  patientAllergies,
+  type MedicalRecord,
+  type MedicalRecordVersion,
+  type MedicalRecordWithDetails,
+  type PatientAllergy,
+  type RecordFields,
+  type RecordStatus,
   type Service,
   type ServiceKind,
   type ServiceWithDetails,
@@ -104,6 +114,8 @@ import {
   type AppointmentStatusChange,
   type BookingCheck,
   type NewAppointment,
+  type OpenRecordInput,
+  type RecordQuery,
   type AuditInput,
   type AuditQuery,
   type CreateOrderArgs,
@@ -289,11 +301,68 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 const lockDoctorDay = (tx: Tx, doctorId: string, date: string) =>
   tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`appointments:${doctorId}:${date}`}))`);
 
-/** True once `npm run db:appointments` has run — used where a missing table must not abort a transaction. */
-const appointmentsTableExists = async (tx: Tx | typeof db) => {
-  const { rows } = await tx.execute<{ ok: boolean }>(sql`SELECT to_regclass('public.appointments') IS NOT NULL AS ok`);
+/**
+ * Whether a table from a later migration exists — used where a missing table
+ * must not abort a transaction (a failed statement poisons the whole of it).
+ */
+const tableExists = async (tx: Tx | typeof db, table: string) => {
+  const { rows } = await tx.execute<{ ok: boolean }>(sql`SELECT to_regclass(${"public." + table}) IS NOT NULL AS ok`);
   return Boolean(rows[0]?.ok);
 };
+const appointmentsTableExists = (tx: Tx | typeof db) => tableExists(tx, "appointments");
+
+const mapRecord = (row: typeof medicalRecords.$inferSelect): MedicalRecord => ({
+  ...row,
+  status: row.status as RecordStatus,
+  signedAt: iso(row.signedAt),
+  amendedAt: iso(row.amendedAt),
+  createdAt: iso(row.createdAt) ?? row.createdAt,
+  updatedAt: iso(row.updatedAt),
+});
+
+const signer = alias(users, "signer");
+
+/** A record with its doctor, appointment time and signer — one round trip. */
+const recordSelect = () =>
+  db
+    .select({
+      r: medicalRecords,
+      patientNumber: patients.patientNumber,
+      patientName: patients.fullName,
+      doctorName: users.fullName,
+      doctorUserId: doctors.userId,
+      specialty: doctors.specialty,
+      date: appointments.date,
+      startTime: appointments.startTime,
+      signedByName: signer.fullName,
+    })
+    .from(medicalRecords)
+    .leftJoin(patients, eq(patients.id, medicalRecords.patientId))
+    .leftJoin(doctors, eq(doctors.id, medicalRecords.doctorId))
+    .leftJoin(users, eq(users.id, doctors.userId))
+    .leftJoin(appointments, eq(appointments.id, medicalRecords.appointmentId))
+    .leftJoin(signer, eq(signer.id, medicalRecords.signedBy));
+
+type RecordRow = Awaited<ReturnType<ReturnType<typeof recordSelect>["execute"]>>[number];
+
+const mapRecordRow = (r: RecordRow): MedicalRecordWithDetails => ({
+  ...mapRecord(r.r),
+  patientNumber: r.patientNumber ?? 0,
+  patientName: r.patientName ?? "—",
+  doctorName: r.doctorName ?? "—",
+  doctorUserId: r.doctorUserId ?? "",
+  specialty: r.specialty ?? "",
+  date: r.date ?? (iso(r.r.createdAt) ?? r.r.createdAt).slice(0, 10),
+  startTime: r.startTime ?? "",
+  signedByName: r.signedByName ?? null,
+});
+
+const recordConflict = (status: RecordStatus | undefined) =>
+  new StorageConflict(
+    status === "signed"
+      ? "Yozuv allaqachon tasdiqlangan. Sahifani yangilang"
+      : "Yozuv boshqa oynada o'zgartirilgan. Sahifani yangilang — oxirgi saqlangan matn ko'rinadi",
+  );
 
 const mapDoctor = (row: DoctorRow): DoctorWithDetails => ({
   ...row.doctor,
@@ -793,6 +862,187 @@ export class PgStorage implements IStorage {
     return (await this.getAppointment(id))!;
   }
 
+  // ---------------------------------------------------- examination records
+
+  async listRecords(q: RecordQuery): Promise<MedicalRecordWithDetails[]> {
+    const where = [];
+    if (q.appointmentIds && q.appointmentIds.length === 0) return [];
+    if (q.patientId) where.push(eq(medicalRecords.patientId, q.patientId));
+    if (q.appointmentIds) where.push(inArray(medicalRecords.appointmentId, q.appointmentIds));
+    if (q.doctorId) where.push(eq(medicalRecords.doctorId, q.doctorId));
+    if (q.status) where.push(eq(medicalRecords.status, q.status));
+    const rows = await recordSelect()
+      .where(where.length ? and(...where) : undefined)
+      .orderBy(desc(appointments.date), desc(appointments.startTime), desc(medicalRecords.createdAt))
+      .limit(Math.min(q.limit ?? 500, 2000));
+    return rows.map(mapRecordRow);
+  }
+
+  async getRecord(id: string): Promise<MedicalRecordWithDetails | undefined> {
+    const [row] = await recordSelect().where(eq(medicalRecords.id, id)).limit(1);
+    return row && mapRecordRow(row);
+  }
+
+  async getRecordByAppointment(appointmentId: string): Promise<MedicalRecordWithDetails | undefined> {
+    const [row] = await recordSelect().where(eq(medicalRecords.appointmentId, appointmentId)).limit(1);
+    return row && mapRecordRow(row);
+  }
+
+  async openRecord(input: OpenRecordInput, actor: Actor): Promise<MedicalRecordWithDetails> {
+    // ON CONFLICT DO NOTHING: two tabs opening the same examination at once
+    // end up on one record.
+    await db
+      .insert(medicalRecords)
+      .values({
+        patientId: input.patientId,
+        appointmentId: input.appointmentId,
+        doctorId: input.doctorId,
+        visitId: input.visitId,
+        createdBy: actor.id,
+      })
+      .onConflictDoNothing({ target: medicalRecords.appointmentId });
+    return (await this.getRecordByAppointment(input.appointmentId))!;
+  }
+
+  async saveRecordDraft(
+    id: string,
+    revision: number,
+    fields: Partial<RecordFields>,
+    actor: Actor,
+  ): Promise<MedicalRecordWithDetails> {
+    const rows = await db
+      .update(medicalRecords)
+      .set({ ...fields, revision: revision + 1, updatedAt: new Date().toISOString(), updatedBy: actor.id })
+      .where(and(eq(medicalRecords.id, id), eq(medicalRecords.status, "draft"), eq(medicalRecords.revision, revision)))
+      .returning({ id: medicalRecords.id });
+    if (!rows.length) throw recordConflict((await this.getRecord(id))?.status);
+    return (await this.getRecord(id))!;
+  }
+
+  async signRecord(id: string, revision: number, actor: Actor): Promise<MedicalRecordWithDetails> {
+    const now = new Date().toISOString();
+    const rows = await db
+      .update(medicalRecords)
+      .set({ status: "signed", signedAt: now, signedBy: actor.id, revision: revision + 1, updatedAt: now, updatedBy: actor.id })
+      .where(and(eq(medicalRecords.id, id), eq(medicalRecords.status, "draft"), eq(medicalRecords.revision, revision)))
+      .returning({ id: medicalRecords.id });
+    if (!rows.length) throw recordConflict((await this.getRecord(id))?.status);
+    return (await this.getRecord(id))!;
+  }
+
+  async amendRecord(
+    id: string,
+    revision: number,
+    fields: RecordFields,
+    reason: string,
+    actor: Actor,
+  ): Promise<MedicalRecordWithDetails> {
+    await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(medicalRecords).where(eq(medicalRecords.id, id)).limit(1).for("update");
+      if (!current) throw new StorageConflict("Yozuv topilmadi");
+      if (current.status !== "signed") throw new StorageConflict("Faqat tasdiqlangan yozuvga tuzatish kiritiladi");
+      if (current.revision !== revision) throw recordConflict(undefined);
+      const now = new Date().toISOString();
+      await tx.insert(medicalRecordVersions).values({
+        recordId: id,
+        version: current.version,
+        complaints: current.complaints,
+        anamnesis: current.anamnesis,
+        examination: current.examination,
+        preliminaryDiagnosis: current.preliminaryDiagnosis,
+        finalDiagnosis: current.finalDiagnosis,
+        recommendations: current.recommendations,
+        signedAt: current.signedAt,
+        signedBy: current.signedBy,
+        replacedAt: now,
+        replacedBy: actor.id,
+        replaceReason: reason,
+      });
+      await tx
+        .update(medicalRecords)
+        .set({
+          ...fields,
+          version: current.version + 1,
+          revision: current.revision + 1,
+          signedAt: now,
+          signedBy: actor.id,
+          amendedAt: now,
+          amendReason: reason,
+          updatedAt: now,
+          updatedBy: actor.id,
+        })
+        .where(eq(medicalRecords.id, id));
+    });
+    return (await this.getRecord(id))!;
+  }
+
+  async listRecordVersions(recordId: string): Promise<MedicalRecordVersion[]> {
+    const rows = await db
+      .select({ v: medicalRecordVersions, replacedByName: users.fullName })
+      .from(medicalRecordVersions)
+      .leftJoin(users, eq(users.id, medicalRecordVersions.replacedBy))
+      .where(eq(medicalRecordVersions.recordId, recordId))
+      .orderBy(desc(medicalRecordVersions.version));
+    return rows.map((r) => ({
+      ...r.v,
+      signedAt: iso(r.v.signedAt),
+      replacedAt: iso(r.v.replacedAt) ?? r.v.replacedAt,
+      replacedByName: r.replacedByName ?? null,
+    }));
+  }
+
+  // ------------------------------------------------------------- allergies
+
+  private allergySelect() {
+    return db
+      .select({ a: patientAllergies, createdByName: users.fullName })
+      .from(patientAllergies)
+      .leftJoin(users, eq(users.id, patientAllergies.createdBy));
+  }
+
+  private mapAllergy(r: { a: typeof patientAllergies.$inferSelect; createdByName: string | null }): PatientAllergy {
+    return {
+      ...r.a,
+      createdAt: iso(r.a.createdAt) ?? r.a.createdAt,
+      removedAt: iso(r.a.removedAt),
+      createdByName: r.createdByName ?? null,
+    };
+  }
+
+  async listAllergies(patientId: string, opts: { includeInactive?: boolean } = {}): Promise<PatientAllergy[]> {
+    const rows = await this.allergySelect()
+      .where(
+        opts.includeInactive
+          ? eq(patientAllergies.patientId, patientId)
+          : and(eq(patientAllergies.patientId, patientId), eq(patientAllergies.isActive, true)),
+      )
+      .orderBy(desc(patientAllergies.isActive), desc(patientAllergies.createdAt));
+    return rows.map((r) => this.mapAllergy(r));
+  }
+
+  async getAllergy(id: string): Promise<PatientAllergy | undefined> {
+    const [row] = await this.allergySelect().where(eq(patientAllergies.id, id)).limit(1);
+    return row && this.mapAllergy(row);
+  }
+
+  async addAllergy(patientId: string, input: { allergen: string; reaction: string | null }, actor: Actor): Promise<PatientAllergy> {
+    const [row] = await db
+      .insert(patientAllergies)
+      .values({ patientId, allergen: input.allergen, reaction: input.reaction, createdBy: actor.id })
+      .returning({ id: patientAllergies.id });
+    return (await this.getAllergy(row.id))!;
+  }
+
+  async deactivateAllergy(id: string, reason: string, actor: Actor): Promise<PatientAllergy> {
+    const rows = await db
+      .update(patientAllergies)
+      .set({ isActive: false, removedAt: new Date().toISOString(), removedBy: actor.id, removeReason: reason })
+      .where(and(eq(patientAllergies.id, id), eq(patientAllergies.isActive, true)))
+      .returning({ id: patientAllergies.id });
+    if (!rows.length) throw new StorageConflict("Bu yozuv allaqachon faol emas");
+    return (await this.getAllergy(id))!;
+  }
+
   async doctorHasAppointments(doctorId: string): Promise<boolean> {
     if (!(await appointmentsTableExists(db))) return false;
     const [row] = await db
@@ -1182,6 +1432,17 @@ export class PgStorage implements IStorage {
           .returning({ id: appointments.id });
         movedAppointments = movedAp.length;
       }
+      // Clinical records (B3.3) and allergies follow the patient too.
+      if (await tableExists(tx, "medical_records")) {
+        await tx.execute(sql`
+          UPDATE medical_records mr SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND mr.visit_id = sv.id`);
+        await tx.update(medicalRecords).set({ patientId: targetId }).where(eq(medicalRecords.patientId, sourceId));
+      }
+      if (await tableExists(tx, "patient_allergies")) {
+        await tx.update(patientAllergies).set({ patientId: targetId }).where(eq(patientAllergies.patientId, sourceId));
+      }
       await tx.execute(sql`
         DELETE FROM ${visits} sv USING ${visits} tv
         WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
@@ -1281,6 +1542,14 @@ export class PgStorage implements IStorage {
     if (await appointmentsTableExists(db)) {
       const [booked] = await db.select({ id: appointments.id }).from(appointments).where(eq(appointments.patientId, id)).limit(1);
       if (booked) throw new Error("Bu bemorda qabullar tarixi bor — kartani o'chirib bo'lmaydi");
+    }
+    if (await tableExists(db, "patient_allergies")) {
+      const [allergy] = await db
+        .select({ id: patientAllergies.id })
+        .from(patientAllergies)
+        .where(eq(patientAllergies.patientId, id))
+        .limit(1);
+      if (allergy) throw new Error("Bu bemorda tibbiy ma'lumotlar (allergiyalar) bor — kartani o'chirib bo'lmaydi");
     }
     const rows = await db.delete(patients).where(eq(patients.id, id)).returning({ id: patients.id });
     if (rows.length) {

@@ -14,6 +14,7 @@
 export const PERMISSION_GROUPS = [
   { key: "patients", label: "Bemorlar", description: "Bemorlar bazasi va shaxsiy kartalar" },
   { key: "appointments", label: "Navbat va qabul", description: "Shifokor qabuliga yozish, navbat va shifokor kabineti" },
+  { key: "medical", label: "Tibbiy karta", description: "Ko'rik yozuvlari, tashxislar va allergiyalar (TZ §5)" },
   { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
   { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
   { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
@@ -76,6 +77,28 @@ export const PERMISSIONS = {
     group: "appointments",
     label: "Qabul o'tkazish",
     description: "Shifokor kabineti: o'z navbatidagi bemorni chaqirish va qabulni yakunlash",
+  },
+
+  "records.read": {
+    group: "medical",
+    label: "Ko'rish",
+    description: "Elektron tibbiy karta: ko'riklar, tashxislar, allergiyalar",
+  },
+  "records.write": {
+    group: "medical",
+    label: "Ko'rik yozish",
+    description: "O'z qabulidagi bemorga ko'rik yozuvi va allergiya kiritish",
+  },
+  "records.sign": {
+    group: "medical",
+    label: "Tasdiqlash",
+    description: "O'z ko'rik yozuvini tasdiqlash (tasdiqlangach qulflanadi)",
+  },
+  "records.amend": {
+    group: "medical",
+    label: "Tuzatish",
+    description: "Tasdiqlangan yozuvga sababli tuzatish kiritish; eski nusxa saqlanadi",
+    sensitive: true,
   },
 
   "orders.read": {
@@ -274,6 +297,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "doctors.manage",
       "services.manage",
       "appointments.read",
+      "records.read",
       "patients.read",
       "orders.read",
       "orders.cancel",
@@ -308,7 +332,15 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "shifokor",
     name: "Shifokor",
     description: "Tibbiy karta va buyurtmalar, bemor tahlil natijalarini ko'rish",
-    permissions: ["patients.read", "orders.read", "appointments.serve"],
+    permissions: [
+      "patients.read",
+      "orders.read",
+      "appointments.serve",
+      "records.read",
+      "records.write",
+      "records.sign",
+      "records.amend",
+    ],
   },
   {
     key: "laborant",

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   AlertTriangle,
   BellRing,
   CalendarClock,
   CheckCircle2,
   ChevronLeft,
+  FilePenLine,
   ChevronRight,
   Clock,
   Hourglass,
@@ -18,7 +19,7 @@ import {
   UserRoundX,
   Users,
 } from "lucide-react";
-import type { AppointmentWithDetails, DoctorCabinet, DoctorWithDetails } from "@shared/schema";
+import type { AppointmentWithDetails, DoctorCabinet, DoctorWithDetails, RecordStatus } from "@shared/schema";
 import { nextInLine } from "@shared/appointment";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,7 @@ import {
   TableSkeleton,
 } from "@/components/ui-kit";
 import { useAppointmentStatus } from "@/components/appointment-actions";
+import { RecordStatusBadge } from "@/components/medical-record";
 import { ApiError, apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -75,8 +77,10 @@ export default function Cabinet() {
   if (viewDoctor) params.set("doctorId", viewDoctor);
   const { data, isLoading, error } = useQuery<DoctorCabinet>({
     queryKey: [`/api/cabinet?${params.toString()}`],
-    // Until real-time updates (B8.1) arrive, the waiting room refreshes itself.
+    // Until real-time updates (B8.1) arrive, the waiting room refreshes itself —
+    // and it is never shown from cache when coming back to it.
     refetchInterval: 15_000,
+    refetchOnMount: "always",
     retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 2,
   });
   const { data: doctors = [] } = useQuery<DoctorWithDetails[]>({
@@ -104,11 +108,17 @@ export default function Cabinet() {
 
   const status = useAppointmentStatus();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const recordStatus = data?.recordStatus ?? {};
+  // Drafts of today's patient in the chair are worked on above; the rest are unfinished paperwork.
+  const drafts = (data?.draftRecords ?? []).filter((r) => r.appointmentId !== current?.id);
   const callNext = useMutation({
     mutationFn: async () => (await (await apiRequest("POST", "/api/cabinet/call-next")).json()) as AppointmentWithDetails,
     onSuccess: (a) => {
       invalidateApi("/api/cabinet", "/api/appointments");
       toast({ title: `Navbat №${a.queueNumber} — qabulga chaqirildi`, description: a.patientName });
+      // The doctor called them in to examine them: open the examination window.
+      navigate(`/cabinet/visit/${a.id}`);
     },
     onError: (err: Error) => {
       invalidateApi("/api/cabinet");
@@ -246,6 +256,42 @@ export default function Cabinet() {
         </SectionCard>
       )}
 
+      {isOwn && drafts.length > 0 && (
+        <SectionCard
+          icon={FilePenLine}
+          title="Tugallanmagan tibbiy kartalar"
+          description="Tasdiqlanmagan ko'rik yozuvlari"
+          flush
+          action={<Badge variant="secondary">{drafts.length}</Badge>}
+        >
+          <div className="divide-y" data-testid="list-draft-records">
+            {drafts.map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
+                <div className="w-24 shrink-0">
+                  <p className="text-sm font-semibold tabular">{formatDay(r.date)}</p>
+                  <p className="font-mono text-xs text-muted-foreground">{r.startTime}</p>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-2 font-medium">
+                    <PatientNumber value={r.patientNumber} size="sm" />
+                    <span className="truncate">{r.patientName}</span>
+                  </p>
+                  <p className="line-clamp-1 text-xs text-muted-foreground">
+                    {r.complaints ?? "Hali hech narsa yozilmagan"}
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/cabinet/visit/${r.appointmentId}`}>
+                    <FilePenLine className="mr-1.5 h-4 w-4" />
+                    Davom ettirish
+                  </Link>
+                </Button>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
       {/* ------------------------------------------------ patient in the chair */}
       {current && (
         <div className="card-premium overflow-hidden border-sky-500/30" data-testid="card-current-patient">
@@ -277,6 +323,17 @@ export default function Cabinet() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button asChild className="shadow-brand" data-testid="button-open-examination">
+                <Link href={`/cabinet/visit/${current.id}`}>
+                  <FilePenLine className="mr-2 h-4 w-4" />
+                  Ko'rik oynasi
+                  {recordStatus[current.id] && (
+                    <span className="ml-2 rounded bg-white/20 px-1.5 text-[11px]">
+                      {recordStatus[current.id] === "signed" ? "tasdiqlangan" : "qoralama"}
+                    </span>
+                  )}
+                </Link>
+              </Button>
               <Button variant="outline" asChild>
                 <Link href={`/patients/${current.patientId}`}>
                   <IdCard className="mr-2 h-4 w-4" />
@@ -393,7 +450,16 @@ export default function Cabinet() {
             ) : (
               <div className="divide-y">
                 {[...done, ...missed].map((a) => (
-                  <PatientRow key={a.id} a={a} now={now} />
+                  <PatientRow key={a.id} a={a} now={now} record={recordStatus[a.id]}>
+                    {a.status === "completed" && (
+                      <Button size="sm" variant="ghost" asChild>
+                        <Link href={`/cabinet/visit/${a.id}`} data-testid={`button-record-${a.id}`}>
+                          <FilePenLine className="mr-1.5 h-4 w-4" />
+                          {recordStatus[a.id] ? "Ko'rik yozuvi" : "Yozuv kiritish"}
+                        </Link>
+                      </Button>
+                    )}
+                  </PatientRow>
                 ))}
               </div>
             )}
@@ -410,12 +476,15 @@ function PatientRow({
   children,
   highlight,
   showDate,
+  record,
 }: {
   a: AppointmentWithDetails;
   now: number;
   children?: React.ReactNode;
   highlight?: boolean;
   showDate?: boolean;
+  /** The examination record's state, when one exists. */
+  record?: RecordStatus;
 }) {
   return (
     <div className={cn("flex flex-wrap items-center gap-3 px-5 py-3", highlight && "bg-amber-500/[0.05]")} data-testid={`cabinet-row-${a.id}`}>
@@ -443,6 +512,7 @@ function PatientRow({
       </Link>
       <div className="flex items-center gap-2">
         {a.status !== "arrived" && a.status !== "scheduled" && <AppointmentBadge status={a.status} />}
+        {record && <RecordStatusBadge record={{ status: record, version: 1 }} />}
         {children}
       </div>
     </div>

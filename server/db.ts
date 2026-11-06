@@ -22,6 +22,9 @@ import type {
   Visit,
   Service,
   Appointment,
+  MedicalRecord,
+  MedicalRecordVersion,
+  PatientAllergy,
 } from "@shared/schema";
 
 export type DbShape = {
@@ -32,6 +35,9 @@ export type DbShape = {
   doctors: Doctor[];
   services: Service[];
   appointments: Appointment[];
+  medicalRecords: MedicalRecord[];
+  medicalRecordVersions: Omit<MedicalRecordVersion, "replacedByName">[];
+  patientAllergies: Omit<PatientAllergy, "createdByName">[];
   security: SecuritySettings | null;
   patients: Patient[];
   patientContacts: PatientContact[];
@@ -68,6 +74,9 @@ export const emptyDb = (): DbShape => ({
   doctors: [],
   services: [],
   appointments: [],
+  medicalRecords: [],
+  medicalRecordVersions: [],
+  patientAllergies: [],
   security: null,
   patients: [],
   patientContacts: [],

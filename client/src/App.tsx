@@ -59,6 +59,7 @@ const Departments = lazy(() => import("@/pages/departments"));
 const Services = lazy(() => import("@/pages/services"));
 const Queue = lazy(() => import("@/pages/queue"));
 const Cabinet = lazy(() => import("@/pages/cabinet"));
+const Examination = lazy(() => import("@/pages/examination"));
 
 /**
  * Wraps a page in its ROUTE_ACCESS rule. Typing the URL of a screen the role
@@ -86,6 +87,7 @@ const DepartmentsPage = guarded("/departments", Departments);
 const ServicesPage = guarded("/services", Services);
 const QueuePage = guarded("/queue", Queue);
 const CabinetPage = guarded("/cabinet", Cabinet);
+const ExaminationPage = guarded("/cabinet/visit", Examination);
 
 function Router() {
   return (
@@ -109,6 +111,7 @@ function Router() {
         <Route path="/services" component={ServicesPage} />
         <Route path="/queue" component={QueuePage} />
         <Route path="/cabinet" component={CabinetPage} />
+        <Route path="/cabinet/visit/:id" component={ExaminationPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route component={NotFound} />
       </Switch>
@@ -225,7 +228,12 @@ function Shell() {
             <nav className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
               <span className="hidden text-muted-foreground sm:inline">MedLab</span>
               <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground/60 sm:inline" />
-              <span className="truncate font-semibold">{PAGE_TITLES[location] ?? (location.startsWith("/patients/") ? "Bemor kartasi" : "Sahifa")}</span>
+              <span className="truncate font-semibold">{PAGE_TITLES[location] ??
+                  (location.startsWith("/patients/")
+                    ? "Bemor kartasi"
+                    : location.startsWith("/cabinet/visit/")
+                      ? "Ko'rik oynasi"
+                      : "Sahifa")}</span>
             </nav>
 
             {/* The palette's own trigger — a shortcut nobody can see is a

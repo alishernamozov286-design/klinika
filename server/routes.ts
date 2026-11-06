@@ -108,8 +108,9 @@ import {
   telegramWebhook,
 } from "./telegram";
 
-import { actorOf, audit, emptyIfMissing, handle, numberParam, stringParam } from "./route-helpers";
+import { actorOf, audit, emptyIfMissing, handle, logPatientView, numberParam, stringParam } from "./route-helpers";
 import { registerClinicRoutes } from "./routes-clinic";
+import { registerMedicalRoutes } from "./routes-medical";
 
 export async function registerRoutes(app: Express): Promise<void> {
   setupAuth(app);
@@ -640,21 +641,8 @@ export async function registerRoutes(app: Express): Promise<void> {
     }),
   );
 
-  /**
-   * TZ §12: "tibbiy ma'lumotlarga kirish tarixini saqlash". Opening a card is
-   * logged, once per person per card per ten minutes — enough to answer
-   * "who looked at this patient", without a row for every refresh.
-   */
-  const VIEW_LOG_EVERY_MS = 10 * 60_000;
-  const lastViewLogged = new Map<string, number>();
-  async function logCardView(req: Request, patient: { id: string; patientNumber: number; fullName: string }) {
-    const key = `${req.user!.id}:${patient.id}`;
-    const now = Date.now();
-    if (now - (lastViewLogged.get(key) ?? 0) < VIEW_LOG_EVERY_MS) return;
-    lastViewLogged.set(key, now);
-    if (lastViewLogged.size > 20_000) lastViewLogged.clear();
-    await audit(req, "view", "patient", patient.id, `№${patient.patientNumber} ${patient.fullName} kartasi ochildi`);
-  }
+  const logCardView = (req: Request, patient: { id: string; patientNumber: number; fullName: string }) =>
+    logPatientView(req, patient, "kartasi ochildi");
 
   /**
    * The patient card (TZ §4.1.3, §4.2): the person, every visit with what was
@@ -2249,6 +2237,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   );
 
   registerClinicRoutes(app);
+  registerMedicalRoutes(app);
 
   // An unknown API path is a 404 in JSON, not the client app's index.html with
   // a 200 — which is what the SPA fallback further down would otherwise serve.

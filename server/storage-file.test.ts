@@ -446,7 +446,15 @@ describe("roles", () => {
   it("hands out copies, so a role read before an update still shows the old value", async () => {
     const before = await storage.getRole("shifokor");
     await storage.updateRole("shifokor", { permissions: ["patients.read"] }, ACTOR);
-    expect(before?.permissions).toEqual(["patients.read", "orders.read", "appointments.serve"]);
+    expect(before?.permissions).toEqual([
+      "patients.read",
+      "orders.read",
+      "appointments.serve",
+      "records.read",
+      "records.write",
+      "records.sign",
+      "records.amend",
+    ]);
   });
 
   it("stamps who edited a role and when", async () => {
@@ -1063,5 +1071,136 @@ describe("appointments on the patient card (B2.5 × B2.7)", () => {
     const listed = (await storage.listPatients({ search: "Tursunov" })).items[0];
     expect(listed.visitCount).toBe(1);
     expect(listed.lastVisitAt).toBeTruthy();
+  });
+});
+
+describe("examination records (B3.3, TZ §5.2)", () => {
+  async function setup() {
+    const user = await storage.createUser({ username: "dr5", password: "parol123", fullName: "Yusupova Nodira", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      { userId: user.id, departmentId: null, specialty: "Terapevt", consultationPrice: 80000, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const patient = await storage.createPatient({ fullName: "Karimova Zarina", phone: "+998905555555", gender: "ayol", age: 34, address: null });
+    const appt = await storage.createAppointment(
+      { patientId: patient.id, doctorId: doctor.id, serviceId: null, date: "2026-11-09", startTime: "10:00", reason: null, durationMinutes: 20, price: 80000 },
+      ACTOR,
+      () => null,
+    );
+    const open = () =>
+      storage.openRecord({ patientId: patient.id, appointmentId: appt.id, doctorId: doctor.id, visitId: null }, ACTOR);
+    return { user, doctor, patient, appt, open };
+  }
+
+  it("opens one draft per appointment and joins names", async () => {
+    const { open, appt } = await setup();
+    const a = await open();
+    const b = await open();
+    expect(b.id).toBe(a.id);
+    expect(a.status).toBe("draft");
+    expect([a.version, a.revision]).toEqual([1, 0]);
+    expect(a.patientName).toBe("Karimova Zarina");
+    expect(a.doctorName).toBe("Yusupova Nodira");
+    expect(a.date).toBe(appt.date);
+    expect((await storage.getRecordByAppointment(appt.id))?.id).toBe(a.id);
+  });
+
+  it("saves a draft only at the revision it was based on", async () => {
+    const { open } = await setup();
+    const r = await open();
+    const saved = await storage.saveRecordDraft(r.id, 0, { complaints: "Yo'tal" }, ACTOR);
+    expect(saved.revision).toBe(1);
+    expect(saved.complaints).toBe("Yo'tal");
+    // A second tab still at revision 0 must not overwrite.
+    await expect(storage.saveRecordDraft(r.id, 0, { complaints: "Boshqa matn" }, ACTOR)).rejects.toThrow(/boshqa oynada/);
+    expect((await storage.getRecord(r.id))?.complaints).toBe("Yo'tal");
+    // A partial save leaves the other fields alone.
+    const next = await storage.saveRecordDraft(r.id, 1, { finalDiagnosis: "Bronxit" }, ACTOR);
+    expect([next.complaints, next.finalDiagnosis]).toEqual(["Yo'tal", "Bronxit"]);
+  });
+
+  it("signing locks the record against draft saves", async () => {
+    const { open } = await setup();
+    const r = await open();
+    await storage.saveRecordDraft(r.id, 0, { complaints: "Yo'tal", finalDiagnosis: "Bronxit" }, ACTOR);
+    const signed = await storage.signRecord(r.id, 1, ACTOR);
+    expect(signed.status).toBe("signed");
+    expect(signed.signedAt).toBeTruthy();
+    expect(signed.signedBy).toBe(ACTOR.id);
+    await expect(storage.saveRecordDraft(r.id, signed.revision, { complaints: "x" }, ACTOR)).rejects.toThrow(/tasdiqlangan/);
+    await expect(storage.signRecord(r.id, signed.revision, ACTOR)).rejects.toThrow(/tasdiqlangan/);
+  });
+
+  it("a correction keeps the replaced version, with who and why", async () => {
+    const { open } = await setup();
+    const r = await open();
+    await storage.saveRecordDraft(r.id, 0, { complaints: "Yo'tal", finalDiagnosis: "Bronxit" }, ACTOR);
+    const signed = await storage.signRecord(r.id, 1, ACTOR);
+    const fields = { complaints: "Yo'tal", anamnesis: null, examination: null, preliminaryDiagnosis: null, finalDiagnosis: "O'tkir bronxit", recommendations: "Dam olish" };
+    const amended = await storage.amendRecord(r.id, signed.revision, fields, "Tashxis aniqlashtirildi", ACTOR);
+    expect(amended.version).toBe(2);
+    expect(amended.status).toBe("signed");
+    expect(amended.finalDiagnosis).toBe("O'tkir bronxit");
+    expect(amended.amendReason).toBe("Tashxis aniqlashtirildi");
+
+    const versions = await storage.listRecordVersions(r.id);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({ version: 1, finalDiagnosis: "Bronxit", recommendations: null, replaceReason: "Tashxis aniqlashtirildi", replacedBy: ACTOR.id });
+
+    // A stale revision (another tab) cannot correct over it.
+    await expect(storage.amendRecord(r.id, signed.revision, fields, "yana", ACTOR)).rejects.toThrow(/boshqa oynada/);
+  });
+
+  it("refuses to correct a draft", async () => {
+    const { open } = await setup();
+    const r = await open();
+    const fields = { complaints: "x", anamnesis: null, examination: null, preliminaryDiagnosis: "y", finalDiagnosis: null, recommendations: null };
+    await expect(storage.amendRecord(r.id, 0, fields, "sabab bor", ACTOR)).rejects.toThrow(/tasdiqlangan yozuvga/);
+  });
+
+  it("lists by patient, doctor, status and appointment", async () => {
+    const { open, doctor, patient, appt } = await setup();
+    const r = await open();
+    expect(await storage.listRecords({ doctorId: doctor.id, status: "draft" })).toHaveLength(1);
+    expect(await storage.listRecords({ patientId: patient.id, status: "signed" })).toHaveLength(0);
+    expect((await storage.listRecords({ appointmentIds: [appt.id] }))[0].id).toBe(r.id);
+    expect(await storage.listRecords({ appointmentIds: [] })).toHaveLength(0);
+  });
+});
+
+describe("allergies (B3.2)", () => {
+  it("adds, lists and deactivates — never deletes", async () => {
+    const patient = await storage.createPatient({ fullName: "Ergashev Sardor", phone: "+998906666666", gender: "erkak", age: 28, address: null });
+    const a = await storage.addAllergy(patient.id, { allergen: "Penitsillin", reaction: "Toshma" }, ACTOR);
+    await storage.addAllergy(patient.id, { allergen: "Yong'oq", reaction: null }, ACTOR);
+    expect(await storage.listAllergies(patient.id)).toHaveLength(2);
+
+    const off = await storage.deactivateAllergy(a.id, "Xato kiritilgan", ACTOR);
+    expect(off).toMatchObject({ isActive: false, removeReason: "Xato kiritilgan", removedBy: ACTOR.id });
+    await expect(storage.deactivateAllergy(a.id, "yana", ACTOR)).rejects.toThrow(/faol emas/);
+
+    expect((await storage.listAllergies(patient.id)).map((x) => x.allergen)).toEqual(["Yong'oq"]);
+    expect(await storage.listAllergies(patient.id, { includeInactive: true })).toHaveLength(2);
+    await expect(storage.deletePatient(patient.id)).rejects.toThrow(/allergiya/);
+  });
+
+  it("follow the patient on a merge, with the examination records", async () => {
+    const user = await storage.createUser({ username: "dr6", password: "parol123", fullName: "Olimov Bek", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      { userId: user.id, departmentId: null, specialty: "LOR", consultationPrice: 70000, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const real = await storage.createPatient({ fullName: "Asosiy Bemor", phone: "+998901212121", gender: "erkak", age: 40, address: null });
+    const dup = await storage.createPatient({ fullName: "Dublikat Bemor", phone: "+998903434343", gender: "erkak", age: 40, address: null });
+    await storage.addAllergy(dup.id, { allergen: "Aspirin", reaction: null }, ACTOR);
+    const appt = await storage.createAppointment(
+      { patientId: dup.id, doctorId: doctor.id, serviceId: null, date: "2026-11-09", startTime: "10:00", reason: null, durationMinutes: 20, price: 0 },
+      ACTOR,
+      () => null,
+    );
+    await storage.openRecord({ patientId: dup.id, appointmentId: appt.id, doctorId: doctor.id, visitId: null }, ACTOR);
+    await storage.mergePatients(dup.id, real.id);
+    expect((await storage.listAllergies(real.id)).map((a) => a.allergen)).toEqual(["Aspirin"]);
+    expect(await storage.listRecords({ patientId: real.id })).toHaveLength(1);
   });
 });

@@ -485,7 +485,20 @@ export function registerClinicRoutes(app: Express) {
           .listAppointments({ doctorId: doctor.id, beforeDate: clockNow().date, statuses: ["in_progress"] })
           .catch((e) => emptyIfMissing(e, [])),
       ]);
-      const cabinet: DoctorCabinet = { doctor, date, appointments, unfinished };
+      // Examination records (B3.3): the state of each of the day's, and every
+      // record this doctor has not signed yet. Empty before db:medical.
+      const [dayRecords, draftRecords] = await Promise.all([
+        storage.listRecords({ appointmentIds: appointments.map((a) => a.id) }).catch((e) => emptyIfMissing(e, [])),
+        storage.listRecords({ doctorId: doctor.id, status: "draft" }).catch((e) => emptyIfMissing(e, [])),
+      ]);
+      const cabinet: DoctorCabinet = {
+        doctor,
+        date,
+        appointments,
+        unfinished,
+        recordStatus: Object.fromEntries(dayRecords.map((r) => [r.appointmentId, r.status])),
+        draftRecords,
+      };
       res.json(cabinet);
     }),
   );

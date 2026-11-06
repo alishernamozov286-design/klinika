@@ -52,6 +52,11 @@ import type {
   UpdateServiceInput,
   Appointment,
   AppointmentWithDetails,
+  MedicalRecord,
+  MedicalRecordVersion,
+  MedicalRecordWithDetails,
+  PatientAllergy,
+  RecordFields,
   Visit,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
@@ -77,6 +82,8 @@ import {
   type AppointmentStatusChange,
   type BookingCheck,
   type NewAppointment,
+  type OpenRecordInput,
+  type RecordQuery,
   type AuditInput,
   type AuditQuery,
   type CreateOrderArgs,
@@ -644,6 +651,214 @@ export class FileStorage implements IStorage {
     return this.db.appointments.some((a) => a.doctorId === doctorId);
   }
 
+  // ---------------------------------------------------- examination records
+
+  private recordDetails(r: MedicalRecord): MedicalRecordWithDetails {
+    const doctor = this.db.doctors.find((d) => d.id === r.doctorId);
+    const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : undefined;
+    const appt = this.db.appointments.find((a) => a.id === r.appointmentId);
+    const signer = r.signedBy ? this.db.users.find((u) => u.id === r.signedBy) : undefined;
+    const patient = this.db.patients.find((p) => p.id === r.patientId);
+    return {
+      ...r,
+      patientNumber: patient?.patientNumber ?? 0,
+      patientName: patient?.fullName ?? "—",
+      doctorName: user?.fullName ?? "—",
+      doctorUserId: doctor?.userId ?? "",
+      specialty: doctor?.specialty ?? "",
+      date: appt?.date ?? r.createdAt.slice(0, 10),
+      startTime: appt?.startTime ?? "",
+      signedByName: signer?.fullName ?? null,
+    };
+  }
+
+  /** Same wording as the Postgres store: "already signed", else "saved elsewhere". */
+  private recordConflict(status?: MedicalRecord["status"]): StorageConflict {
+    return new StorageConflict(
+      status === "signed"
+        ? "Yozuv allaqachon tasdiqlangan. Sahifani yangilang"
+        : "Yozuv boshqa oynada o'zgartirilgan. Sahifani yangilang — oxirgi saqlangan matn ko'rinadi",
+    );
+  }
+
+  async listRecords(q: RecordQuery): Promise<MedicalRecordWithDetails[]> {
+    return this.db.medicalRecords
+      .filter(
+        (r) =>
+          (!q.patientId || r.patientId === q.patientId) &&
+          (!q.appointmentIds || q.appointmentIds.includes(r.appointmentId)) &&
+          (!q.doctorId || r.doctorId === q.doctorId) &&
+          (!q.status || r.status === q.status),
+      )
+      .map((r) => this.recordDetails(r))
+      .sort(
+        (a, b) =>
+          b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime) || b.createdAt.localeCompare(a.createdAt),
+      )
+      .slice(0, Math.min(q.limit ?? 500, 2000));
+  }
+
+  async getRecord(id: string): Promise<MedicalRecordWithDetails | undefined> {
+    const r = this.db.medicalRecords.find((x) => x.id === id);
+    return r && this.recordDetails({ ...r });
+  }
+
+  async getRecordByAppointment(appointmentId: string): Promise<MedicalRecordWithDetails | undefined> {
+    const r = this.db.medicalRecords.find((x) => x.appointmentId === appointmentId);
+    return r && this.recordDetails({ ...r });
+  }
+
+  async openRecord(input: OpenRecordInput, actor: Actor): Promise<MedicalRecordWithDetails> {
+    const existing = this.db.medicalRecords.find((r) => r.appointmentId === input.appointmentId);
+    if (existing) return this.recordDetails({ ...existing });
+    const r: MedicalRecord = {
+      id: randomUUID(),
+      patientId: input.patientId,
+      appointmentId: input.appointmentId,
+      doctorId: input.doctorId,
+      visitId: input.visitId,
+      status: "draft",
+      version: 1,
+      revision: 0,
+      complaints: null,
+      anamnesis: null,
+      examination: null,
+      preliminaryDiagnosis: null,
+      finalDiagnosis: null,
+      recommendations: null,
+      signedAt: null,
+      signedBy: null,
+      amendedAt: null,
+      amendReason: null,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      updatedAt: null,
+      updatedBy: null,
+    };
+    this.db.medicalRecords.push(r);
+    await this.persist();
+    return this.recordDetails({ ...r });
+  }
+
+  async saveRecordDraft(
+    id: string,
+    revision: number,
+    fields: Partial<RecordFields>,
+    actor: Actor,
+  ): Promise<MedicalRecordWithDetails> {
+    const r = this.db.medicalRecords.find((x) => x.id === id);
+    if (!r || r.status !== "draft" || r.revision !== revision) throw this.recordConflict(r?.status);
+    for (const [k, v] of Object.entries(fields)) if (v !== undefined) (r as Record<string, unknown>)[k] = v;
+    r.revision = revision + 1;
+    r.updatedAt = new Date().toISOString();
+    r.updatedBy = actor.id;
+    await this.persist();
+    return this.recordDetails({ ...r });
+  }
+
+  async signRecord(id: string, revision: number, actor: Actor): Promise<MedicalRecordWithDetails> {
+    const r = this.db.medicalRecords.find((x) => x.id === id);
+    if (!r || r.status !== "draft" || r.revision !== revision) throw this.recordConflict(r?.status);
+    const now = new Date().toISOString();
+    Object.assign(r, { status: "signed", signedAt: now, signedBy: actor.id, revision: revision + 1, updatedAt: now, updatedBy: actor.id });
+    await this.persist();
+    return this.recordDetails({ ...r });
+  }
+
+  async amendRecord(
+    id: string,
+    revision: number,
+    fields: RecordFields,
+    reason: string,
+    actor: Actor,
+  ): Promise<MedicalRecordWithDetails> {
+    const r = this.db.medicalRecords.find((x) => x.id === id);
+    if (!r) throw new StorageConflict("Yozuv topilmadi");
+    if (r.status !== "signed") throw new StorageConflict("Faqat tasdiqlangan yozuvga tuzatish kiritiladi");
+    if (r.revision !== revision) throw this.recordConflict();
+    const now = new Date().toISOString();
+    this.db.medicalRecordVersions.push({
+      id: randomUUID(),
+      recordId: id,
+      version: r.version,
+      complaints: r.complaints,
+      anamnesis: r.anamnesis,
+      examination: r.examination,
+      preliminaryDiagnosis: r.preliminaryDiagnosis,
+      finalDiagnosis: r.finalDiagnosis,
+      recommendations: r.recommendations,
+      signedAt: r.signedAt,
+      signedBy: r.signedBy,
+      replacedAt: now,
+      replacedBy: actor.id,
+      replaceReason: reason,
+    });
+    Object.assign(r, {
+      ...fields,
+      version: r.version + 1,
+      revision: r.revision + 1,
+      signedAt: now,
+      signedBy: actor.id,
+      amendedAt: now,
+      amendReason: reason,
+      updatedAt: now,
+      updatedBy: actor.id,
+    });
+    await this.persist();
+    return this.recordDetails({ ...r });
+  }
+
+  async listRecordVersions(recordId: string): Promise<MedicalRecordVersion[]> {
+    return this.db.medicalRecordVersions
+      .filter((v) => v.recordId === recordId)
+      .sort((a, b) => b.version - a.version)
+      .map((v) => ({ ...v, replacedByName: this.db.users.find((u) => u.id === v.replacedBy)?.fullName ?? null }));
+  }
+
+  // ------------------------------------------------------------- allergies
+
+  private allergyDetails(a: PatientAllergy | Omit<PatientAllergy, "createdByName">): PatientAllergy {
+    return { ...a, createdByName: this.db.users.find((u) => u.id === a.createdBy)?.fullName ?? null };
+  }
+
+  async listAllergies(patientId: string, opts: { includeInactive?: boolean } = {}): Promise<PatientAllergy[]> {
+    return this.db.patientAllergies
+      .filter((a) => a.patientId === patientId && (opts.includeInactive || a.isActive))
+      .sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.createdAt.localeCompare(a.createdAt))
+      .map((a) => this.allergyDetails(a));
+  }
+
+  async getAllergy(id: string): Promise<PatientAllergy | undefined> {
+    const a = this.db.patientAllergies.find((x) => x.id === id);
+    return a && this.allergyDetails(a);
+  }
+
+  async addAllergy(patientId: string, input: { allergen: string; reaction: string | null }, actor: Actor): Promise<PatientAllergy> {
+    const a = {
+      id: randomUUID(),
+      patientId,
+      allergen: input.allergen,
+      reaction: input.reaction,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      removedAt: null,
+      removedBy: null,
+      removeReason: null,
+    };
+    this.db.patientAllergies.push(a);
+    await this.persist();
+    return this.allergyDetails(a);
+  }
+
+  async deactivateAllergy(id: string, reason: string, actor: Actor): Promise<PatientAllergy> {
+    const a = this.db.patientAllergies.find((x) => x.id === id);
+    if (!a || !a.isActive) throw new StorageConflict("Bu yozuv allaqachon faol emas");
+    Object.assign(a, { isActive: false, removedAt: new Date().toISOString(), removedBy: actor.id, removeReason: reason });
+    await this.persist();
+    return this.allergyDetails(a);
+  }
+
   async deleteDoctor(id: string): Promise<boolean> {
     const before = this.db.doctors.length;
     this.db.doctors = this.db.doctors.filter((d) => d.id !== id);
@@ -885,6 +1100,7 @@ export class FileStorage implements IStorage {
       if (same) {
         for (const o of this.db.orders) if (o.visitId === v.id) o.visitId = same.id;
         for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
+        for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
         this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
       } else {
         v.patientId = targetId;
@@ -900,6 +1116,8 @@ export class FileStorage implements IStorage {
     }
     let appointments = 0;
     for (const a of this.db.appointments) if (a.patientId === sourceId) (a.patientId = targetId), appointments++;
+    for (const r of this.db.medicalRecords) if (r.patientId === sourceId) r.patientId = targetId;
+    for (const a of this.db.patientAllergies) if (a.patientId === sourceId) a.patientId = targetId;
     this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
     await this.persist();
     return { orders, contacts, appointments };
@@ -968,6 +1186,9 @@ export class FileStorage implements IStorage {
     }
     if (this.db.appointments.some((a) => a.patientId === id)) {
       throw new Error("Bu bemorda qabullar tarixi bor — kartani o'chirib bo'lmaydi");
+    }
+    if (this.db.patientAllergies.some((a) => a.patientId === id)) {
+      throw new Error("Bu bemorda tibbiy ma'lumotlar (allergiyalar) bor — kartani o'chirib bo'lmaydi");
     }
     const before = this.db.patients.length;
     this.db.patients = this.db.patients.filter((p) => p.id !== id);

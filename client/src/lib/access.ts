@@ -12,6 +12,7 @@ export const ROUTE_ACCESS: Record<string, Permission[]> = {
   "/patients": ["patients.read"],
   "/queue": ["appointments.read", "appointments.manage"],
   "/cabinet": ["appointments.serve"],
+  "/cabinet/visit": ["appointments.serve", "records.read"],
   "/services": ["services.manage", "appointments.manage", "appointments.read"],
   "/orders": ["orders.read"],
   "/results": ["orders.read"],

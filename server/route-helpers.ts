@@ -50,3 +50,25 @@ export const emptyIfMissing = <T>(err: unknown, empty: T): T => {
   if ((err as { code?: string } | null)?.code === "42P01") return empty;
   throw err;
 };
+
+/**
+ * TZ §12: "tibbiy ma'lumotlarga kirish tarixini saqlash". Opening a patient's
+ * card or medical record is logged once per person, per patient, per kind of
+ * view every ten minutes — enough to answer "who looked at this patient",
+ * without a row for every refresh.
+ */
+const VIEW_LOG_EVERY_MS = 10 * 60_000;
+const lastViewLogged = new Map<string, number>();
+
+export async function logPatientView(
+  req: Request,
+  patient: { id: string; patientNumber: number; fullName: string },
+  what: string,
+): Promise<void> {
+  const key = `${req.user!.id}:${patient.id}:${what}`;
+  const now = Date.now();
+  if (now - (lastViewLogged.get(key) ?? 0) < VIEW_LOG_EVERY_MS) return;
+  lastViewLogged.set(key, now);
+  if (lastViewLogged.size > 20_000) lastViewLogged.clear();
+  await audit(req, "view", "patient", patient.id, `№${patient.patientNumber} ${patient.fullName} ${what}`);
+}
