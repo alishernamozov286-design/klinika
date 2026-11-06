@@ -9,6 +9,8 @@ import type {
   OrderTestVersion,
   NotificationFeed,
   NotificationKind,
+  IcdEntry,
+  IcdStats,
   ReceptionDay,
   Expense,
   ExpenseSummary,
@@ -246,6 +248,13 @@ export type NewNotification = {
   important: boolean;
   /** Raised at most once per key; a repeat is silently dropped. */
   dedupeKey: string | null;
+};
+
+export type IcdQuery = {
+  q: string;
+  limit: number;
+  /** Chapters, blocks and retired codes too — the catalogue screen; the picker never offers them. */
+  all?: boolean;
 };
 
 export type RecordQuery = {
@@ -519,6 +528,14 @@ export interface IStorage {
    */
   amendRecord(id: string, revision: number, fields: RecordFields, reason: string, actor: Actor): Promise<MedicalRecordWithDetails>;
   /** Replaced versions, newest first. */
+  // ---- MKB-10 (B3.4)
+  searchIcd(query: IcdQuery): Promise<IcdEntry[]>;
+  getIcd(codes: string[]): Promise<IcdEntry[]>;
+  icdStats(): Promise<IcdStats>;
+  setIcdUzName(code: string, nameUz: string | null, actor: Actor): Promise<IcdEntry | undefined>;
+  /** Sets many Uzbek names at once; codes not in the catalogue are reported, not created. */
+  importIcdUzNames(names: Map<string, string>, actor: Actor): Promise<{ updated: number; unknown: string[] }>;
+
   // ---- notifications (B3.9)
   /** Returns false when the dedupe key was already used. */
   createNotification(input: NewNotification): Promise<boolean>;

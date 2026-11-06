@@ -45,6 +45,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `server/routes.ts`: asosiy API. `server/routes-clinic.ts`: xizmatlar, qabullar, shifokor kabineti. `server/routes-medical.ts`: ko'rik yozuvlari, tibbiy karta, allergiyalar, yo'llanmalar. Umumiy yordamchilar (`handle`, `audit`, `actorOf`, `emptyIfMissing`, `logPatientView`) — `server/route-helpers.ts`. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali. Storage'ning `StorageConflict` xatosi avtomatik 409 bo‘ladi.
 - `shared/appointment.ts`: qabul qoidalari (bo‘sh vaqtlar to‘ri, ustma-ust tushish, holat mashinasi va kim qaysi o‘tishni qiladi). Server ham, UI ham shundan foydalanadi.
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
+- `shared/icd10.ts` + `data/icd10/`: MKB-10 katalogini o'qish, kod normallash, o'zbekcha nomlar importi (B3.4).
 - `server/result-delivery.ts`: tasdiqlangan natijani yo'llagan shifokorga yetkazish (B3.9).
 - `shared/lab-verification.ts`: natija qatorining holati va qachon tashqariga chiqishi (B4.5). `server/lab-rules.ts`: tasdiqlash va tuzatishning yozish qoidalari.
 - `shared/patient-links.ts`: bemorga bog'langan jadvallar reyestri (birlashtirish va o'chirish qoidalari). `shared/ledger.ts`: nima o'chirilmaydi (to'lov, natijali buyurtma, ishlatilgan tahlil). `shared/reception.ts`: registratura panelining hisob-kitobi. `shared/referral.ts`: yo'llanma holati va qabulga mosligi.
@@ -91,13 +92,13 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 | D-2 | **Hosting va ma'lumot joylashuvi.** TZ O‘zbekiston qonunchiligiga muvofiqlikni talab qiladi (`§12`). Hozir Neon (xorij) + Vercel. | ❓ |
 | D-3 | **Fayl ombori** (UZI rasmlari, PDF arxiv): S3-compatible (`§2`). Provayder tanlanmagan. | ❓ |
 | D-4 | **Analizatorlar protokoli** (`§6.4`): har bir qurilma uchun RS-232 / TCP/IP / HL7 hujjatlari kerak. Brauzer COM-portga ulana olmaydi, shuning uchun klinikada lokal "ko‘prik" xizmati kerak bo‘ladi. | ❓ Qurilma hujjatlari kutilmoqda |
-| D-5 | **MKB-10 katalogi** manbai va tili (o‘zbek/rus). | ❓ |
+| D-5 | **MKB-10 katalogi** manbai va tili (o‘zbek/rus). | ✅ **Hal qilindi (2026-11-06):** ikkala til. Ruscha nomlar — Rossiya SSV NSI rasmiy ma'lumotnomasi (OID 1.2.643.5.1.13.13.11.1005, v2.27, `data/icd10`). O'zbekcha nomlar alohida ustunda, klinika to'ldiradi (ochiq rasmiy o'zbekcha MKB-10 topilmadi). Kod hozircha **ixtiyoriy**. |
 
 ---
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 38 → ≈50%**.
+> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 39 → ≈51%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -175,7 +176,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Bosh sahifada (`appointments.read` egalari uchun) "Registratura · Bugungi kun" paneli: 5 ta ko'rsatkich, qabulga kelganlar (qabuldagi, so'ng kelish tartibida), navbatdagilar (vaqt bo'yicha, kechikayotganlar belgilanadi, to'g'ridan-to'g'ri "Keldi"), yangi bemorlar, to'lov holati (to'liq / qisman / to'lanmagan). Kechikish server soati bo'yicha. 20 s da yangilanadi va amallardan keyin darhol invalidatsiya qilinadi.
   - Hisoblash qoidalari `shared/reception.ts` da (test bilan). "To'lov holati" hozircha lab buyurtmalari bo'yicha. Qabul to'lovlari B7.1 (umumiy hisobvaraq) bilan qo'shiladi.
 
-### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 72%
+### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 83%
 
 - [x] **B3.1** Shifokor kabineti (`§5.1.1`): bugungi qabul, kutayotganlar, qabul qilinganlar, tugallanmagan kartalar. Navbatdan bemorni "chaqirish".
   - `/cabinet` ("Mening kabinetim"): statistika, qabuldagi bemor kartasi (o'tgan vaqt, bemor kartasiga havola, yakunlash, navbatga qaytarish), "Keyingi bemorni chaqirish" (`POST /api/cabinet/call-next`: kelganlardan eng erta yozilgan), kutayotganlar (qancha kutayotgani bilan), yozilganlar, qabul qilinganlar, kun bo'yicha ko'rish.
@@ -195,7 +196,14 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Tashxis hozircha erkin matn. MKB-10 kodi B3.4 da (D-5 qarori kerak).
   - Migratsiya: `npm run db:medical` (`db:upgrade` ichida). Jadvallar va indekslarni yaratadi, shifokor (`records.*`) va rahbarga (`records.read`) ruxsatlarni **faqat qo'shadi**. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06).
   - Testlar: `shared/medical-record.test.ts`, `storage-file.test.ts` (yozuvlar, allergiyalar), 43 ta API E2E, brauzerda butun shifokor yo'li (chaqirish → yozish → avtosaqlash → tasdiqlash va yakunlash → tuzatish → tarix).
-- [ ] **B3.4** Tashxislar va MKB-10 (`§5.1.3`, `diagnoses`): MKB-10 katalogi + qidiruv (D-5), tashxislar tarixi.
+- [x] **B3.4** Tashxislar va MKB-10 (`§5.1.3`, `diagnoses`): MKB-10 katalogi + qidiruv (D-5), tashxislar tarixi.
+  - `icd10` jadvali: 15 038 yozuv (22 bob, 274 blok, 2 058 rubrika, 12 684 kod; 101 tasi eskirgan). Ierarxiya (bob, blok, ota kod), `selectable` (faqat amaldagi rubrika yoki kod; bob/blok/eskirgan tanlanmaydi). O'qish va ierarxiya `shared/icd10.ts` (`parseNsiIcd10`), testlar real fayl bilan.
+  - Ko'rik yozuvida ikkita ixtiyoriy ustun: `preliminary_diagnosis_code`, `final_diagnosis_code` (versiyalarda ham). Matn — tashxisning o'zi, kod yonida. Server kodni katalogda tekshiradi (yo'q, eskirgan, blok — 400); yozuvda avvaldan turgan kod qayta tekshirilmaydi. Kod o'zgarishi tuzatish hisoblanadi va auditda nomi bilan yoziladi. Kodli, matnsiz tashxis ham tasdiqlashga yetadi.
+  - Qidiruv (`GET /api/icd10`): kod boshi bo'yicha (`i1`, kirillcha `е11,9` ham normallashadi) yoki ruscha/o'zbekcha nomdagi so'zlar bo'yicha. `GET /api/icd10/lookup`, `/stats`.
+  - UI: ko'rik oynasida har ikki tashxis ostida MKB-10 tanlagich (klaviatura, o'zbekcha nom bo'lsa birinchi, ruscha ostida, blok ko'rsatkichi); kod tanlansa va matn bo'sh bo'lsa nom yoziladi. Kod belgisi: ko'rik ko'rinishida, tashxislar tarixida, versiyalarda, xulosa PDF'ida (kod, o'zbekcha va ruscha nom).
+  - O'zbekcha nomlar: Sozlamalar → MKB-10 (`settings.manage`): qidiruv, joyida tahrirlash, CSV import (`kod;nom`, noma'lum kodlar va o'qilmagan qatorlar hisoboti), qamrov ko'rsatkichi. Audit.
+  - Migratsiya: `npm run db:icd10` (`db:upgrade` ichida, `tsx` bilan): jadval, kod ustunlari, katalogni bitta tranzaksiyada yuklash (≈15 s). Qayta ishga tushirsa ruscha nomlarni yangilaydi, o'zbekchaga tegmaydi. **Yangi kod deploy qilinishidan OLDIN bajarilishi shart.** Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi, **hali bajarilmagan**. Fayl omborida katalog `data/icd10` dan o'qiladi, o'zbekcha nomlar `db.json` da.
+  - Testlar: `shared/icd10.test.ts` (6), `medical-record.test.ts` (+4), `storage-file.test.ts` (3), 20 ta API E2E, brauzerda tanlagich va sozlamalar ekrani.
 - [x] **B3.5** Yo‘llanma (`§5.1.4`): lab tahlillari (lab buyurtmasini yaratadi, `§11` Shifokor→Lab), UZI, boshqa tekshiruvlar, mutaxassis konsultatsiyasi (boshqa shifokorga qabul).
   - `referrals` jadvali, uch turi bor: `lab`, `exam` (katalogdagi UZI va "boshqa" xizmatlar), `consult` (mutaxassislik, ixtiyoriy aniq shifokor). Yo'llanma raqami identity ketma-ketligidan ("Yo'llanma №12"). Faqat qabulning o'z shifokori, qabul boshlangan yoki yakunlangan bo'lsa beradi (`referrals.create`).
   - **Laboratoriya:** yo'llanma bilan bir tranzaksiyada lab buyurtmasi yaratiladi (`orders.referral_id`, `UQ_orders_referral`). Probirka bilan, to'lanmagan holda, "yo'naltirgan" va ko'rsatma bilan. Registratura uni buyurtmalarda "Yo'llanma №" bilan ko'radi va to'lovni oladi, laboratoriya odatdagidek ishlaydi. Desk va yo'llanma buyurtmasi bitta `insertOrderTx` / `placeOrder` dan o'tadi.
@@ -335,6 +343,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B1.8 · Ikki bosqichli autentifikatsiya: TOTP, zaxira kodlar, rol bo'yicha majburiylik, admin reset, qulf bilan bog'langan kod xatolari.
 - 2026-11-05 · B2.6–B2.8, B3.1 · Xizmatlar katalogi va narxlar ro'yxati, qabulga yozish (bo'sh vaqtlar, navbat raqami, poyga himoyasi), navbat sahifasi, shifokor kabineti, qabullar bemor kartasi va tashriflarida. Yo'l-yo'lakay: route yordamchilari `route-helpers.ts` ga chiqarildi.
 - 2026-11-06 · B3.3, B3.7, B3.2 (qisman) · Ko'rik oynasi (avtosaqlash, revision to'qnashuvi himoyasi), tasdiqlash va versiyali tuzatish, elektron tibbiy karta (allergiyalar, tashxislar tarixi, lab natijalari), kabinetda tugallanmagan kartalar. Yo'l-yo'lakay: navbat va kabinet ekranlari eskirgan keshni ko'rsatardi (global `refetchOnMount: false`), tuzatildi.
+- 2026-11-06 · B3.4, D-5 · MKB-10: rasmiy NSI katalogi (15 038 yozuv), o'zbekcha nomlar ustuni va uni to'ldirish ekrani/importi, ko'rik yozuvida ixtiyoriy dastlabki/yakuniy tashxis kodlari (versiyalar, tarix, PDF), kod va nom bo'yicha qidiruv.
 - 2026-11-06 · B3.8 · Ko'rik xulosasi PDF: faqat tasdiqlangan yozuvdan, allergiyalar, yo'llanmalar va tasdiqlangan natijalar bilan, elektron tasdiq belgisi; bitta PDF ham ko'rinish, ham chop etish, ham yuklab olish; chiqarish auditga yoziladi.
 - 2026-11-06 · B3.9 · Natija shifokorga: to'liq tasdiqlangan yo'llanma buyurtmasi haqida shifokorga bir martalik bildirishnoma (me'yordan tashqarisi belgilangan), tuzatish haqida alohida xabar; qo'ng'iroqcha, kabinetdagi "Yangi tahlil natijalari", ko'rik oynasida qiymatlar. 16.4 yopildi.
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.

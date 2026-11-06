@@ -61,12 +61,34 @@ describe("changes between versions", () => {
     expect(fieldList(changed)).toBe("Yakuniy tashxis, Tavsiyalar");
   });
 
-  it("picks exactly the six fields", () => {
-    expect(Object.keys(pickFields({ complaints: "x" }))).toHaveLength(6);
+  it("picks the six texts and the two MKB-10 codes", () => {
+    expect(Object.keys(pickFields({ complaints: "x" }))).toHaveLength(8);
+    expect(pickFields({ finalDiagnosisCode: "I10" }).finalDiagnosisCode).toBe("I10");
+  });
+
+  it("a changed MKB-10 code is a change, named in the log (B3.4)", () => {
+    const changed = changedFields({ finalDiagnosis: "Gipertoniya", finalDiagnosisCode: null }, { finalDiagnosis: "Gipertoniya", finalDiagnosisCode: "I10" });
+    expect(changed).toEqual(["finalDiagnosisCode"]);
+    expect(fieldList(changed)).toBe("Yakuniy tashxis MKB-10 kodi");
+  });
+
+  it("a coded diagnosis without text still allows signing", () => {
+    expect(signProblem({ complaints: "Bosh og'rig'i", finalDiagnosisCode: "G43.9" })).toBeNull();
   });
 });
 
 describe("diagnosis history", () => {
+  it("carries the code, and keeps a coded diagnosis with no text", () => {
+    const list = diagnosisHistory([
+      record({ id: "a", date: "2026-10-01", finalDiagnosis: "Gipertoniya", finalDiagnosisCode: "I10" }),
+      record({ id: "b", date: "2026-10-02", preliminaryDiagnosisCode: "J06.9" }),
+    ]);
+    expect(list.map((d) => [d.recordId, d.kind, d.code, d.text])).toEqual([
+      ["b", "preliminary", "J06.9", ""],
+      ["a", "final", "I10", "Gipertoniya"],
+    ]);
+  });
+
   it("takes the final diagnosis, else the preliminary, from signed records only, newest first", () => {
     const list = diagnosisHistory([
       record({ id: "old", date: "2026-10-01", finalDiagnosis: "Migren" }),

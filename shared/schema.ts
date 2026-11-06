@@ -183,6 +183,18 @@ export const RECORD_FIELDS = [
 ] as const;
 export type RecordField = (typeof RECORD_FIELDS)[number];
 
+/** The optional MKB-10 codes, each beside its diagnosis text (B3.4). */
+export const RECORD_CODE_FIELDS = ["preliminaryDiagnosisCode", "finalDiagnosisCode"] as const;
+export type RecordCodeField = (typeof RECORD_CODE_FIELDS)[number];
+export const RECORD_CODE_FOR: Record<"preliminaryDiagnosis" | "finalDiagnosis", RecordCodeField> = {
+  preliminaryDiagnosis: "preliminaryDiagnosisCode",
+  finalDiagnosis: "finalDiagnosisCode",
+};
+export const RECORD_CODE_LABELS: Record<RecordCodeField, string> = {
+  preliminaryDiagnosisCode: "Dastlabki tashxis MKB-10 kodi",
+  finalDiagnosisCode: "Yakuniy tashxis MKB-10 kodi",
+};
+
 export const RECORD_FIELD_LABELS: Record<RecordField, string> = {
   complaints: "Shikoyatlar",
   anamnesis: "Anamnez",
@@ -471,6 +483,9 @@ export const medicalRecords = pgTable(
     preliminaryDiagnosis: text("preliminary_diagnosis"),
     finalDiagnosis: text("final_diagnosis"),
     recommendations: text("recommendations"),
+    /** MKB-10 codes for the two diagnoses (B3.4) — optional; the text stays the diagnosis. */
+    preliminaryDiagnosisCode: varchar("preliminary_diagnosis_code"),
+    finalDiagnosisCode: varchar("final_diagnosis_code"),
     signedAt: isoTimestamp("signed_at"),
     signedBy: varchar("signed_by"),
     /** The last correction: when, and why. */
@@ -504,6 +519,8 @@ export const medicalRecordVersions = pgTable(
     preliminaryDiagnosis: text("preliminary_diagnosis"),
     finalDiagnosis: text("final_diagnosis"),
     recommendations: text("recommendations"),
+    preliminaryDiagnosisCode: varchar("preliminary_diagnosis_code"),
+    finalDiagnosisCode: varchar("final_diagnosis_code"),
     signedAt: isoTimestamp("signed_at"),
     signedBy: varchar("signed_by"),
     /** Who replaced this version, when, and why. */
@@ -558,6 +575,30 @@ export const referrals = pgTable(
     appointmentIdx: index("IDX_referrals_appointment").on(t.appointmentId),
     statusIdx: index("IDX_referrals_status_kind").on(t.status, t.kind),
   }),
+);
+
+/**
+ * MKB-10 catalogue (TZ §5.1.3; B3.4, D-5). Russian names from the Ministry of
+ * Health NSI reference; Uzbek names entered or imported by the clinic.
+ * Loaded by `npm run db:icd10`; codes are the key and never change.
+ */
+export const icd10 = pgTable(
+  "icd10",
+  {
+    code: varchar("code").primaryKey(),
+    kind: text("kind").notNull(),
+    nameRu: text("name_ru").notNull(),
+    nameUz: text("name_uz"),
+    chapter: varchar("chapter").notNull(),
+    block: varchar("block"),
+    parentCode: varchar("parent_code"),
+    isActual: boolean("is_actual").notNull().default(true),
+    selectable: boolean("selectable").notNull().default(false),
+    sortOrder: integer("sort_order").notNull(),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+  },
+  (t) => ({ sortIdx: index("IDX_icd10_sort").on(t.sortOrder) }),
 );
 
 /**
@@ -1162,6 +1203,8 @@ export type DiagnosisEntry = {
   specialty: string;
   kind: "preliminary" | "final";
   text: string;
+  /** MKB-10 code when the doctor chose one (B3.4). */
+  code: string | null;
 };
 
 /** A lab result as the medical card lists it. */
@@ -1174,6 +1217,18 @@ export type LabResultEntry = {
   unit: string | null;
   referenceRange: string | null;
   flag: ResultFlag | null;
+};
+
+export type IcdEntry = Omit<typeof icd10.$inferSelect, "kind" | "updatedBy"> & { kind: "chapter" | "block" | "category" | "subcategory" };
+
+/** A code as a record or a list shows it, with both names. */
+export type IcdLabel = Pick<IcdEntry, "code" | "nameRu" | "nameUz">;
+
+export type IcdStats = {
+  total: number;
+  selectable: number;
+  withUzbek: number;
+  source: string;
 };
 
 export const NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"] as const;
@@ -1253,6 +1308,8 @@ export type MedicalCard = {
  */
 export type VisitSummary = {
   record: MedicalRecordWithDetails;
+  /** Names of the record's MKB-10 codes (B3.4). */
+  icd: IcdLabel[];
   appointment: AppointmentWithDetails | null;
   allergies: PatientAllergy[];
   referrals: ReferralWithDetails[];
@@ -1827,6 +1884,15 @@ const recordText = z
   .transform((v) => (v?.trim() ? v.trim() : null));
 
 /** The six examination fields; each optional so a draft can be saved half-written. */
+/** An MKB-10 code, or nothing (B3.4: the code is optional). Existence is checked by the route. */
+const icdCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .nullish()
+  .transform((v) => v || null)
+  .refine((v) => v === null || /^[A-Z]\d\d(\.\d{1,2})?$/.test(v), "MKB-10 kodi noto'g'ri (masalan: I10, E11.9)");
+
 export const recordFieldsSchema = z.object({
   complaints: recordText,
   anamnesis: recordText,
@@ -1834,6 +1900,8 @@ export const recordFieldsSchema = z.object({
   preliminaryDiagnosis: recordText,
   finalDiagnosis: recordText,
   recommendations: recordText,
+  preliminaryDiagnosisCode: icdCode,
+  finalDiagnosisCode: icdCode,
 });
 export type RecordFields = z.infer<typeof recordFieldsSchema>;
 
@@ -1926,6 +1994,19 @@ export const amendResultSchema = z.object({
   reason: z.string().trim().min(5, "Tuzatish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun"),
 });
 export type AmendResultInput = z.infer<typeof amendResultSchema>;
+
+export const updateIcdUzSchema = z.object({
+  nameUz: z
+    .string()
+    .trim()
+    .max(400, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+});
+
+export const importIcdUzSchema = z.object({
+  csv: z.string().min(1, "Fayl bo'sh").max(5_000_000, "Fayl juda katta"),
+});
 
 export const removeAllergySchema = z.object({
   reason: z.string().trim().min(3, "Sababini yozing").max(200, "Juda uzun"),

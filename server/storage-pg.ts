@@ -28,6 +28,9 @@ import {
   referrals,
   orderTestVersions,
   notifications,
+  icd10,
+  type IcdEntry,
+  type IcdStats,
   type AppNotification,
   type NotificationFeed,
   type OrderTestVersion,
@@ -107,6 +110,7 @@ import {
 } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { referralStage } from "@shared/referral";
+import { ICD_SOURCE, normalizeIcdCode } from "@shared/icd10";
 import { amendProblem, pickForVerification } from "./lab-rules";
 import { BLOCKING_TABLES, patientHistoryProblem, type BlockingTable } from "@shared/patient-links";
 import { PAYMENT_ALREADY_VOIDED, TEST_IN_USE, orderDeleteProblem } from "@shared/ledger";
@@ -128,6 +132,7 @@ import {
   type AppointmentQuery,
   type NewReferrals,
   type NewNotification,
+  type IcdQuery,
   type ReferralQuery,
   planResultSave,
   type AppointmentStatusChange,
@@ -218,6 +223,11 @@ const strip = (user: typeof users.$inferSelect): PublicUser => {
  * pulling rows into JS first.
  */
 const dayExpr = sql`(${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date`;
+
+const mapIcd = (row: typeof icd10.$inferSelect): IcdEntry => {
+  const { updatedBy: _by, ...rest } = row;
+  return { ...rest, kind: row.kind as IcdEntry["kind"], updatedAt: iso(row.updatedAt) };
+};
 
 const mapPayment = (row: typeof payments.$inferSelect): Payment => ({
   ...row,
@@ -1056,6 +1066,8 @@ export class PgStorage implements IStorage {
         preliminaryDiagnosis: current.preliminaryDiagnosis,
         finalDiagnosis: current.finalDiagnosis,
         recommendations: current.recommendations,
+        preliminaryDiagnosisCode: current.preliminaryDiagnosisCode,
+        finalDiagnosisCode: current.finalDiagnosisCode,
         signedAt: current.signedAt,
         signedBy: current.signedBy,
         replacedAt: now,
@@ -1145,6 +1157,81 @@ export class PgStorage implements IStorage {
       .returning({ id: patientAllergies.id });
     if (!rows.length) throw new StorageConflict("Bu yozuv allaqachon faol emas");
     return (await this.getAllergy(id))!;
+  }
+
+  // ---------------------------------------------------------------- MKB-10
+
+  async searchIcd(query: IcdQuery): Promise<IcdEntry[]> {
+    const q = query.q.trim();
+    const parts = [];
+    if (!query.all) parts.push(eq(icd10.selectable, true));
+    const code = normalizeIcdCode(q);
+    if (/^[A-Z]\d/.test(code)) {
+      // A code, or the start of one: "I1" finds I10–I15 and their subdivisions.
+      parts.push(sql`${icd10.code} LIKE ${code.replace(/[%_]/g, "") + "%"}`);
+    } else if (q) {
+      // Every word must appear, in the Russian or the Uzbek name.
+      for (const word of q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6)) {
+        const like = `%${word.replace(/[%_]/g, "")}%`;
+        parts.push(sql`(${icd10.nameRu} ILIKE ${like} OR coalesce(${icd10.nameUz}, '') ILIKE ${like})`);
+      }
+    }
+    const rows = await db
+      .select()
+      .from(icd10)
+      .where(parts.length ? and(...parts) : undefined)
+      .orderBy(asc(icd10.sortOrder))
+      .limit(query.limit);
+    return rows.map(mapIcd);
+  }
+
+  async getIcd(codes: string[]): Promise<IcdEntry[]> {
+    if (codes.length === 0) return [];
+    const rows = await db.select().from(icd10).where(inArray(icd10.code, codes));
+    return rows.map(mapIcd);
+  }
+
+  async icdStats(): Promise<IcdStats> {
+    const [r] = await db
+      .select({
+        total: sql<number>`count(*)::int`,
+        selectable: sql<number>`count(*) FILTER (WHERE ${icd10.selectable})::int`,
+        withUzbek: sql<number>`count(*) FILTER (WHERE ${icd10.nameUz} IS NOT NULL AND ${icd10.nameUz} <> '')::int`,
+      })
+      .from(icd10);
+    return { total: r?.total ?? 0, selectable: r?.selectable ?? 0, withUzbek: r?.withUzbek ?? 0, source: ICD_SOURCE };
+  }
+
+  async setIcdUzName(code: string, nameUz: string | null, actor: Actor): Promise<IcdEntry | undefined> {
+    const [row] = await db
+      .update(icd10)
+      .set({ nameUz, updatedAt: new Date().toISOString(), updatedBy: actor.id })
+      .where(eq(icd10.code, code))
+      .returning();
+    return row && mapIcd(row);
+  }
+
+  async importIcdUzNames(names: Map<string, string>, actor: Actor): Promise<{ updated: number; unknown: string[] }> {
+    const codes = [...names.keys()];
+    if (codes.length === 0) return { updated: 0, unknown: [] };
+    return db.transaction(async (tx) => {
+      const known = new Set<string>();
+      for (let i = 0; i < codes.length; i += 1000) {
+        const slice = codes.slice(i, i + 1000);
+        for (const r of await tx.select({ code: icd10.code }).from(icd10).where(inArray(icd10.code, slice))) known.add(r.code);
+      }
+      const now = new Date().toISOString();
+      const pairs = codes.filter((c) => known.has(c));
+      // One statement per thousand names: a VALUES list joined onto the table.
+      for (let i = 0; i < pairs.length; i += 1000) {
+        const chunk = pairs.slice(i, i + 1000);
+        await tx.execute(sql`
+          UPDATE icd10 AS t SET name_uz = v.name, updated_at = ${now}, updated_by = ${actor.id}
+          FROM (VALUES ${sql.join(chunk.map((c) => sql`(${c}, ${names.get(c)!})`), sql`, `)}) AS v(code, name)
+          WHERE t.code = v.code`);
+      }
+      return { updated: pairs.length, unknown: codes.filter((c) => !known.has(c)) };
+    });
   }
 
   // -------------------------------------------------------- notifications

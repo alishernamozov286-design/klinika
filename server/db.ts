@@ -43,6 +43,8 @@ export type DbShape = {
   patientAllergies: Omit<PatientAllergy, "createdByName">[];
   referrals: Referral[];
   notifications: (AppNotification & { dedupeKey: string | null })[];
+  /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
+  icdUzNames: Record<string, string>;
   security: SecuritySettings | null;
   patients: Patient[];
   patientContacts: PatientContact[];
@@ -85,6 +87,7 @@ export const emptyDb = (): DbShape => ({
   patientAllergies: [],
   referrals: [],
   notifications: [],
+  icdUzNames: {},
   security: null,
   patients: [],
   patientContacts: [],

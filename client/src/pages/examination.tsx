@@ -20,6 +20,8 @@ import {
   Stethoscope,
 } from "lucide-react";
 import {
+  RECORD_CODE_FIELDS,
+  RECORD_CODE_FOR,
   RECORD_FIELDS,
   RECORD_FIELD_LABELS,
   type ExaminationData,
@@ -27,7 +29,9 @@ import {
   type MedicalRecordWithDetails,
   type RecordField,
 } from "@shared/schema";
-import { changedFields, signProblem } from "@shared/medical-record";
+import { changedFields, fieldList, signProblem, type AnyRecordField } from "@shared/medical-record";
+import { icdDisplayName } from "@shared/icd10";
+import { IcdPicker } from "@/components/icd-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -61,7 +65,8 @@ import { useToast } from "@/hooks/use-toast";
 import { ageGender, formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Fields = Record<RecordField, string>;
+/** The six texts and the two optional MKB-10 codes ("" when none). */
+type Fields = Record<AnyRecordField, string>;
 
 const PLACEHOLDERS: Record<RecordField, string> = {
   complaints: "Bemor nimadan shikoyat qiladi, qachondan beri…",
@@ -81,8 +86,8 @@ const ROWS: Record<RecordField, number> = {
   recommendations: 4,
 };
 
-const toFields = (r: Partial<Record<RecordField, string | null>> | null | undefined): Fields =>
-  Object.fromEntries(RECORD_FIELDS.map((f) => [f, r?.[f] ?? ""])) as Fields;
+const toFields = (r: Partial<Record<AnyRecordField, string | null>> | null | undefined): Fields =>
+  Object.fromEntries([...RECORD_FIELDS, ...RECORD_CODE_FIELDS].map((f) => [f, r?.[f] ?? ""])) as Fields;
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error" | "conflict";
 
@@ -553,6 +558,9 @@ function DraftForm({
   );
 }
 
+const isDiagnosis = (f: RecordField): f is "preliminaryDiagnosis" | "finalDiagnosis" =>
+  f === "preliminaryDiagnosis" || f === "finalDiagnosis";
+
 /** The form's layout: one field per row, the two diagnoses side by side. */
 const LAYOUT: RecordField[][] = [
   ["complaints"],
@@ -570,18 +578,24 @@ function FieldGrid({
   highlight = [],
 }: {
   fields: Fields;
-  onChange: (field: RecordField, value: string) => void;
+  onChange: (field: AnyRecordField, value: string) => void;
   disabled?: boolean;
   autoFocusFirst?: boolean;
   /** Fields changed against the signed text — outlined while correcting. */
-  highlight?: RecordField[];
+  highlight?: AnyRecordField[];
 }) {
   return (
     <div className="space-y-5">
       {LAYOUT.map((row) => (
         <div key={row.join()} className={cn(row.length > 1 && "grid gap-5 sm:grid-cols-2")}>
           {row.map((f) => (
-            <div key={f} className={cn(highlight.includes(f) && "rounded-xl ring-2 ring-amber-500/30 ring-offset-2 ring-offset-background")}>
+            <div
+              key={f}
+              className={cn(
+                (highlight.includes(f) || (isDiagnosis(f) && highlight.includes(RECORD_CODE_FOR[f]))) &&
+                  "rounded-xl ring-2 ring-amber-500/30 ring-offset-2 ring-offset-background",
+              )}
+            >
               <FieldBox
                 field={f}
                 value={fields[f]}
@@ -589,6 +603,20 @@ function FieldGrid({
                 disabled={disabled}
                 autoFocus={autoFocusFirst && f === "complaints"}
               />
+              {isDiagnosis(f) && (
+                <div className="mt-2">
+                  <IcdPicker
+                    value={fields[RECORD_CODE_FOR[f]] || null}
+                    disabled={disabled}
+                    testId={`icd-${f}`}
+                    onChange={(code, entry) => {
+                      onChange(RECORD_CODE_FOR[f], code ?? "");
+                      // A code chosen into an empty diagnosis writes its name there too.
+                      if (code && entry && !fields[f].trim()) onChange(f, icdDisplayName(entry));
+                    }}
+                  />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -710,7 +738,7 @@ function AmendForm({ record, examKey, onDone }: { record: MedicalRecordWithDetai
       </div>
       <div className="mt-6 flex flex-col gap-3 border-t pt-5 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted-foreground">
-          {changed.length === 0 ? "Hali o'zgarish yo'q" : problem ?? `O'zgargan: ${changed.map((f) => RECORD_FIELD_LABELS[f]).join(", ")}`}
+          {changed.length === 0 ? "Hali o'zgarish yo'q" : problem ?? `O'zgargan: ${fieldList(changed)}`}
         </p>
         <div className="flex gap-2">
           <Button variant="ghost" onClick={onDone}>

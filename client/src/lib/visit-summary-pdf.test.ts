@@ -17,6 +17,8 @@ function summary(overrides: Partial<VisitSummary["record"]> = {}): VisitSummary 
     examination: "AQB 140/90",
     preliminaryDiagnosis: "Gipertoniya?",
     finalDiagnosis: "Arterial gipertenziya, 1-daraja",
+    preliminaryDiagnosisCode: null,
+    finalDiagnosisCode: "I10",
     recommendations: "Tuzni kamaytirish, 2 haftadan keyin qayta ko'rik",
     signedAt: "2026-11-06T10:30:00.000Z",
     signedBy: "u1",
@@ -39,6 +41,7 @@ function summary(overrides: Partial<VisitSummary["record"]> = {}): VisitSummary 
   } as VisitSummary["record"];
   return {
     record,
+    icd: [{ code: "I10", nameRu: "Эссенциальная [первичная] гипертензия", nameUz: null }],
     appointment: null,
     allergies: [{ id: "al1", patientId: "p1", allergen: "Penitsillin", reaction: "toshma", isActive: true } as VisitSummary["allergies"][number]],
     referrals: [

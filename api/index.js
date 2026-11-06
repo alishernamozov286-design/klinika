@@ -501,6 +501,9 @@ __export(schema_exports, {
   ORDER_STATUS_LABELS: () => ORDER_STATUS_LABELS,
   PAYMENT_METHODS: () => PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS: () => PAYMENT_METHOD_LABELS,
+  RECORD_CODE_FIELDS: () => RECORD_CODE_FIELDS,
+  RECORD_CODE_FOR: () => RECORD_CODE_FOR,
+  RECORD_CODE_LABELS: () => RECORD_CODE_LABELS,
   RECORD_FIELDS: () => RECORD_FIELDS,
   RECORD_FIELD_LABELS: () => RECORD_FIELD_LABELS,
   RECORD_STATUSES: () => RECORD_STATUSES,
@@ -539,6 +542,8 @@ __export(schema_exports, {
   doctors: () => doctors,
   emergencyContactSchema: () => emergencyContactSchema,
   expenses: () => expenses,
+  icd10: () => icd10,
+  importIcdUzSchema: () => importIcdUzSchema,
   insertAllergySchema: () => insertAllergySchema,
   insertDepartmentSchema: () => insertDepartmentSchema,
   insertDoctorSchema: () => insertDoctorSchema,
@@ -587,6 +592,7 @@ __export(schema_exports, {
   updateDepartmentSchema: () => updateDepartmentSchema,
   updateDoctorSchema: () => updateDoctorSchema,
   updateExpenseSchema: () => updateExpenseSchema,
+  updateIcdUzSchema: () => updateIcdUzSchema,
   updateOrderSchema: () => updateOrderSchema,
   updateRoleSchema: () => updateRoleSchema,
   updateSampleSchema: () => updateSampleSchema,
@@ -637,7 +643,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -723,6 +729,15 @@ var init_schema = __esm({
       "finalDiagnosis",
       "recommendations"
     ];
+    RECORD_CODE_FIELDS = ["preliminaryDiagnosisCode", "finalDiagnosisCode"];
+    RECORD_CODE_FOR = {
+      preliminaryDiagnosis: "preliminaryDiagnosisCode",
+      finalDiagnosis: "finalDiagnosisCode"
+    };
+    RECORD_CODE_LABELS = {
+      preliminaryDiagnosisCode: "Dastlabki tashxis MKB-10 kodi",
+      finalDiagnosisCode: "Yakuniy tashxis MKB-10 kodi"
+    };
     RECORD_FIELD_LABELS = {
       complaints: "Shikoyatlar",
       anamnesis: "Anamnez",
@@ -920,6 +935,9 @@ var init_schema = __esm({
         preliminaryDiagnosis: text("preliminary_diagnosis"),
         finalDiagnosis: text("final_diagnosis"),
         recommendations: text("recommendations"),
+        /** MKB-10 codes for the two diagnoses (B3.4) — optional; the text stays the diagnosis. */
+        preliminaryDiagnosisCode: varchar("preliminary_diagnosis_code"),
+        finalDiagnosisCode: varchar("final_diagnosis_code"),
         signedAt: isoTimestamp("signed_at"),
         signedBy: varchar("signed_by"),
         /** The last correction: when, and why. */
@@ -948,6 +966,8 @@ var init_schema = __esm({
         preliminaryDiagnosis: text("preliminary_diagnosis"),
         finalDiagnosis: text("final_diagnosis"),
         recommendations: text("recommendations"),
+        preliminaryDiagnosisCode: varchar("preliminary_diagnosis_code"),
+        finalDiagnosisCode: varchar("final_diagnosis_code"),
         signedAt: isoTimestamp("signed_at"),
         signedBy: varchar("signed_by"),
         /** Who replaced this version, when, and why. */
@@ -991,6 +1011,24 @@ var init_schema = __esm({
         appointmentIdx: index("IDX_referrals_appointment").on(t.appointmentId),
         statusIdx: index("IDX_referrals_status_kind").on(t.status, t.kind)
       })
+    );
+    icd10 = pgTable(
+      "icd10",
+      {
+        code: varchar("code").primaryKey(),
+        kind: text("kind").notNull(),
+        nameRu: text("name_ru").notNull(),
+        nameUz: text("name_uz"),
+        chapter: varchar("chapter").notNull(),
+        block: varchar("block"),
+        parentCode: varchar("parent_code"),
+        isActual: boolean("is_actual").notNull().default(true),
+        selectable: boolean("selectable").notNull().default(false),
+        sortOrder: integer("sort_order").notNull(),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by")
+      },
+      (t) => ({ sortIdx: index("IDX_icd10_sort").on(t.sortOrder) })
     );
     notifications = pgTable(
       "notifications",
@@ -1512,13 +1550,16 @@ var init_schema = __esm({
       reason: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null)
     });
     recordText = z.string().max(4e3, "Matn juda uzun (ko'pi bilan 4000 belgi)").nullish().transform((v) => v?.trim() ? v.trim() : null);
+    icdCode = z.string().trim().toUpperCase().nullish().transform((v) => v || null).refine((v) => v === null || /^[A-Z]\d\d(\.\d{1,2})?$/.test(v), "MKB-10 kodi noto'g'ri (masalan: I10, E11.9)");
     recordFieldsSchema = z.object({
       complaints: recordText,
       anamnesis: recordText,
       examination: recordText,
       preliminaryDiagnosis: recordText,
       finalDiagnosis: recordText,
-      recommendations: recordText
+      recommendations: recordText,
+      preliminaryDiagnosisCode: icdCode,
+      finalDiagnosisCode: icdCode
     });
     saveRecordSchema = recordFieldsSchema.partial().extend({
       revision: z.number().int().min(0)
@@ -1566,6 +1607,12 @@ var init_schema = __esm({
       flag: z.enum(RESULT_FLAGS).nullish().transform((v) => v ?? null),
       notes: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null),
       reason: z.string().trim().min(5, "Tuzatish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun")
+    });
+    updateIcdUzSchema = z.object({
+      nameUz: z.string().trim().max(400, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    importIcdUzSchema = z.object({
+      csv: z.string().min(1, "Fayl bo'sh").max(5e6, "Fayl juda katta")
     });
     removeAllergySchema = z.object({
       reason: z.string().trim().min(3, "Sababini yozing").max(200, "Juda uzun")
@@ -2183,6 +2230,113 @@ var init_referral = __esm({
   }
 });
 
+// shared/icd10.ts
+function normalizeIcdCode(input) {
+  const map = { \u0410: "A", \u0412: "B", \u0415: "E", \u041A: "K", \u041C: "M", \u041D: "H", \u041E: "O", \u0420: "P", \u0421: "C", \u0422: "T", \u0425: "X" };
+  return input.trim().toUpperCase().replace(/[АВЕКМНОРСТХ]/g, (c) => map[c] ?? c).replace(",", ".");
+}
+function kindOf(code, hasParent) {
+  if (!hasParent) return "chapter";
+  if (code.includes("-")) return "block";
+  return code.includes(".") ? "subcategory" : "category";
+}
+function splitCsvLine(line, sep) {
+  const out = [];
+  let cur = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else cur += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === sep) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+function parseNsiIcd10(text2) {
+  const lines = text2.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
+  const header = splitCsvLine(lines[0], ";").map((h) => h.trim().toUpperCase());
+  const col = (name) => {
+    const i = header.indexOf(name);
+    if (i < 0) throw new Error(`MKB-10 faylida "${name}" ustuni yo'q`);
+    return i;
+  };
+  const [iId, iCode, iName, iParent, iActual] = ["ID", "MKB_CODE", "MKB_NAME", "ID_PARENT", "ACTUAL"].map(col);
+  const raw = lines.slice(1).map((l) => splitCsvLine(l, ";"));
+  const byId = new Map(raw.map((r) => [r[iId], r]));
+  const chapterOf = (r) => {
+    let cur = r;
+    for (let guard = 0; cur[iParent] && guard < 8; guard++) cur = byId.get(cur[iParent]) ?? cur;
+    return cur;
+  };
+  return raw.map((r, index2) => {
+    const code = r[iCode].trim();
+    const parent = r[iParent] ? byId.get(r[iParent]) : void 0;
+    const kind = kindOf(code, Boolean(r[iParent]));
+    const chapterRow = chapterOf(r);
+    let blockCode = null;
+    if (kind === "block") blockCode = code;
+    else if (kind !== "chapter") {
+      let cur = parent;
+      for (let guard = 0; cur && guard < 6; guard++) {
+        if (cur[iCode].includes("-")) {
+          blockCode = cur[iCode].trim();
+          break;
+        }
+        cur = cur[iParent] ? byId.get(cur[iParent]) : void 0;
+      }
+    }
+    const isActual = r[iActual].trim() === "1";
+    return {
+      code,
+      kind,
+      nameRu: r[iName].trim(),
+      chapter: chapterRow[iCode].trim(),
+      block: blockCode,
+      parentCode: parent ? parent[iCode].trim() : null,
+      isActual,
+      selectable: isActual && (kind === "category" || kind === "subcategory"),
+      sortOrder: index2 + 1
+    };
+  });
+}
+function parseUzNames(text2) {
+  const lines = text2.replace(/^﻿/, "").split(/\r?\n/);
+  const names = /* @__PURE__ */ new Map();
+  const rejected = [];
+  lines.forEach((line, i) => {
+    if (!line.trim()) return;
+    const sep = line.includes(";") ? ";" : ",";
+    const [rawCode, ...rest] = splitCsvLine(line, sep);
+    const code = normalizeIcdCode(rawCode ?? "");
+    const name = rest.join(sep).trim();
+    if (i === 0 && !isIcdCode(code) && !code.includes("-")) return;
+    if (!isIcdCode(code) && !/^[A-Z]\d\d-[A-Z]\d\d$/.test(code) && !/^[IVXL]+$/.test(code) || !name) {
+      rejected.push(i + 1);
+      return;
+    }
+    names.set(code, name.slice(0, 400));
+  });
+  return { names, rejected };
+}
+var ICD_SOURCE, ICD_CODE_RE, isIcdCode;
+var init_icd10 = __esm({
+  "shared/icd10.ts"() {
+    "use strict";
+    ICD_SOURCE = "Rossiya SSV NSI, OID 1.2.643.5.1.13.13.11.1005, v2.27";
+    ICD_CODE_RE = /^[A-Z]\d\d(\.\d{1,2})?$/;
+    isIcdCode = (code) => ICD_CODE_RE.test(code);
+  }
+});
+
 // shared/lab-verification.ts
 function lineState(l) {
   if (l.verifiedAt) return "verified";
@@ -2480,7 +2634,7 @@ import { alias } from "drizzle-orm/pg-core";
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapPayment, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
+var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -2488,6 +2642,7 @@ var init_storage_pg = __esm({
     init_schema();
     init_sample();
     init_referral();
+    init_icd10();
     init_lab_rules();
     init_patient_links();
     init_ledger();
@@ -2546,6 +2701,10 @@ var init_storage_pg = __esm({
       return pub;
     };
     dayExpr = sql2`(${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date`;
+    mapIcd = (row) => {
+      const { updatedBy: _by, ...rest } = row;
+      return { ...rest, kind: row.kind, updatedAt: iso(row.updatedAt) };
+    };
     mapPayment = (row) => ({
       ...row,
       method: row.method,
@@ -3115,6 +3274,8 @@ var init_storage_pg = __esm({
             preliminaryDiagnosis: current.preliminaryDiagnosis,
             finalDiagnosis: current.finalDiagnosis,
             recommendations: current.recommendations,
+            preliminaryDiagnosisCode: current.preliminaryDiagnosisCode,
+            finalDiagnosisCode: current.finalDiagnosisCode,
             signedAt: current.signedAt,
             signedBy: current.signedBy,
             replacedAt: now,
@@ -3174,6 +3335,61 @@ var init_storage_pg = __esm({
         const rows = await db.update(patientAllergies).set({ isActive: false, removedAt: (/* @__PURE__ */ new Date()).toISOString(), removedBy: actor.id, removeReason: reason }).where(and(eq(patientAllergies.id, id), eq(patientAllergies.isActive, true))).returning({ id: patientAllergies.id });
         if (!rows.length) throw new StorageConflict("Bu yozuv allaqachon faol emas");
         return await this.getAllergy(id);
+      }
+      // ---------------------------------------------------------------- MKB-10
+      async searchIcd(query) {
+        const q = query.q.trim();
+        const parts = [];
+        if (!query.all) parts.push(eq(icd10.selectable, true));
+        const code = normalizeIcdCode(q);
+        if (/^[A-Z]\d/.test(code)) {
+          parts.push(sql2`${icd10.code} LIKE ${code.replace(/[%_]/g, "") + "%"}`);
+        } else if (q) {
+          for (const word of q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6)) {
+            const like = `%${word.replace(/[%_]/g, "")}%`;
+            parts.push(sql2`(${icd10.nameRu} ILIKE ${like} OR coalesce(${icd10.nameUz}, '') ILIKE ${like})`);
+          }
+        }
+        const rows = await db.select().from(icd10).where(parts.length ? and(...parts) : void 0).orderBy(asc(icd10.sortOrder)).limit(query.limit);
+        return rows.map(mapIcd);
+      }
+      async getIcd(codes) {
+        if (codes.length === 0) return [];
+        const rows = await db.select().from(icd10).where(inArray(icd10.code, codes));
+        return rows.map(mapIcd);
+      }
+      async icdStats() {
+        const [r] = await db.select({
+          total: sql2`count(*)::int`,
+          selectable: sql2`count(*) FILTER (WHERE ${icd10.selectable})::int`,
+          withUzbek: sql2`count(*) FILTER (WHERE ${icd10.nameUz} IS NOT NULL AND ${icd10.nameUz} <> '')::int`
+        }).from(icd10);
+        return { total: r?.total ?? 0, selectable: r?.selectable ?? 0, withUzbek: r?.withUzbek ?? 0, source: ICD_SOURCE };
+      }
+      async setIcdUzName(code, nameUz, actor) {
+        const [row] = await db.update(icd10).set({ nameUz, updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id }).where(eq(icd10.code, code)).returning();
+        return row && mapIcd(row);
+      }
+      async importIcdUzNames(names, actor) {
+        const codes = [...names.keys()];
+        if (codes.length === 0) return { updated: 0, unknown: [] };
+        return db.transaction(async (tx) => {
+          const known = /* @__PURE__ */ new Set();
+          for (let i = 0; i < codes.length; i += 1e3) {
+            const slice = codes.slice(i, i + 1e3);
+            for (const r of await tx.select({ code: icd10.code }).from(icd10).where(inArray(icd10.code, slice))) known.add(r.code);
+          }
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          const pairs = codes.filter((c) => known.has(c));
+          for (let i = 0; i < pairs.length; i += 1e3) {
+            const chunk = pairs.slice(i, i + 1e3);
+            await tx.execute(sql2`
+          UPDATE icd10 AS t SET name_uz = v.name, updated_at = ${now}, updated_by = ${actor.id}
+          FROM (VALUES ${sql2.join(chunk.map((c) => sql2`(${c}, ${names.get(c)})`), sql2`, `)}) AS v(code, name)
+          WHERE t.code = v.code`);
+          }
+          return { updated: pairs.length, unknown: codes.filter((c) => !known.has(c)) };
+        });
       }
       // -------------------------------------------------------- notifications
       async createNotification(input) {
@@ -4692,6 +4908,7 @@ var init_db = __esm({
       patientAllergies: [],
       referrals: [],
       notifications: [],
+      icdUzNames: {},
       security: null,
       patients: [],
       patientContacts: [],
@@ -4726,6 +4943,8 @@ __export(storage_file_exports, {
   FileStorage: () => FileStorage
 });
 import { randomUUID } from "crypto";
+import { readFileSync } from "fs";
+import path2 from "path";
 function contains(haystack, needle) {
   return (haystack ?? "").toLowerCase().includes(needle);
 }
@@ -4737,7 +4956,7 @@ function asNumberSearch(search) {
   const match = search.trim().match(/^#?\s*(\d{1,9})$/);
   return match ? Number(match[1]) : null;
 }
-var UNVERIFIED, UNVOIDED, digitsOf, isWaiting, isReview, isReady, copyRole, normalizePatient, normalizeExpense, FileStorage;
+var icdCache, UNVERIFIED, UNVOIDED, digitsOf, isWaiting, isReview, isReady, copyRole, normalizePatient, normalizeExpense, FileStorage;
 var init_storage_file = __esm({
   "server/storage-file.ts"() {
     "use strict";
@@ -4748,6 +4967,7 @@ var init_storage_file = __esm({
     init_sample();
     init_patient_links();
     init_referral();
+    init_icd10();
     init_lab_verification();
     init_lab_rules();
     init_ledger();
@@ -4755,6 +4975,7 @@ var init_storage_file = __esm({
     init_password();
     init_permissions();
     init_storage_types();
+    icdCache = null;
     UNVERIFIED = {
       verifiedAt: null,
       verifiedBy: null,
@@ -5287,6 +5508,8 @@ var init_storage_file = __esm({
           preliminaryDiagnosis: null,
           finalDiagnosis: null,
           recommendations: null,
+          preliminaryDiagnosisCode: null,
+          finalDiagnosisCode: null,
           signedAt: null,
           signedBy: null,
           amendedAt: null,
@@ -5334,6 +5557,8 @@ var init_storage_file = __esm({
           preliminaryDiagnosis: r.preliminaryDiagnosis,
           finalDiagnosis: r.finalDiagnosis,
           recommendations: r.recommendations,
+          preliminaryDiagnosisCode: r.preliminaryDiagnosisCode ?? null,
+          finalDiagnosisCode: r.finalDiagnosisCode ?? null,
           signedAt: r.signedAt,
           signedBy: r.signedBy,
           replacedAt: now,
@@ -5391,6 +5616,74 @@ var init_storage_file = __esm({
         Object.assign(a, { isActive: false, removedAt: (/* @__PURE__ */ new Date()).toISOString(), removedBy: actor.id, removeReason: reason });
         await this.persist();
         return this.allergyDetails(a);
+      }
+      // ---------------------------------------------------------------- MKB-10
+      /** The catalogue file, parsed once per process; Uzbek names come from the store. */
+      icdRows() {
+        if (!icdCache) {
+          const file = path2.resolve(import.meta.dirname, "..", "data", "icd10", "mkb10-nsi-2.27.csv");
+          icdCache = parseNsiIcd10(readFileSync(file, "utf8"));
+        }
+        return icdCache;
+      }
+      icdEntry(r) {
+        const uz = this.db.icdUzNames?.[r.code];
+        return { ...r, nameUz: uz ?? null, updatedAt: null };
+      }
+      async searchIcd(query) {
+        const q = query.q.trim();
+        const code = normalizeIcdCode(q);
+        const words = /^[A-Z]\d/.test(code) ? [] : q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
+        const out = [];
+        for (const r of this.icdRows()) {
+          if (!query.all && !r.selectable) continue;
+          if (/^[A-Z]\d/.test(code) && !r.code.startsWith(code)) continue;
+          if (words.length) {
+            const hay = `${r.nameRu} ${this.db.icdUzNames?.[r.code] ?? ""}`.toLowerCase();
+            if (!words.every((w) => hay.includes(w))) continue;
+          }
+          out.push(this.icdEntry(r));
+          if (out.length >= query.limit) break;
+        }
+        return out;
+      }
+      async getIcd(codes) {
+        const want = new Set(codes);
+        return this.icdRows().filter((r) => want.has(r.code)).map((r) => this.icdEntry(r));
+      }
+      async icdStats() {
+        const rows = this.icdRows();
+        return {
+          total: rows.length,
+          selectable: rows.filter((r) => r.selectable).length,
+          withUzbek: Object.values(this.db.icdUzNames ?? {}).filter((v) => v.trim()).length,
+          source: ICD_SOURCE
+        };
+      }
+      async setIcdUzName(code, nameUz, _actor) {
+        const row = this.icdRows().find((r) => r.code === code);
+        if (!row) return void 0;
+        this.db.icdUzNames ??= {};
+        if (nameUz) this.db.icdUzNames[code] = nameUz;
+        else delete this.db.icdUzNames[code];
+        await this.persist();
+        return this.icdEntry(row);
+      }
+      async importIcdUzNames(names, _actor) {
+        const known = new Set(this.icdRows().map((r) => r.code));
+        this.db.icdUzNames ??= {};
+        let updated = 0;
+        const unknown = [];
+        for (const [code, name] of names) {
+          if (!known.has(code)) {
+            unknown.push(code);
+            continue;
+          }
+          this.db.icdUzNames[code] = name;
+          updated++;
+        }
+        if (updated) await this.persist();
+        return { updated, unknown };
       }
       // -------------------------------------------------------- notifications
       async createNotification(input) {
@@ -8235,34 +8528,40 @@ async function notifyOrderingDoctor(order, event) {
 // server/routes-medical.ts
 init_schema();
 init_referral();
+init_icd10();
 init_lab_verification();
 
 // shared/medical-record.ts
 init_schema();
+var ALL_FIELDS = [...RECORD_FIELDS, ...RECORD_CODE_FIELDS];
 var norm = (v) => (v ?? "").trim();
 function signProblem(fields) {
   if (!norm(fields.complaints)) return "Shikoyatlarni kiriting";
-  if (!norm(fields.preliminaryDiagnosis) && !norm(fields.finalDiagnosis)) {
+  if (!norm(fields.preliminaryDiagnosis) && !norm(fields.finalDiagnosis) && !fields.preliminaryDiagnosisCode && !fields.finalDiagnosisCode) {
     return "Dastlabki yoki yakuniy tashxisni kiriting";
   }
   return null;
 }
 function changedFields(before, after) {
-  return RECORD_FIELDS.filter((f) => norm(before[f]) !== norm(after[f]));
+  return ALL_FIELDS.filter((f) => norm(before[f]) !== norm(after[f]));
 }
-var fieldList = (fields) => fields.map((f) => RECORD_FIELD_LABELS[f]).join(", ");
+var labelOf = (f) => RECORD_FIELD_LABELS[f] ?? RECORD_CODE_LABELS[f];
+var fieldList = (fields) => fields.map(labelOf).join(", ");
 function diagnosisHistory(records) {
   const out = [];
   for (const r of records) {
     if (r.status !== "signed") continue;
     const base = { recordId: r.id, date: r.date, doctorName: r.doctorName, specialty: r.specialty };
-    if (norm(r.finalDiagnosis)) out.push({ ...base, kind: "final", text: norm(r.finalDiagnosis) });
-    else if (norm(r.preliminaryDiagnosis)) out.push({ ...base, kind: "preliminary", text: norm(r.preliminaryDiagnosis) });
+    if (norm(r.finalDiagnosis) || r.finalDiagnosisCode) {
+      out.push({ ...base, kind: "final", text: norm(r.finalDiagnosis), code: r.finalDiagnosisCode ?? null });
+    } else if (norm(r.preliminaryDiagnosis) || r.preliminaryDiagnosisCode) {
+      out.push({ ...base, kind: "preliminary", text: norm(r.preliminaryDiagnosis), code: r.preliminaryDiagnosisCode ?? null });
+    }
   }
   return out.sort((a, b) => b.date.localeCompare(a.date));
 }
 function pickFields(source) {
-  return Object.fromEntries(RECORD_FIELDS.map((f) => [f, source[f] ?? null]));
+  return Object.fromEntries(ALL_FIELDS.map((f) => [f, source[f] ?? null]));
 }
 
 // server/routes-medical.ts
@@ -8282,7 +8581,66 @@ function shouldLogDraft(req, recordId) {
   return true;
 }
 var visibleTo = (req) => (r) => r.status === "signed" || isAuthor(req, r);
+async function icdCodeProblem(fields, before) {
+  const wanted = RECORD_CODE_FIELDS.map((f) => fields[f]).filter(
+    (c, i) => Boolean(c) && c !== before[RECORD_CODE_FIELDS[i]]
+  );
+  if (wanted.length === 0) return null;
+  const found = await storage.getIcd(wanted).catch((e) => emptyIfMissing(e, []));
+  const ok = new Set(found.filter((r) => r.selectable).map((r) => r.code));
+  const bad = wanted.filter((c) => !ok.has(c));
+  return bad.length ? `MKB-10 katalogida tanlab bo'lmaydigan kod: ${bad.join(", ")}` : null;
+}
 function registerMedicalRoutes(app) {
+  app.get(
+    "/api/icd10",
+    requireAuth,
+    handle(async (req, res) => {
+      const q = stringParam(req.query.q) ?? "";
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
+      res.json(await storage.searchIcd({ q, limit, all: req.query.all === "1" }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/icd10/lookup",
+    requireAuth,
+    handle(async (req, res) => {
+      const codes = (stringParam(req.query.codes) ?? "").split(",").map((c) => normalizeIcdCode(c)).filter(Boolean).slice(0, 50);
+      res.json(await storage.getIcd(codes).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/icd10/stats",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.json(await storage.icdStats().catch((e) => emptyIfMissing(e, { total: 0, selectable: 0, withUzbek: 0, source: "" })));
+    })
+  );
+  app.patch(
+    "/api/icd10/:code",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const { nameUz } = updateIcdUzSchema.parse(req.body);
+      const code = normalizeIcdCode(req.params.code);
+      const before = (await storage.getIcd([code]))[0];
+      if (!before) return res.status(404).json({ message: "Kod katalogda yo'q" });
+      const row = await storage.setIcdUzName(code, nameUz, actorOf(req));
+      await audit(req, "update", "icd10", code, `MKB-10 ${code} o'zbekcha nomi: ${before.nameUz ?? "\u2014"} \u2192 ${nameUz ?? "\u2014"}`);
+      res.json(row);
+    })
+  );
+  app.post(
+    "/api/icd10/import-uz",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const { csv } = importIcdUzSchema.parse(req.body);
+      const { names, rejected } = parseUzNames(csv);
+      if (names.size === 0) return res.status(400).json({ message: "Faylda o'qiladigan qator topilmadi (kerakli format: kod;o'zbekcha nom)" });
+      const { updated, unknown } = await storage.importIcdUzNames(names, actorOf(req));
+      await audit(req, "update", "icd10", null, `MKB-10 o'zbekcha nomlari import qilindi: ${updated} ta kod`);
+      res.json({ updated, unknown: unknown.slice(0, 50), unknownCount: unknown.length, rejectedLines: rejected.slice(0, 50), rejectedCount: rejected.length });
+    })
+  );
   app.get(
     "/api/appointments/:id/examination",
     requirePermission("records.read", "appointments.serve"),
@@ -8340,6 +8698,8 @@ function registerMedicalRoutes(app) {
       const { revision, ...fields } = saveRecordSchema.parse(req.body);
       const before = await storage.getRecord(req.params.id);
       if (!before || !isAuthor(req, before)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      const codeError = await icdCodeProblem(fields, before);
+      if (codeError) return res.status(400).json({ message: codeError });
       if (before.status !== "draft") {
         return res.status(409).json({ message: `Yozuv tasdiqlangan. O'zgartirish uchun "Tuzatish kiritish"dan foydalaning` });
       }
@@ -8379,6 +8739,8 @@ function registerMedicalRoutes(app) {
       const { revision, reason, ...fields } = amendRecordSchema.parse(req.body);
       const before = await storage.getRecord(req.params.id);
       if (!before || !isAuthor(req, before)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      const codeError = await icdCodeProblem(fields, before);
+      if (codeError) return res.status(400).json({ message: codeError });
       if (before.status !== "signed") return res.status(409).json({ message: "Qoralamani tuzatish shart emas \u2014 uni to'g'ridan-to'g'ri tahrirlang" });
       const changed = changedFields(before, fields);
       if (!changed.length) return res.status(400).json({ message: "Matnda o'zgarish yo'q" });
@@ -8413,14 +8775,17 @@ function registerMedicalRoutes(app) {
       if (record.status !== "signed") {
         return res.status(409).json({ message: "Xulosa faqat tasdiqlangan ko'rik yozuvidan chiqariladi" });
       }
-      const [appointment, allergies, referrals2, clinic] = await Promise.all([
+      const codes = RECORD_CODE_FIELDS.map((f) => record[f]).filter((c) => Boolean(c));
+      const [appointment, allergies, referrals2, clinic, icd] = await Promise.all([
         storage.getAppointment(record.appointmentId),
         storage.listAllergies(record.patientId).catch((e) => emptyIfMissing(e, [])),
         storage.listReferrals({ appointmentId: record.appointmentId }).catch((e) => emptyIfMissing(e, [])),
-        storage.getSettings()
+        storage.getSettings(),
+        storage.getIcd(codes).catch((e) => emptyIfMissing(e, []))
       ]);
       const summary = {
         record,
+        icd: icd.map((r) => ({ code: r.code, nameRu: r.nameRu, nameUz: r.nameUz })),
         appointment: appointment ?? null,
         allergies: allergies.filter((a) => a.isActive),
         // A cancelled referral is not part of what the patient was told to do.
@@ -10394,7 +10759,7 @@ async function createApp() {
   app.use(express.urlencoded({ extended: false }));
   app.use((req, res, next) => {
     const start = Date.now();
-    const path2 = req.path;
+    const path3 = req.path;
     let capturedJsonResponse;
     const originalResJson = res.json;
     res.json = function(bodyJson, ...args) {
@@ -10402,8 +10767,8 @@ async function createApp() {
       return originalResJson.apply(res, [bodyJson, ...args]);
     };
     res.on("finish", () => {
-      if (!path2.startsWith("/api")) return;
-      let logLine = `${req.method} ${path2} ${res.statusCode} in ${Date.now() - start}ms`;
+      if (!path3.startsWith("/api")) return;
+      let logLine = `${req.method} ${path3} ${res.statusCode} in ${Date.now() - start}ms`;
       if (capturedJsonResponse) logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       if (logLine.length > 120) logLine = logLine.slice(0, 119) + "\u2026";
       log(logLine);

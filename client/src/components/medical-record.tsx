@@ -22,6 +22,8 @@ import {
   X,
 } from "lucide-react";
 import {
+  RECORD_CODE_FOR,
+  type RecordCodeField,
   RECORD_FIELDS,
   RECORD_FIELD_LABELS,
   type MedicalCard,
@@ -42,6 +44,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatDateTime, formatDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ReferralList } from "@/components/referrals";
+import { IcdCodeBadge, useIcdLabels } from "@/components/icd-picker";
 import { VisitSummaryDialog } from "@/components/visit-summary-dialog";
 
 // ------------------------------------------------------------------ status
@@ -77,10 +80,12 @@ export function RecordReadView({
   record,
   dense,
 }: {
-  record: Partial<Record<RecordField, string | null>>;
+  record: Partial<Record<RecordField | RecordCodeField, string | null>>;
   dense?: boolean;
 }) {
-  const filled = RECORD_FIELDS.filter((f) => record[f]?.trim());
+  const codeOf = (f: RecordField) => (f === "preliminaryDiagnosis" || f === "finalDiagnosis" ? record[RECORD_CODE_FOR[f]] ?? null : null);
+  const labels = useIcdLabels([record.preliminaryDiagnosisCode, record.finalDiagnosisCode]);
+  const filled = RECORD_FIELDS.filter((f) => record[f]?.trim() || codeOf(f));
   if (filled.length === 0) return <p className="text-sm text-muted-foreground">Yozuv bo'sh.</p>;
   return (
     <dl className={cn("grid gap-x-6", dense ? "gap-y-3" : "gap-y-4 sm:grid-cols-2")}>
@@ -93,7 +98,14 @@ export function RecordReadView({
           )}
         >
           <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{RECORD_FIELD_LABELS[f]}</dt>
-          <dd className={cn("mt-1 whitespace-pre-wrap text-sm leading-relaxed", DIAGNOSIS_FIELDS.has(f) && "font-medium")}>{record[f]}</dd>
+          {codeOf(f) && (
+            <dd className="mt-1">
+              <IcdCodeBadge code={codeOf(f)!} label={labels.get(codeOf(f)!)} />
+            </dd>
+          )}
+          {record[f]?.trim() && (
+            <dd className={cn("mt-1 whitespace-pre-wrap text-sm leading-relaxed", DIAGNOSIS_FIELDS.has(f) && "font-medium")}>{record[f]}</dd>
+          )}
         </div>
       ))}
     </dl>
@@ -414,6 +426,7 @@ export function LabResultsTable({ results, limit }: { results: MedicalCard["labR
 
 /** Diagnosis history (TZ §5.2), from signed records only. */
 export function DiagnosisTimeline({ diagnoses }: { diagnoses: MedicalCard["diagnoses"] }) {
+  const labels = useIcdLabels(diagnoses.map((d) => d.code));
   if (diagnoses.length === 0) return <p className="text-sm text-muted-foreground">Tasdiqlangan tashxis yo'q.</p>;
   return (
     <ol className="space-y-2.5">
@@ -421,7 +434,8 @@ export function DiagnosisTimeline({ diagnoses }: { diagnoses: MedicalCard["diagn
         <li key={`${d.recordId}-${d.kind}`} className="flex gap-3">
           <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
           <div className="min-w-0">
-            <p className="text-sm font-medium">{d.text}</p>
+            {d.code && <IcdCodeBadge code={d.code} label={d.text ? null : labels.get(d.code)} className="mb-0.5" />}
+            {d.text && <p className="text-sm font-medium">{d.text}</p>}
             <p className="text-xs text-muted-foreground">
               {formatDay(d.date)} · {d.doctorName} ({d.specialty}) · {d.kind === "final" ? "yakuniy" : "dastlabki"}
             </p>

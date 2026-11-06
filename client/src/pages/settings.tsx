@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
+  BookOpenText,
   Building2,
   FlaskConical,
   KeyRound,
@@ -84,6 +85,7 @@ import {
 } from "@/components/settings-security";
 import { MfaPanel, MfaPolicyPanel } from "@/components/mfa-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { IcdPanel } from "@/components/icd-panel";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -113,6 +115,7 @@ const TABS: SettingsTab[] = [
     ),
   },
   { value: "tests", label: "Tahlillar", icon: FlaskConical, needs: ["tests.manage"], render: () => <TestsPanel /> },
+  { value: "icd10", label: "MKB-10", icon: BookOpenText, needs: ["settings.manage"], render: () => <IcdPanel /> },
   {
     value: "security",
     label: "Xavfsizlik",

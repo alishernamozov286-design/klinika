@@ -13,7 +13,11 @@
  */
 import type { Express, Request } from "express";
 import {
+  RECORD_CODE_FIELDS,
   REFERRAL_KIND_LABELS,
+  importIcdUzSchema,
+  updateIcdUzSchema,
+  type RecordCodeField,
   amendRecordSchema,
   cancelReferralSchema,
   createReferralSchema,
@@ -31,11 +35,13 @@ import {
   type VisitSummary,
 } from "@shared/schema";
 import { isExamServiceKind, referralSubject } from "@shared/referral";
+import { normalizeIcdCode, parseUzNames } from "@shared/icd10";
 import { releasedLines } from "@shared/lab-verification";
 import { changedFields, diagnosisHistory, fieldList, pickFields, signProblem } from "@shared/medical-record";
 import { patientAge } from "@shared/patient-identity";
 import { hasPermission, requirePermission } from "./rbac";
-import { audit, emptyIfMissing, handle, logPatientView, stringParam } from "./route-helpers";
+import { actorOf, audit, emptyIfMissing, handle, logPatientView, stringParam } from "./route-helpers";
+import { requireAuth } from "./auth";
 import type { NewReferrals } from "./storage-types";
 import { storage } from "./storage";
 import { localDay } from "./storage-types";
@@ -68,7 +74,90 @@ function shouldLogDraft(req: Request, recordId: string): boolean {
 /** Drafts belong to their author until signed; nobody else sees half-written notes. */
 const visibleTo = (req: Request) => (r: MedicalRecordWithDetails) => r.status === "signed" || isAuthor(req, r);
 
+/**
+ * A diagnosis code being set must be in the catalogue and choosable (B3.4).
+ * A code the record already holds is left alone even if since retired — a
+ * correction to the anamnesis must not force re-coding an old diagnosis.
+ */
+async function icdCodeProblem(
+  fields: Partial<Record<RecordCodeField, string | null>>,
+  before: Partial<Record<RecordCodeField, string | null>>,
+): Promise<string | null> {
+  const wanted = RECORD_CODE_FIELDS.map((f) => fields[f]).filter(
+    (c, i): c is string => Boolean(c) && c !== before[RECORD_CODE_FIELDS[i]],
+  );
+  if (wanted.length === 0) return null;
+  const found = await storage.getIcd(wanted).catch((e) => emptyIfMissing(e, []));
+  const ok = new Set(found.filter((r) => r.selectable).map((r) => r.code));
+  const bad = wanted.filter((c) => !ok.has(c));
+  return bad.length ? `MKB-10 katalogida tanlab bo'lmaydigan kod: ${bad.join(", ")}` : null;
+}
+
 export function registerMedicalRoutes(app: Express) {
+  // ---------------------------------------------------------------- MKB-10
+
+  /** Search the catalogue — by code ("I1", "E11.9") or by words of the Russian or Uzbek name. */
+  app.get(
+    "/api/icd10",
+    requireAuth,
+    handle(async (req, res) => {
+      const q = stringParam(req.query.q) ?? "";
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
+      res.json(await storage.searchIcd({ q, limit, all: req.query.all === "1" }).catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  /** Names for codes already on records. */
+  app.get(
+    "/api/icd10/lookup",
+    requireAuth,
+    handle(async (req, res) => {
+      const codes = (stringParam(req.query.codes) ?? "")
+        .split(",")
+        .map((c) => normalizeIcdCode(c))
+        .filter(Boolean)
+        .slice(0, 50);
+      res.json(await storage.getIcd(codes).catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  app.get(
+    "/api/icd10/stats",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.json(await storage.icdStats().catch((e) => emptyIfMissing(e, { total: 0, selectable: 0, withUzbek: 0, source: "" })));
+    }),
+  );
+
+  /** The clinic's Uzbek name for one code. */
+  app.patch(
+    "/api/icd10/:code",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const { nameUz } = updateIcdUzSchema.parse(req.body);
+      const code = normalizeIcdCode(req.params.code);
+      const before = (await storage.getIcd([code]))[0];
+      if (!before) return res.status(404).json({ message: "Kod katalogda yo'q" });
+      const row = await storage.setIcdUzName(code, nameUz, actorOf(req));
+      await audit(req, "update", "icd10", code, `MKB-10 ${code} o'zbekcha nomi: ${before.nameUz ?? "—"} → ${nameUz ?? "—"}`);
+      res.json(row);
+    }),
+  );
+
+  /** Many Uzbek names at once, from the clinic's file (code;name_uz). */
+  app.post(
+    "/api/icd10/import-uz",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const { csv } = importIcdUzSchema.parse(req.body);
+      const { names, rejected } = parseUzNames(csv);
+      if (names.size === 0) return res.status(400).json({ message: "Faylda o'qiladigan qator topilmadi (kerakli format: kod;o'zbekcha nom)" });
+      const { updated, unknown } = await storage.importIcdUzNames(names, actorOf(req));
+      await audit(req, "update", "icd10", null, `MKB-10 o'zbekcha nomlari import qilindi: ${updated} ta kod`);
+      res.json({ updated, unknown: unknown.slice(0, 50), unknownCount: unknown.length, rejectedLines: rejected.slice(0, 50), rejectedCount: rejected.length });
+    }),
+  );
+
   // ------------------------------------------------------ examination window
 
   /** Everything the examination window needs, in one request. */
@@ -140,6 +229,8 @@ export function registerMedicalRoutes(app: Express) {
       const { revision, ...fields } = saveRecordSchema.parse(req.body);
       const before = await storage.getRecord(req.params.id);
       if (!before || !isAuthor(req, before)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      const codeError = await icdCodeProblem(fields, before);
+      if (codeError) return res.status(400).json({ message: codeError });
       if (before.status !== "draft") {
         return res.status(409).json({ message: "Yozuv tasdiqlangan. O'zgartirish uchun \"Tuzatish kiritish\"dan foydalaning" });
       }
@@ -183,6 +274,8 @@ export function registerMedicalRoutes(app: Express) {
       const { revision, reason, ...fields } = amendRecordSchema.parse(req.body);
       const before = await storage.getRecord(req.params.id);
       if (!before || !isAuthor(req, before)) return res.status(404).json({ message: "Yozuv topilmadi" });
+      const codeError = await icdCodeProblem(fields, before);
+      if (codeError) return res.status(400).json({ message: codeError });
       if (before.status !== "signed") return res.status(409).json({ message: "Qoralamani tuzatish shart emas — uni to'g'ridan-to'g'ri tahrirlang" });
       const changed = changedFields(before, fields);
       if (!changed.length) return res.status(400).json({ message: "Matnda o'zgarish yo'q" });
@@ -225,14 +318,17 @@ export function registerMedicalRoutes(app: Express) {
       if (record.status !== "signed") {
         return res.status(409).json({ message: "Xulosa faqat tasdiqlangan ko'rik yozuvidan chiqariladi" });
       }
-      const [appointment, allergies, referrals, clinic] = await Promise.all([
+      const codes = RECORD_CODE_FIELDS.map((f) => record[f]).filter((c): c is string => Boolean(c));
+      const [appointment, allergies, referrals, clinic, icd] = await Promise.all([
         storage.getAppointment(record.appointmentId),
         storage.listAllergies(record.patientId).catch((e) => emptyIfMissing(e, [])),
         storage.listReferrals({ appointmentId: record.appointmentId }).catch((e) => emptyIfMissing(e, [] as ReferralWithDetails[])),
         storage.getSettings(),
+        storage.getIcd(codes).catch((e) => emptyIfMissing(e, [])),
       ]);
       const summary: VisitSummary = {
         record,
+        icd: icd.map((r) => ({ code: r.code, nameRu: r.nameRu, nameUz: r.nameUz })),
         appointment: appointment ?? null,
         allergies: allergies.filter((a) => a.isActive),
         // A cancelled referral is not part of what the patient was told to do.

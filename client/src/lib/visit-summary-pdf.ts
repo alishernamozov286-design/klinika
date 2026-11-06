@@ -7,7 +7,7 @@
  * embedded (lib/pdf-font) so Cyrillic names and Uzbek text render as text.
  */
 import type { jsPDF as JsPdf } from "jspdf";
-import { RECORD_FIELDS, RECORD_FIELD_LABELS, REFERRAL_KIND_LABELS, REFERRAL_STAGE_LABELS, type VisitSummary } from "@shared/schema";
+import { RECORD_CODE_FOR, RECORD_FIELDS, RECORD_FIELD_LABELS, REFERRAL_KIND_LABELS, REFERRAL_STAGE_LABELS, type VisitSummary } from "@shared/schema";
 import { patientAge } from "@shared/patient-identity";
 import { referralSubject } from "@shared/referral";
 import { pdfSafe } from "./export";
@@ -165,11 +165,22 @@ export async function buildVisitSummaryPdf(s: VisitSummary): Promise<JsPdf> {
   }
 
   // ------------------------------------------------------------ the record
+  const icd = new Map(s.icd.map((x) => [x.code, x]));
   for (const field of RECORD_FIELDS) {
     const value = s.record[field]?.trim();
-    if (!value) continue;
+    const code = field === "preliminaryDiagnosis" || field === "finalDiagnosis" ? s.record[RECORD_CODE_FOR[field]] : null;
+    if (!value && !code) continue;
     heading(RECORD_FIELD_LABELS[field]);
-    paragraph(value);
+    if (code) {
+      // The code and its name in both languages: the patient's next doctor may read either.
+      const label = icd.get(code);
+      ensure(16);
+      text(`MKB-10: ${code}`, M, y, { size: 10.5, bold: true, color: BRAND });
+      y += 15;
+      if (label?.nameUz) paragraph(label.nameUz, { size: 9.5 });
+      if (label?.nameRu && label.nameRu !== value) paragraph(label.nameRu, { size: 9.5, color: MUTED });
+    }
+    if (value) paragraph(value);
   }
 
   // ------------------------------------------------------------- referrals

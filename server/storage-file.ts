@@ -63,6 +63,8 @@ import type {
   OrderTestVersion,
   ResultFlag,
   NotificationFeed,
+  IcdEntry,
+  IcdStats,
   Visit,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
@@ -71,6 +73,12 @@ import { nextQueueNumber } from "@shared/appointment";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { patientHistoryProblem } from "@shared/patient-links";
 import { referralStage } from "@shared/referral";
+import { ICD_SOURCE, normalizeIcdCode, parseNsiIcd10, type IcdRow } from "@shared/icd10";
+import { readFileSync } from "fs";
+import path from "path";
+
+/** The MKB-10 file never changes at run time: one parse per process. */
+let icdCache: IcdRow[] | null = null;
 import { LEGACY_VERIFIER, isOrderReleased, lineState, needsEntry, needsReview } from "@shared/lab-verification";
 import { amendProblem, pickForVerification } from "./lab-rules";
 import { PAYMENT_ALREADY_VOIDED, TEST_IN_USE, ledgerTotal, orderDeleteProblem } from "@shared/ledger";
@@ -90,6 +98,7 @@ import {
   type Actor,
   type NewReferrals,
   type NewNotification,
+  type IcdQuery,
   type ReferralQuery,
   planResultSave,
   StorageConflict,
@@ -771,6 +780,8 @@ export class FileStorage implements IStorage {
       preliminaryDiagnosis: null,
       finalDiagnosis: null,
       recommendations: null,
+      preliminaryDiagnosisCode: null,
+      finalDiagnosisCode: null,
       signedAt: null,
       signedBy: null,
       amendedAt: null,
@@ -832,6 +843,8 @@ export class FileStorage implements IStorage {
       preliminaryDiagnosis: r.preliminaryDiagnosis,
       finalDiagnosis: r.finalDiagnosis,
       recommendations: r.recommendations,
+      preliminaryDiagnosisCode: r.preliminaryDiagnosisCode ?? null,
+      finalDiagnosisCode: r.finalDiagnosisCode ?? null,
       signedAt: r.signedAt,
       signedBy: r.signedBy,
       replacedAt: now,
@@ -902,6 +915,82 @@ export class FileStorage implements IStorage {
     Object.assign(a, { isActive: false, removedAt: new Date().toISOString(), removedBy: actor.id, removeReason: reason });
     await this.persist();
     return this.allergyDetails(a);
+  }
+
+  // ---------------------------------------------------------------- MKB-10
+
+  /** The catalogue file, parsed once per process; Uzbek names come from the store. */
+  private icdRows(): IcdRow[] {
+    if (!icdCache) {
+      const file = path.resolve(import.meta.dirname, "..", "data", "icd10", "mkb10-nsi-2.27.csv");
+      icdCache = parseNsiIcd10(readFileSync(file, "utf8"));
+    }
+    return icdCache;
+  }
+
+  private icdEntry(r: IcdRow): IcdEntry {
+    const uz = this.db.icdUzNames?.[r.code];
+    return { ...r, nameUz: uz ?? null, updatedAt: null };
+  }
+
+  async searchIcd(query: IcdQuery): Promise<IcdEntry[]> {
+    const q = query.q.trim();
+    const code = normalizeIcdCode(q);
+    const words = /^[A-Z]\d/.test(code) ? [] : q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
+    const out: IcdEntry[] = [];
+    for (const r of this.icdRows()) {
+      if (!query.all && !r.selectable) continue;
+      if (/^[A-Z]\d/.test(code) && !r.code.startsWith(code)) continue;
+      if (words.length) {
+        const hay = `${r.nameRu} ${this.db.icdUzNames?.[r.code] ?? ""}`.toLowerCase();
+        if (!words.every((w) => hay.includes(w))) continue;
+      }
+      out.push(this.icdEntry(r));
+      if (out.length >= query.limit) break;
+    }
+    return out;
+  }
+
+  async getIcd(codes: string[]): Promise<IcdEntry[]> {
+    const want = new Set(codes);
+    return this.icdRows().filter((r) => want.has(r.code)).map((r) => this.icdEntry(r));
+  }
+
+  async icdStats(): Promise<IcdStats> {
+    const rows = this.icdRows();
+    return {
+      total: rows.length,
+      selectable: rows.filter((r) => r.selectable).length,
+      withUzbek: Object.values(this.db.icdUzNames ?? {}).filter((v) => v.trim()).length,
+      source: ICD_SOURCE,
+    };
+  }
+
+  async setIcdUzName(code: string, nameUz: string | null, _actor: Actor): Promise<IcdEntry | undefined> {
+    const row = this.icdRows().find((r) => r.code === code);
+    if (!row) return undefined;
+    this.db.icdUzNames ??= {};
+    if (nameUz) this.db.icdUzNames[code] = nameUz;
+    else delete this.db.icdUzNames[code];
+    await this.persist();
+    return this.icdEntry(row);
+  }
+
+  async importIcdUzNames(names: Map<string, string>, _actor: Actor): Promise<{ updated: number; unknown: string[] }> {
+    const known = new Set(this.icdRows().map((r) => r.code));
+    this.db.icdUzNames ??= {};
+    let updated = 0;
+    const unknown: string[] = [];
+    for (const [code, name] of names) {
+      if (!known.has(code)) {
+        unknown.push(code);
+        continue;
+      }
+      this.db.icdUzNames[code] = name;
+      updated++;
+    }
+    if (updated) await this.persist();
+    return { updated, unknown };
   }
 
   // -------------------------------------------------------- notifications

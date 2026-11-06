@@ -1641,3 +1641,70 @@ describe("notifications (B3.9)", () => {
     expect([partly.verified, partly.tests]).toEqual([1, 2]);
   });
 });
+
+describe("MKB-10 catalogue and coded diagnoses (B3.4)", () => {
+  it("finds codes by code prefix, by Russian words, and never offers headings or retired codes", async () => {
+    const byCode = await storage.searchIcd({ q: "i10", limit: 10 });
+    expect(byCode[0]).toMatchObject({ code: "I10", nameRu: "Эссенциальная [первичная] гипертензия", nameUz: null, selectable: true });
+    const byWords = await storage.searchIcd({ q: "сахарный диабет 2", limit: 50 });
+    // Words are matched within a name: the category carries "2 типа", its subdivisions do not.
+    expect(byWords.map((r) => r.code)).toContain("E11");
+    expect((await storage.searchIcd({ q: "I84", limit: 10 })).length).toBe(0); // retired
+    expect((await storage.searchIcd({ q: "I84", limit: 10, all: true })).map((r) => r.code)).toContain("I84");
+  });
+
+  it("keeps the clinic's Uzbek names, searchable, and imports many at once", async () => {
+    const row = await storage.setIcdUzName("I10", "Essensial (birlamchi) gipertenziya", ACTOR);
+    expect(row?.nameUz).toBe("Essensial (birlamchi) gipertenziya");
+    expect((await storage.searchIcd({ q: "birlamchi gipert", limit: 5 })).map((r) => r.code)).toEqual(["I10"]);
+    expect(await storage.setIcdUzName("ZZZ", "x", ACTOR)).toBeUndefined();
+
+    // Z99.99 is not a code: it is reported, never created.
+    const out = await storage.importIcdUzNames(new Map([["E11.9", "2-tip qandli diabet, asoratsiz"], ["Q99.9", "Xromosoma anomaliyasi"], ["Z99.99", "yo'q kod"]]), ACTOR);
+    expect(out).toEqual({ updated: 2, unknown: ["Z99.99"] });
+    const stats = await storage.icdStats();
+    expect(stats.withUzbek).toBeGreaterThanOrEqual(2);
+    expect(stats.total).toBe(15038);
+
+    await storage.setIcdUzName("I10", null, ACTOR);
+    expect((await storage.getIcd(["I10"]))[0].nameUz).toBeNull();
+  });
+
+  it("stores diagnosis codes on the record and keeps them in versions", async () => {
+    const user = await storage.createUser({ username: "dricd", password: "parol123", fullName: "Kod Shifokor", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      { userId: user.id, departmentId: null, specialty: "Terapevt", consultationPrice: 1, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const patient = await storage.createPatient({ fullName: "Kod Bemor", phone: "+998906660777", gender: "erkak", age: 50, address: null });
+    const appt = await storage.createAppointment(
+      { patientId: patient.id, doctorId: doctor.id, serviceId: null, date: "2026-11-09", startTime: "10:00", reason: null, durationMinutes: 20, price: 1, referralId: null },
+      ACTOR,
+      () => null,
+    );
+    const rec = await storage.openRecord({ patientId: patient.id, appointmentId: appt.id, doctorId: doctor.id, visitId: null }, ACTOR);
+    expect([rec.preliminaryDiagnosisCode, rec.finalDiagnosisCode]).toEqual([null, null]);
+    const saved = await storage.saveRecordDraft(rec.id, rec.revision, { complaints: "Bosh og'rig'i", finalDiagnosis: "Gipertoniya", finalDiagnosisCode: "I10" }, ACTOR);
+    expect(saved.finalDiagnosisCode).toBe("I10");
+    const signed = await storage.signRecord(saved.id, saved.revision, ACTOR);
+    const amended = await storage.amendRecord(
+      signed.id,
+      signed.revision,
+      {
+        complaints: "Bosh og'rig'i",
+        anamnesis: null,
+        examination: null,
+        preliminaryDiagnosis: null,
+        finalDiagnosis: "Gipertoniya, 2-daraja",
+        recommendations: null,
+        preliminaryDiagnosisCode: null,
+        finalDiagnosisCode: "I11.9",
+      },
+      "Tashxis aniqlashtirildi",
+      ACTOR,
+    );
+    expect(amended.finalDiagnosisCode).toBe("I11.9");
+    const [v1] = await storage.listRecordVersions(amended.id);
+    expect(v1.finalDiagnosisCode).toBe("I10");
+  });
+});
