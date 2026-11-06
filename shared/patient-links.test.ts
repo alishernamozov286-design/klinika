@@ -38,6 +38,6 @@ describe("single patient identity (TZ §4.2, §16.1, B1.9)", () => {
     const msg = patientHistoryProblem({ orders: 2, patient_allergies: 1 });
     expect(msg).toMatch(/laboratoriya buyurtmalari, allergiyalar/);
     expect(msg).toMatch(/birlashtiring/);
-    expect(BLOCKING_TABLES).toEqual(["orders", "appointments", "medical_records", "patient_allergies"]);
+    expect(BLOCKING_TABLES).toEqual(["orders", "appointments", "medical_records", "patient_allergies", "referrals"]);
   });
 });

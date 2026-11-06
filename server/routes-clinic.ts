@@ -27,9 +27,11 @@ import {
   type DoctorWithDetails,
   type PriceListItem,
   type ReceptionBoard,
+  type ReferralWithDetails,
   type Service,
 } from "@shared/schema";
-import { summarizeQueue } from "@shared/reception";
+import { RECEPTION_LIST_LIMIT, summarizeQueue } from "@shared/reception";
+import { referralBookingProblem } from "@shared/referral";
 import {
   bookingProblem,
   buildSlots,
@@ -323,6 +325,23 @@ export function registerClinicRoutes(app: Express) {
       if ("error" in picked) return res.status(400).json({ message: picked.error });
       const { doctor } = found;
 
+      // Booking a doctor's referral: it must be for this patient, this service
+      // or this specialist. The storage write re-checks it is still unbooked.
+      let referralNumber: number | null = null;
+      if (input.referralId) {
+        if (!hasPermission(req, "referrals.read")) return res.status(403).json({ message: "Yo'llanmalarni ko'rish uchun ruxsatingiz yo'q" });
+        const referral = await storage.getReferral(input.referralId);
+        if (!referral) return res.status(404).json({ message: "Yo'llanma topilmadi" });
+        const problem = referralBookingProblem(referral, {
+          patientId: patient.id,
+          doctorId: doctor.id,
+          doctorSpecialty: doctor.specialty,
+          serviceId: input.serviceId,
+        });
+        if (problem) return res.status(400).json({ message: problem });
+        referralNumber = referral.referralNumber;
+      }
+
       const appointment = await storage.createAppointment(
         {
           ...input,
@@ -338,7 +357,9 @@ export function registerClinicRoutes(app: Express) {
         "create",
         "appointment",
         appointment.id,
-        `${patientLabel(appointment)} — ${appointment.doctorName} qabuliga yozildi (${when(appointment)}, navbat №${appointment.queueNumber})`,
+        `${patientLabel(appointment)} — ${appointment.doctorName} qabuliga yozildi (${when(appointment)}, navbat №${appointment.queueNumber})${
+          referralNumber ? `, yo'llanma №${referralNumber} bo'yicha` : ""
+        }`,
       );
       res.status(201).json(appointment);
     }),
@@ -364,6 +385,18 @@ export function registerClinicRoutes(app: Express) {
       const picked = await pickedService(serviceId);
       if ("error" in picked && serviceId !== before.serviceId) return res.status(400).json({ message: picked.error });
       const service = "service" in picked ? picked.service : null;
+
+      // A referral's booking stays what the referral asked for.
+      if (before.referralId) {
+        const referral = await storage.getReferral(before.referralId);
+        const problem =
+          referral &&
+          referralBookingProblem(
+            { ...referral, status: "active" },
+            { patientId: before.patientId, doctorId: doctor.id, doctorSpecialty: doctor.specialty, serviceId },
+          );
+        if (problem) return res.status(400).json({ message: problem });
+      }
 
       const date = input.date ?? before.date;
       const startTime = input.startTime ?? before.startTime;
@@ -474,10 +507,13 @@ export function registerClinicRoutes(app: Express) {
       if (!isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
 
       const seesQueue = hasPermission(req, "appointments.read");
-      const [day, list] = await Promise.all([
+      const [day, list, waitingReferrals] = await Promise.all([
         storage.getReceptionDay(date),
         seesQueue
           ? storage.listAppointments({ date }).catch((e) => emptyIfMissing(e, [] as AppointmentWithDetails[]))
+          : Promise.resolve(null),
+        hasPermission(req, "referrals.read")
+          ? storage.listReferrals({ awaitingBooking: true, limit: 200 }).catch((e) => emptyIfMissing(e, [] as ReferralWithDetails[]))
           : Promise.resolve(null),
       ]);
 
@@ -494,6 +530,7 @@ export function registerClinicRoutes(app: Express) {
             : { ...day.payments, billed: null, collected: null, due: null }
           : null,
         queue: list ? summarizeQueue(list, { isToday: date === clock.date, now }) : null,
+        referrals: waitingReferrals ? { total: waitingReferrals.length, items: waitingReferrals.slice(0, RECEPTION_LIST_LIMIT) } : null,
       };
       res.json(board);
     }),

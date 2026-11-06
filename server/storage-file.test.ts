@@ -558,6 +558,8 @@ describe("roles", () => {
       "records.write",
       "records.sign",
       "records.amend",
+      "referrals.read",
+      "referrals.create",
     ]);
   });
 
@@ -1347,5 +1349,135 @@ describe("registratura day (TZ §4.1.1, B2.11)", () => {
     expect(other.patientsToday).toBe(0);
     expect(other.newPatients.total).toBe(0);
     expect(other.payments.orders).toBe(0);
+  });
+});
+
+describe("referrals (B3.5, TZ §5.1.4)", () => {
+  async function setup() {
+    const user = await storage.createUser({ username: "drref", password: "parol123", fullName: "Rasulov Jamshid", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      { userId: user.id, departmentId: null, specialty: "Terapevt", consultationPrice: 80000, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const cardUser = await storage.createUser({ username: "drkard", password: "parol123", fullName: "Nazarova Lola", role: "shifokor", isActive: true });
+    const cardio = await storage.createDoctor(
+      { userId: cardUser.id, departmentId: null, specialty: "Kardiolog", consultationPrice: 120000, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const patient = await storage.createPatient({ fullName: "Olimova Sevara", phone: "+998906666001", gender: "ayol", age: 41, address: null });
+    const appt = await storage.createAppointment(
+      { patientId: patient.id, doctorId: doctor.id, serviceId: null, date: "2026-11-09", startTime: "10:00", reason: null, durationMinutes: 20, price: 80000, referralId: null },
+      ACTOR,
+      () => null,
+    );
+    const origin = { patientId: patient.id, visitId: null, appointmentId: appt.id, doctorId: doctor.id, note: "Tashxisni aniqlash" };
+    return { user, doctor, cardio, patient, appt, origin };
+  }
+
+  it("a lab referral creates its unpaid lab order, with the referral number on it", async () => {
+    const { origin, user } = await setup();
+    const [r] = await storage.createReferrals(
+      { ...origin, kind: "lab", testIds: ["3", "22"], referrer: "Rasulov Jamshid, Terapevt" },
+      { id: user.id, name: "Rasulov Jamshid" },
+    );
+    expect(r.referralNumber).toBe(1);
+    expect(r.stage).toBe("in_lab");
+    expect(r.order).toMatchObject({ status: "pending", paidAmount: 0, tests: 2, done: 0 });
+    expect(r.doctorName).toBe("Rasulov Jamshid");
+
+    const order = await storage.getOrder(r.order!.id);
+    expect(order?.referralId).toBe(r.id);
+    expect(order?.referralNumber).toBe(1);
+    expect(order?.referrer).toBe("Rasulov Jamshid, Terapevt");
+    expect(order?.notes).toBe("Tashxisni aniqlash");
+    expect(order?.sample?.barcode).toBe(`LAB-${order!.orderNumber}`);
+
+    // Results complete the order, and with it the referral.
+    await storage.saveResults(order!.id, order!.items.map((i) => ({ id: i.id, result: "5" })), ACTOR);
+    expect((await storage.getReferral(r.id))?.stage).toBe("done");
+  });
+
+  it("an exam referral per service waits for the desk, then follows its booking", async () => {
+    const { origin, cardio, patient } = await setup();
+    const svc = await storage.createService(
+      { name: "UZI qorin", kind: "uzi", departmentId: null, price: 150000, durationMinutes: 30, description: null, isActive: true },
+      ACTOR,
+    );
+    const svc2 = await storage.createService(
+      { name: "EKG", kind: "boshqa", departmentId: null, price: 60000, durationMinutes: 15, description: null, isActive: true },
+      ACTOR,
+    );
+    const made = await storage.createReferrals({ ...origin, kind: "exam", serviceIds: [svc.id, svc2.id] }, ACTOR);
+    expect(made.map((r) => r.stage)).toEqual(["awaiting_booking", "awaiting_booking"]);
+    expect((await storage.listReferrals({ awaitingBooking: true })).length).toBe(2);
+
+    const r = made.find((x) => x.serviceId === svc.id)!;
+    const book = () =>
+      storage.createAppointment(
+        { patientId: patient.id, doctorId: cardio.id, serviceId: svc.id, date: "2026-11-10", startTime: "09:00", reason: null, durationMinutes: 20, price: 150000, referralId: r.id },
+        ACTOR,
+        () => null,
+      );
+    const a = await book();
+    expect(a.referralId).toBe(r.id);
+    const now = await storage.getReferral(r.id);
+    expect(now?.stage).toBe("scheduled");
+    expect(now?.booking).toMatchObject({ id: a.id, date: "2026-11-10", startTime: "09:00" });
+    expect((await storage.listReferrals({ awaitingBooking: true })).map((x) => x.id)).toEqual([made.find((x) => x.id !== r.id)!.id]);
+
+    // The same referral cannot be booked twice.
+    await expect(book()).rejects.toThrow(/allaqachon yozilgan/);
+
+    // A cancelled booking frees it again.
+    await storage.setAppointmentStatus(a.id, { from: "scheduled", to: "cancelled", reason: "boshqa kun" }, ACTOR);
+    expect((await storage.getReferral(r.id))?.stage).toBe("awaiting_booking");
+  });
+
+  it("a consultation records the specialty and the doctor asked for", async () => {
+    const { origin, cardio } = await setup();
+    const [r] = await storage.createReferrals({ ...origin, kind: "consult", targetSpecialty: "Kardiolog", targetDoctorId: cardio.id }, ACTOR);
+    expect(r).toMatchObject({ kind: "consult", targetSpecialty: "Kardiolog", targetDoctorName: "Nazarova Lola", stage: "awaiting_booking" });
+  });
+
+  it("cancelling never deletes; a lab referral cancels its untouched order, a paid one is refused", async () => {
+    const { origin } = await setup();
+    const [a] = await storage.createReferrals({ ...origin, kind: "lab", testIds: ["3"], referrer: "x" }, ACTOR);
+    const cancelled = await storage.cancelReferral(a.id, "Bemor rad etdi", ACTOR);
+    expect(cancelled).toMatchObject({ status: "cancelled", stage: "cancelled", cancelReason: "Bemor rad etdi" });
+    expect((await storage.getOrder(a.order!.id))?.status).toBe("cancelled");
+    await expect(storage.cancelReferral(a.id, "Yana", ACTOR)).rejects.toThrow(/allaqachon bekor/);
+
+    const [b] = await storage.createReferrals({ ...origin, kind: "lab", testIds: ["3"], referrer: "x" }, ACTOR);
+    await storage.addPayment(b.order!.id, { amount: 1000, method: "naqd" }, ACTOR);
+    await expect(storage.cancelReferral(b.id, "Bemor rad etdi", ACTOR)).rejects.toThrow(/to'lov yoki natija bor/);
+    expect((await storage.getReferral(b.id))?.status).toBe("active");
+    expect(await storage.cancelReferral("nope", "x", ACTOR)).toBeUndefined();
+  });
+
+  it("a booked referral is cancelled only after its booking, and then cannot be booked", async () => {
+    const { origin, cardio, patient } = await setup();
+    const [r] = await storage.createReferrals({ ...origin, kind: "consult", targetSpecialty: "Kardiolog", targetDoctorId: null }, ACTOR);
+    const mk = (date: string) =>
+      storage.createAppointment(
+        { patientId: patient.id, doctorId: cardio.id, serviceId: null, date, startTime: "11:00", reason: null, durationMinutes: 20, price: 120000, referralId: r.id },
+        ACTOR,
+        () => null,
+      );
+    const a = await mk("2026-11-11");
+    await expect(storage.cancelReferral(r.id, "Kerak emas", ACTOR)).rejects.toThrow(/Avval qabulni bekor qiling/);
+    await storage.setAppointmentStatus(a.id, { from: "scheduled", to: "cancelled", reason: "kerak emas" }, ACTOR);
+    expect((await storage.cancelReferral(r.id, "Kerak emas", ACTOR))?.stage).toBe("cancelled");
+    await expect(mk("2026-11-12")).rejects.toThrow(/bekor qilingan/);
+  });
+
+  it("lists by appointment and patient, newest first, and keeps the card from being deleted", async () => {
+    const { origin, appt, patient } = await setup();
+    await storage.createReferrals({ ...origin, kind: "consult", targetSpecialty: "Kardiolog", targetDoctorId: null }, ACTOR);
+    await new Promise((r) => setTimeout(r, 5));
+    await storage.createReferrals({ ...origin, kind: "lab", testIds: ["22"], referrer: "x" }, ACTOR);
+    const byAppt = await storage.listReferrals({ appointmentId: appt.id });
+    expect(byAppt.map((r) => r.kind)).toEqual(["lab", "consult"]);
+    expect((await storage.listReferrals({ patientId: patient.id })).length).toBe(2);
+    await expect(storage.deletePatient(patient.id)).rejects.toThrow(/kartasida/);
   });
 });

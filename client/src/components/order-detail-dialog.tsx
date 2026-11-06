@@ -127,6 +127,12 @@ export function OrderDetailDialog({
             <span className="text-muted-foreground/50">·</span>
             <span className="tabular">{formatDateTime(order.createdAt)}</span>
             <TelegramBadge chatId={order.patient?.telegramChatId} className="text-[11px]" />
+            {order.referralNumber && (
+              <>
+                <span className="text-muted-foreground/50">·</span>
+                <span className="font-medium text-primary">Yo'llanma №{order.referralNumber}</span>
+              </>
+            )}
             {order.referrer && (
               <>
                 <span className="text-muted-foreground/50">·</span>

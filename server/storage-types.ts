@@ -5,6 +5,7 @@ import type {
   AuditEntry,
   CreatePaymentInput,
   DashboardStatsData,
+  ReferralWithDetails,
   ReceptionDay,
   Expense,
   ExpenseSummary,
@@ -171,6 +172,32 @@ export type NewAppointment = CreateAppointmentInput & { durationMinutes: number;
  * doctor's bookings for that day. Returns why the booking cannot be made.
  */
 export type BookingCheck = (dayBookings: Appointment[]) => string | null;
+
+export type ReferralQuery = {
+  ids?: string[];
+  patientId?: string;
+  appointmentId?: string;
+  /** Examinations and consultations still waiting for the desk to book them. */
+  awaitingBooking?: boolean;
+  limit?: number;
+};
+
+/** What every referral of one request shares: who, for whom, from which visit. */
+export type ReferralOrigin = {
+  patientId: string;
+  visitId: string | null;
+  appointmentId: string | null;
+  doctorId: string;
+  note: string | null;
+};
+
+/** One request from the referral dialog; the route has validated every id. */
+export type NewReferrals = ReferralOrigin &
+  (
+    | { kind: "lab"; testIds: string[]; referrer: string }
+    | { kind: "exam"; serviceIds: string[] }
+    | { kind: "consult"; targetSpecialty: string; targetDoctorId: string | null }
+  );
 
 export type RecordQuery = {
   patientId?: string;
@@ -443,6 +470,21 @@ export interface IStorage {
    */
   amendRecord(id: string, revision: number, fields: RecordFields, reason: string, actor: Actor): Promise<MedicalRecordWithDetails>;
   /** Replaced versions, newest first. */
+  // ---- referrals (B3.5)
+  listReferrals(query: ReferralQuery): Promise<ReferralWithDetails[]>;
+  getReferral(id: string): Promise<ReferralWithDetails | undefined>;
+  /**
+   * Issues the referrals of one request atomically. A lab referral creates its
+   * lab order (unpaid, with its tube) in the same transaction.
+   */
+  createReferrals(input: NewReferrals, actor: Actor): Promise<ReferralWithDetails[]>;
+  /**
+   * Cancels with a reason. A lab referral cancels its order too, unless the
+   * order already holds a payment or a result; a booked one must have its
+   * booking cancelled first. Both refusals are StorageConflict.
+   */
+  cancelReferral(id: string, reason: string, actor: Actor): Promise<ReferralWithDetails | undefined>;
+
   listRecordVersions(recordId: string): Promise<MedicalRecordVersion[]>;
 
   // --- allergies (B3.2, TZ §5.1.2)

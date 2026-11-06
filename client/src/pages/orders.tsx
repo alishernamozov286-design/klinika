@@ -280,6 +280,15 @@ export default function Orders() {
                         <span className="rounded-md bg-muted px-2 py-1 text-xs font-semibold tabular text-muted-foreground">
                           #{order.orderNumber}
                         </span>
+                        {order.referralNumber && (
+                          <span
+                            className="mt-1 block text-[11px] font-medium text-primary"
+                            title={order.referrer ? `Yo'naltirgan: ${order.referrer}` : undefined}
+                            data-testid={`text-order-referral-${order.orderNumber}`}
+                          >
+                            Yo'llanma №{order.referralNumber}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2.5">

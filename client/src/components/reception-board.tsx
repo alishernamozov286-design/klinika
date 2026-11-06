@@ -15,6 +15,7 @@ import {
   DoorOpen,
   Hourglass,
   ListOrdered,
+  Send,
   UserCheck,
   UserPlus,
   Users,
@@ -33,6 +34,7 @@ import {
   StatCard,
 } from "@/components/ui-kit";
 import { AppointmentDialog } from "@/components/appointment-dialog";
+import { ReferralList } from "@/components/referrals";
 import { useAppointmentStatus } from "@/components/appointment-actions";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -293,6 +295,22 @@ export function ReceptionBoard() {
           {pay && <PaymentStatus pay={pay} isLoading={isLoading} />}
         </div>
       </div>
+
+      {data?.referrals && data.referrals.total > 0 && (
+        <SectionCard
+          icon={Send}
+          title="Navbatga yozilmagan yo'llanmalar"
+          description={`Shifokorlar bergan tekshiruv va konsultatsiyalar · ${data.referrals.total} ta`}
+          flush
+        >
+          <ReferralList referrals={data.referrals.items} showPatient />
+          {data.referrals.total > data.referrals.items.length && (
+            <p className="border-t px-5 py-2.5 text-xs text-muted-foreground">
+              Yana {data.referrals.total - data.referrals.items.length} ta. Eng eskilari birinchi ko'rsatilgan.
+            </p>
+          )}
+        </SectionCard>
+      )}
 
       {canManage && (
         <AppointmentDialog open={booking} onOpenChange={setBooking} defaultDate={data?.date ?? null} />

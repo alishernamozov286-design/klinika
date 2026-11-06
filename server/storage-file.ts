@@ -58,6 +58,8 @@ import type {
   MedicalRecordWithDetails,
   PatientAllergy,
   RecordFields,
+  Referral,
+  ReferralWithDetails,
   Visit,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
@@ -65,6 +67,7 @@ import { nameKey, patientAge } from "@shared/patient-identity";
 import { nextQueueNumber } from "@shared/appointment";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { patientHistoryProblem } from "@shared/patient-links";
+import { referralStage } from "@shared/referral";
 import { PAYMENT_ALREADY_VOIDED, TEST_IN_USE, ledgerTotal, orderDeleteProblem } from "@shared/ledger";
 import { type DbShape, readDbSync, writeDb } from "./db";
 import { hashPassword } from "./password";
@@ -80,6 +83,8 @@ import {
   localDay,
   todayKey,
   type Actor,
+  type NewReferrals,
+  type ReferralQuery,
   StorageConflict,
   type AppointmentQuery,
   type AppointmentStatusChange,
@@ -567,6 +572,12 @@ export class FileStorage implements IStorage {
   async createAppointment(input: NewAppointment, actor: Actor, check: BookingCheck): Promise<AppointmentWithDetails> {
     // Check and push happen without an await in between: on this
     // single-process store nothing else can run in that gap.
+    if (input.referralId) {
+      const ref = this.db.referrals.find((r) => r.id === input.referralId);
+      if (!ref || ref.status !== "active") throw new StorageConflict("Yo'llanma bekor qilingan yoki topilmadi");
+      const taken = this.liveBooking(input.referralId);
+      if (taken) throw new StorageConflict(`Bu yo'llanma bo'yicha bemor allaqachon yozilgan (${taken.date} ${taken.startTime})`);
+    }
     const day = this.dayBookings(input.doctorId, input.date);
     const problem = check(day);
     if (problem) throw new StorageConflict(problem);
@@ -583,6 +594,7 @@ export class FileStorage implements IStorage {
       status: "scheduled",
       price: input.price,
       reason: input.reason ?? null,
+      referralId: input.referralId ?? null,
       arrivedAt: null,
       startedAt: null,
       completedAt: null,
@@ -876,6 +888,179 @@ export class FileStorage implements IStorage {
     return this.allergyDetails(a);
   }
 
+  // ------------------------------------------------------------ referrals
+
+  /** The booking that still fulfils a referral: anything but cancelled or no-show. */
+  private liveBooking(referralId: string): Appointment | undefined {
+    return this.db.appointments.find(
+      (a) => a.referralId === referralId && a.status !== "cancelled" && a.status !== "no_show",
+    );
+  }
+
+  private referralDetails(r: Referral): ReferralWithDetails {
+    const patient = this.db.patients.find((p) => p.id === r.patientId);
+    const issuer = this.db.doctors.find((d) => d.id === r.doctorId);
+    const issuerUser = issuer && this.db.users.find((u) => u.id === issuer.userId);
+    const service = r.serviceId ? this.db.services.find((s) => s.id === r.serviceId) : undefined;
+    const target = r.targetDoctorId ? this.db.doctors.find((d) => d.id === r.targetDoctorId) : undefined;
+    const targetUser = target && this.db.users.find((u) => u.id === target.userId);
+    const canceller = r.cancelledBy ? this.db.users.find((u) => u.id === r.cancelledBy) : undefined;
+
+    let order: ReferralWithDetails["order"] = null;
+    if (r.kind === "lab") {
+      const o = this.db.orders.find((x) => x.referralId === r.id);
+      if (o) {
+        const lines = this.db.orderTests.filter((i) => i.orderId === o.id);
+        order = {
+          id: o.id,
+          orderNumber: o.orderNumber,
+          status: o.status,
+          totalAmount: o.totalAmount,
+          paidAmount: o.paidAmount,
+          tests: lines.length,
+          done: lines.filter((i) => i.result).length,
+          testNames: lines.map((i) => i.testName).sort((a, b) => a.localeCompare(b)),
+        };
+      }
+    }
+    let booking: ReferralWithDetails["booking"] = null;
+    if (r.kind !== "lab") {
+      const b = this.liveBooking(r.id);
+      if (b) {
+        const doc = this.db.doctors.find((d) => d.id === b.doctorId);
+        booking = {
+          id: b.id,
+          date: b.date,
+          startTime: b.startTime,
+          status: b.status,
+          queueNumber: b.queueNumber,
+          doctorName: this.db.users.find((u) => u.id === doc?.userId)?.fullName ?? "—",
+        };
+      }
+    }
+    return {
+      ...r,
+      patientNumber: patient?.patientNumber ?? 0,
+      patientName: patient?.fullName ?? "—",
+      patientPhone: patient?.phone ?? "",
+      doctorName: issuerUser?.fullName ?? "—",
+      doctorUserId: issuer?.userId ?? "",
+      specialty: issuer?.specialty ?? "",
+      serviceName: service?.name ?? null,
+      serviceKind: service?.kind ?? null,
+      servicePrice: service?.price ?? null,
+      targetDoctorName: targetUser?.fullName ?? null,
+      cancelledByName: canceller?.fullName ?? null,
+      order,
+      booking,
+      stage: referralStage({ kind: r.kind, status: r.status, order, booking }),
+    };
+  }
+
+  async listReferrals(q: ReferralQuery): Promise<ReferralWithDetails[]> {
+    let rows = this.db.referrals.filter(
+      (r) =>
+        (!q.ids || q.ids.includes(r.id)) &&
+        (!q.patientId || r.patientId === q.patientId) &&
+        (!q.appointmentId || r.appointmentId === q.appointmentId) &&
+        (!q.awaitingBooking || (r.status === "active" && r.kind !== "lab" && !this.liveBooking(r.id))),
+    );
+    rows = rows.sort((a, b) =>
+      q.awaitingBooking ? a.createdAt.localeCompare(b.createdAt) : b.createdAt.localeCompare(a.createdAt),
+    );
+    if (q.limit) rows = rows.slice(0, q.limit);
+    return rows.map((r) => this.referralDetails(r));
+  }
+
+  async getReferral(id: string): Promise<ReferralWithDetails | undefined> {
+    const r = this.db.referrals.find((x) => x.id === id);
+    return r && this.referralDetails(r);
+  }
+
+  async createReferrals(input: NewReferrals, actor: Actor): Promise<ReferralWithDetails[]> {
+    const now = new Date().toISOString();
+    const make = (extra: Partial<Referral> & Pick<Referral, "kind">): Referral => {
+      this.db.counters.referralNumber += 1;
+      return {
+        id: randomUUID(),
+        referralNumber: this.db.counters.referralNumber,
+        patientId: input.patientId,
+        visitId: input.visitId,
+        appointmentId: input.appointmentId,
+        doctorId: input.doctorId,
+        status: "active",
+        serviceId: null,
+        targetSpecialty: null,
+        targetDoctorId: null,
+        note: input.note,
+        createdAt: now,
+        createdBy: actor.id,
+        updatedAt: null,
+        updatedBy: null,
+        cancelledAt: null,
+        cancelledBy: null,
+        cancelReason: null,
+        ...extra,
+      };
+    };
+
+    let made: Referral[];
+    if (input.kind === "lab") {
+      if (!input.testIds.some((id) => this.db.tests.some((t) => t.id === id))) throw new Error("Tanlangan tahlillar topilmadi");
+      const ref = make({ kind: "lab" });
+      this.db.referrals.push(ref);
+      await this.placeOrder(
+        {
+          patientId: input.patientId,
+          testIds: input.testIds,
+          discount: 0,
+          paidAmount: 0,
+          notes: input.note,
+          referrer: input.referrer,
+          createdBy: actor.id,
+        },
+        ref.id,
+      );
+      made = [ref];
+    } else if (input.kind === "exam") {
+      made = input.serviceIds.map((serviceId) => make({ kind: "exam", serviceId }));
+      this.db.referrals.push(...made);
+    } else {
+      made = [make({ kind: "consult", targetSpecialty: input.targetSpecialty, targetDoctorId: input.targetDoctorId })];
+      this.db.referrals.push(...made);
+    }
+    await this.persist();
+    return made.map((r) => this.referralDetails(r));
+  }
+
+  async cancelReferral(id: string, reason: string, actor: Actor): Promise<ReferralWithDetails | undefined> {
+    const ref = this.db.referrals.find((r) => r.id === id);
+    if (!ref) return undefined;
+    if (ref.status === "cancelled") throw new StorageConflict("Yo'llanma allaqachon bekor qilingan");
+    const now = new Date().toISOString();
+    if (ref.kind === "lab") {
+      const order = this.db.orders.find((o) => o.referralId === id);
+      if (order && order.status !== "cancelled") {
+        const paid = this.db.payments.some((p) => p.orderId === order.id && !p.voidedAt);
+        const results = this.db.orderTests.some((i) => i.orderId === order.id && i.result);
+        if (paid || results) {
+          throw new StorageConflict(
+            `Tahlil buyurtmasi #${order.orderNumber} bo'yicha to'lov yoki natija bor. Uni registratura yoki laboratoriya hal qiladi`,
+          );
+        }
+        Object.assign(order, { status: "cancelled", completedAt: null, updatedAt: now, updatedBy: actor.id });
+      }
+    } else {
+      const booked = this.liveBooking(id);
+      if (booked) {
+        throw new StorageConflict(`Bemor bu yo'llanma bo'yicha navbatga yozilgan (${booked.date} ${booked.startTime}). Avval qabulni bekor qiling`);
+      }
+    }
+    Object.assign(ref, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
+    await this.persist();
+    return this.referralDetails(ref);
+  }
+
   async deleteDoctor(id: string): Promise<boolean> {
     const before = this.db.doctors.length;
     this.db.doctors = this.db.doctors.filter((d) => d.id !== id);
@@ -1134,6 +1319,7 @@ export class FileStorage implements IStorage {
         for (const o of this.db.orders) if (o.visitId === v.id) o.visitId = same.id;
         for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
         for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
+        for (const r of this.db.referrals) if (r.visitId === v.id) r.visitId = same.id;
         this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
       } else {
         v.patientId = targetId;
@@ -1151,6 +1337,7 @@ export class FileStorage implements IStorage {
     for (const a of this.db.appointments) if (a.patientId === sourceId) (a.patientId = targetId), appointments++;
     for (const r of this.db.medicalRecords) if (r.patientId === sourceId) r.patientId = targetId;
     for (const a of this.db.patientAllergies) if (a.patientId === sourceId) a.patientId = targetId;
+    for (const r of this.db.referrals) if (r.patientId === sourceId) r.patientId = targetId;
     this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
     await this.persist();
     return { orders, contacts, appointments };
@@ -1221,6 +1408,7 @@ export class FileStorage implements IStorage {
       appointments: mine(this.db.appointments),
       medical_records: mine(this.db.medicalRecords),
       patient_allergies: mine(this.db.patientAllergies),
+      referrals: mine(this.db.referrals),
     });
     if (problem) throw new StorageConflict(problem);
     const before = this.db.patients.length;
@@ -1295,6 +1483,9 @@ export class FileStorage implements IStorage {
   private hydrate(order: Order, withPayments = false): OrderWithDetails {
     const full: OrderWithDetails = {
       ...order,
+      referralNumber: order.referralId
+        ? (this.db.referrals.find((r) => r.id === order.referralId)?.referralNumber ?? null)
+        : null,
       patient: this.db.patients.find((p) => p.id === order.patientId) ?? null,
       items: this.db.orderTests.filter((ot) => ot.orderId === order.id),
       // Null for orders created before sample tracking existed.
@@ -1378,6 +1569,11 @@ export class FileStorage implements IStorage {
   }
 
   async createOrder(input: CreateOrderArgs): Promise<OrderWithDetails> {
+    return this.placeOrder(input, null);
+  }
+
+  /** Shared by the desk and the doctor's lab referral, so both make the same order. */
+  private async placeOrder(input: CreateOrderArgs, referralId: string | null): Promise<OrderWithDetails> {
     if (!this.db.patients.some((p) => p.id === input.patientId)) {
       throw new Error("Bemor topilmadi");
     }
@@ -1398,6 +1594,7 @@ export class FileStorage implements IStorage {
       orderNumber: this.db.counters.orderNumber,
       patientId: input.patientId,
       visitId: this.ensureVisit(input.patientId, todayKey(), input.createdBy ?? null).id,
+      referralId,
       totalAmount: total,
       discount,
       paidAmount: 0, // set by syncPaid below, from the opening payment

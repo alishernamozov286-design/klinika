@@ -15,6 +15,7 @@ import {
   Loader2,
   NotebookPen,
   Plus,
+  Send,
   ShieldAlert,
   Stethoscope,
   X,
@@ -39,6 +40,7 @@ import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateTime, formatDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ReferralList } from "@/components/referrals";
 
 // ------------------------------------------------------------------ status
 
@@ -509,6 +511,17 @@ export function MedicalCardPanel({ patientId }: { patientId: string }) {
           <LabResultsTable results={data.labResults} />
         </div>
       </SectionCard>
+
+      {data.referrals && (
+        <SectionCard
+          icon={Send}
+          title="Yo'llanmalar"
+          description="Tahlillar, UZI va boshqa tekshiruvlar, konsultatsiyalar"
+          flush
+        >
+          <ReferralList referrals={data.referrals} emptyText="Yo'llanma berilmagan" />
+        </SectionCard>
+      )}
 
       <RecordVersionsDialog record={versionsOf} onOpenChange={(o) => !o && setVersionsOf(null)} />
     </div>

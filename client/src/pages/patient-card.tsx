@@ -57,6 +57,7 @@ import { OrderDialog } from "@/components/order-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { MedicalCardPanel } from "@/components/medical-record";
 import { OrderDetailDialog } from "@/components/order-detail-dialog";
+import { PatientReferrals } from "@/components/referrals";
 import { ResultsDialog } from "@/components/results-dialog";
 import { PrintDialog } from "@/components/print-dialog";
 import { MergePatientDialog } from "@/components/merge-patient-dialog";
@@ -533,7 +534,8 @@ export default function PatientCardPage() {
           </TabsContent>
         )}
 
-        <TabsContent value="appointments" className="mt-6">
+        <TabsContent value="appointments" className="mt-6 space-y-6">
+          {can("referrals.read") && <PatientReferrals patientId={p.id} />}
           <PatientAppointments patientId={p.id} canBook={can("appointments.manage")} onBook={() => setBookOpen(true)} />
         </TabsContent>
 

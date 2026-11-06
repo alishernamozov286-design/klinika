@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, notInArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { defaultTests, testReferences } from "@shared/tests-data";
 import {
@@ -25,6 +25,11 @@ import {
   medicalRecords,
   medicalRecordVersions,
   patientAllergies,
+  referrals,
+  type Referral,
+  type ReferralBooking,
+  type ReferralOrder,
+  type ReferralWithDetails,
   type MedicalRecord,
   type MedicalRecordVersion,
   type MedicalRecordWithDetails,
@@ -96,6 +101,7 @@ import {
   nationalPhoneDigits,
 } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
+import { referralStage } from "@shared/referral";
 import { BLOCKING_TABLES, patientHistoryProblem, type BlockingTable } from "@shared/patient-links";
 import { PAYMENT_ALREADY_VOIDED, TEST_IN_USE, orderDeleteProblem } from "@shared/ledger";
 import { nextQueueNumber } from "@shared/appointment";
@@ -114,6 +120,8 @@ import {
   type Actor,
   StorageConflict,
   type AppointmentQuery,
+  type NewReferrals,
+  type ReferralQuery,
   type AppointmentStatusChange,
   type BookingCheck,
   type NewAppointment,
@@ -270,7 +278,7 @@ const mapAppointment = (row: typeof appointments.$inferSelect): Appointment => (
 });
 
 /** An appointment with everything the queue and the cabinet print next to it — one round trip. */
-const appointmentSelect = () =>
+export const appointmentSelect = () =>
   db
     .select({
       a: appointments,
@@ -313,6 +321,51 @@ const mapAppointmentRow = (r: AppointmentRow): AppointmentWithDetails => ({
 });
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+const issuerUser = alias(users, "issuer_user");
+const targetDoctor = alias(doctors, "target_doctor");
+const targetUser = alias(users, "target_user");
+const cancelUser = alias(users, "cancel_user");
+
+/** A referral with the names every screen shows. Progress is added by withProgress(). */
+export const referralSelect = () =>
+  db
+    .select({
+      r: referrals,
+      patientNumber: patients.patientNumber,
+      patientName: patients.fullName,
+      patientPhone: patients.phone,
+      doctorName: issuerUser.fullName,
+      doctorUserId: doctors.userId,
+      specialty: doctors.specialty,
+      serviceName: services.name,
+      serviceKind: services.kind,
+      servicePrice: services.price,
+      targetDoctorName: targetUser.fullName,
+      cancelledByName: cancelUser.fullName,
+    })
+    .from(referrals)
+    .leftJoin(patients, eq(patients.id, referrals.patientId))
+    .leftJoin(doctors, eq(doctors.id, referrals.doctorId))
+    .leftJoin(issuerUser, eq(issuerUser.id, doctors.userId))
+    .leftJoin(services, eq(services.id, referrals.serviceId))
+    .leftJoin(targetDoctor, eq(targetDoctor.id, referrals.targetDoctorId))
+    .leftJoin(targetUser, eq(targetUser.id, targetDoctor.userId))
+    .leftJoin(cancelUser, eq(cancelUser.id, referrals.cancelledBy));
+
+type ReferralRow = Awaited<ReturnType<ReturnType<typeof referralSelect>["execute"]>>[number];
+
+const mapReferral = (row: typeof referrals.$inferSelect): Referral => ({
+  ...row,
+  kind: row.kind as Referral["kind"],
+  status: row.status as Referral["status"],
+  createdAt: iso(row.createdAt) ?? row.createdAt,
+  updatedAt: iso(row.updatedAt),
+  cancelledAt: iso(row.cancelledAt),
+});
+
+/** Bookings that still fulfil a referral: everything but cancelled and no-show. */
+const LIVE_BOOKING = sql`status NOT IN ('cancelled', 'no_show')`;
 
 /**
  * Serialises every booking write for one doctor's day. Taken inside the
@@ -775,6 +828,22 @@ export class PgStorage implements IStorage {
   async createAppointment(input: NewAppointment, actor: Actor, check: BookingCheck): Promise<AppointmentWithDetails> {
     const id = await db.transaction(async (tx) => {
       await lockDoctorDay(tx, input.doctorId, input.date);
+      if (input.referralId) {
+        // The referral row lock serialises two desks booking the same referral
+        // with different doctors; UQ_appointments_referral is the backstop.
+        const [ref] = await tx
+          .select({ id: referrals.id, status: referrals.status })
+          .from(referrals)
+          .where(eq(referrals.id, input.referralId))
+          .for("update");
+        if (!ref || ref.status !== "active") throw new StorageConflict("Yo'llanma bekor qilingan yoki topilmadi");
+        const [taken] = await tx
+          .select({ date: appointments.date, startTime: appointments.startTime })
+          .from(appointments)
+          .where(and(eq(appointments.referralId, input.referralId), LIVE_BOOKING))
+          .limit(1);
+        if (taken) throw new StorageConflict(`Bu yo'llanma bo'yicha bemor allaqachon yozilgan (${taken.date} ${taken.startTime})`);
+      }
       const day = await this.dayBookings(tx, input.doctorId, input.date);
       const problem = check(day);
       if (problem) throw new StorageConflict(problem);
@@ -791,6 +860,7 @@ export class PgStorage implements IStorage {
           status: "scheduled",
           price: input.price,
           reason: input.reason ?? null,
+          referralId: input.referralId ?? null,
           createdBy: actor.id,
         })
         .returning({ id: appointments.id });
@@ -1065,6 +1135,212 @@ export class PgStorage implements IStorage {
       .returning({ id: patientAllergies.id });
     if (!rows.length) throw new StorageConflict("Bu yozuv allaqachon faol emas");
     return (await this.getAllergy(id))!;
+  }
+
+  // ------------------------------------------------------------ referrals
+
+  async listReferrals(q: ReferralQuery): Promise<ReferralWithDetails[]> {
+    if (q.ids && q.ids.length === 0) return [];
+    const parts = [];
+    if (q.ids) parts.push(inArray(referrals.id, q.ids));
+    if (q.patientId) parts.push(eq(referrals.patientId, q.patientId));
+    if (q.appointmentId) parts.push(eq(referrals.appointmentId, q.appointmentId));
+    if (q.awaitingBooking) {
+      parts.push(eq(referrals.status, "active"));
+      parts.push(sql`"referrals"."kind" <> 'lab'`);
+      parts.push(sql`NOT EXISTS (SELECT 1 FROM appointments x
+        WHERE x.referral_id = "referrals"."id" AND x.status NOT IN ('cancelled', 'no_show'))`);
+    }
+    const query = referralSelect()
+      .where(parts.length ? and(...parts) : undefined)
+      // The desk works the oldest waiting referral first; a card reads newest first.
+      .orderBy(q.awaitingBooking ? asc(referrals.createdAt) : desc(referrals.createdAt));
+    const rows = await (q.limit ? query.limit(q.limit) : query);
+    return this.withProgress(rows);
+  }
+
+  async getReferral(id: string): Promise<ReferralWithDetails | undefined> {
+    return (await this.listReferrals({ ids: [id] }))[0];
+  }
+
+  /** Adds the order or booking behind each referral, and the stage it puts it in. Two parallel queries. */
+  private async withProgress(rows: ReferralRow[]): Promise<ReferralWithDetails[]> {
+    if (rows.length === 0) return [];
+    const labIds = rows.filter((r) => r.r.kind === "lab").map((r) => r.r.id);
+    const bookedIds = rows.filter((r) => r.r.kind !== "lab").map((r) => r.r.id);
+
+    const [orderRows, bookingRows] = await Promise.all([
+      labIds.length
+        ? db
+            .select({
+              id: orders.id,
+              referralId: orders.referralId,
+              orderNumber: orders.orderNumber,
+              status: orders.status,
+              totalAmount: orders.totalAmount,
+              paidAmount: orders.paidAmount,
+              tests: sql<number>`count(${orderTests.id})::int`,
+              done: sql<number>`count(${orderTests.result})::int`,
+              names: sql<string[]>`coalesce(array_agg(${orderTests.testName} ORDER BY ${orderTests.testName})
+                FILTER (WHERE ${orderTests.id} IS NOT NULL), '{}')`,
+            })
+            .from(orders)
+            .leftJoin(orderTests, eq(orderTests.orderId, orders.id))
+            .where(inArray(orders.referralId, labIds))
+            .groupBy(orders.id)
+        : Promise.resolve([]),
+      bookedIds.length
+        ? appointmentSelect().where(
+            and(inArray(appointments.referralId, bookedIds), notInArray(appointments.status, ["cancelled", "no_show"])),
+          )
+        : Promise.resolve([]),
+    ]);
+
+    const orderBy = new Map<string, ReferralOrder>(
+      orderRows.map((o) => [
+        o.referralId!,
+        {
+          id: o.id,
+          orderNumber: o.orderNumber,
+          status: o.status as ReferralOrder["status"],
+          totalAmount: o.totalAmount,
+          paidAmount: o.paidAmount,
+          tests: o.tests,
+          done: o.done,
+          testNames: o.names ?? [],
+        },
+      ]),
+    );
+    const bookingBy = new Map<string, ReferralBooking>();
+    for (const b of bookingRows.map(mapAppointmentRow)) {
+      bookingBy.set(b.referralId!, {
+        id: b.id,
+        date: b.date,
+        startTime: b.startTime,
+        status: b.status,
+        queueNumber: b.queueNumber,
+        doctorName: b.doctorName,
+      });
+    }
+
+    return rows.map((r) => {
+      const base = mapReferral(r.r);
+      const order = orderBy.get(base.id) ?? null;
+      const booking = bookingBy.get(base.id) ?? null;
+      return {
+        ...base,
+        patientNumber: r.patientNumber ?? 0,
+        patientName: r.patientName ?? "—",
+        patientPhone: r.patientPhone ?? "",
+        doctorName: r.doctorName ?? "—",
+        doctorUserId: r.doctorUserId ?? "",
+        specialty: r.specialty ?? "",
+        serviceName: r.serviceName ?? null,
+        serviceKind: (r.serviceKind as ServiceKind | null) ?? null,
+        servicePrice: r.servicePrice ?? null,
+        targetDoctorName: r.targetDoctorName ?? null,
+        cancelledByName: r.cancelledByName ?? null,
+        order,
+        booking,
+        stage: referralStage({ kind: base.kind, status: base.status, order, booking }),
+      };
+    });
+  }
+
+  async createReferrals(input: NewReferrals, actor: Actor): Promise<ReferralWithDetails[]> {
+    const selected = input.kind === "lab" ? await db.select().from(tests).where(inArray(tests.id, input.testIds)) : [];
+    if (input.kind === "lab" && selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
+
+    const ids = await db.transaction(async (tx) => {
+      const origin = {
+        patientId: input.patientId,
+        visitId: input.visitId,
+        appointmentId: input.appointmentId,
+        doctorId: input.doctorId,
+        note: input.note,
+        createdBy: actor.id,
+      };
+      if (input.kind === "lab") {
+        const [ref] = await tx.insert(referrals).values({ ...origin, kind: "lab" }).returning({ id: referrals.id });
+        await this.insertOrderTx(
+          tx,
+          {
+            patientId: input.patientId,
+            testIds: input.testIds,
+            discount: 0,
+            paidAmount: 0,
+            notes: input.note,
+            referrer: input.referrer,
+            createdBy: actor.id,
+          },
+          selected,
+          ref.id,
+        );
+        return [ref.id];
+      }
+      if (input.kind === "exam") {
+        const made = await tx
+          .insert(referrals)
+          .values(input.serviceIds.map((serviceId) => ({ ...origin, kind: "exam", serviceId })))
+          .returning({ id: referrals.id });
+        return made.map((r) => r.id);
+      }
+      const [ref] = await tx
+        .insert(referrals)
+        .values({ ...origin, kind: "consult", targetSpecialty: input.targetSpecialty, targetDoctorId: input.targetDoctorId })
+        .returning({ id: referrals.id });
+      return [ref.id];
+    });
+    return this.listReferrals({ ids });
+  }
+
+  async cancelReferral(id: string, reason: string, actor: Actor): Promise<ReferralWithDetails | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const [ref] = await tx.select().from(referrals).where(eq(referrals.id, id)).for("update");
+      if (!ref) return false;
+      if (ref.status === "cancelled") throw new StorageConflict("Yo'llanma allaqachon bekor qilingan");
+      const now = new Date().toISOString();
+
+      if (ref.kind === "lab") {
+        const [order] = await tx
+          .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status })
+          .from(orders)
+          .where(eq(orders.referralId, id))
+          .for("update");
+        if (order && order.status !== "cancelled") {
+          const orderId = order.id;
+          const { rows: [held] } = await tx.execute<{ paid: number; results: number }>(sql`
+            SELECT
+              (SELECT count(*) FROM payments p WHERE p.order_id = ${orderId} AND p.voided_at IS NULL)::int AS paid,
+              (SELECT count(*) FROM order_tests ot WHERE ot.order_id = ${orderId} AND ot.result IS NOT NULL)::int AS results`);
+          if ((held?.paid ?? 0) > 0 || (held?.results ?? 0) > 0) {
+            throw new StorageConflict(
+              `Tahlil buyurtmasi #${order.orderNumber} bo'yicha to'lov yoki natija bor. Uni registratura yoki laboratoriya hal qiladi`,
+            );
+          }
+          await tx
+            .update(orders)
+            .set({ status: "cancelled", completedAt: null, updatedAt: now, updatedBy: actor.id })
+            .where(eq(orders.id, order.id));
+        }
+      } else {
+        const [booked] = await tx
+          .select({ date: appointments.date, startTime: appointments.startTime })
+          .from(appointments)
+          .where(and(eq(appointments.referralId, id), LIVE_BOOKING))
+          .limit(1);
+        if (booked) {
+          throw new StorageConflict(`Bemor bu yo'llanma bo'yicha navbatga yozilgan (${booked.date} ${booked.startTime}). Avval qabulni bekor qiling`);
+        }
+      }
+
+      await tx
+        .update(referrals)
+        .set({ status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelReason: reason, updatedAt: now, updatedBy: actor.id })
+        .where(eq(referrals.id, id));
+      return true;
+    });
+    return found ? this.getReferral(id) : undefined;
   }
 
   async doctorHasAppointments(doctorId: string): Promise<boolean> {
@@ -1467,6 +1743,14 @@ export class PgStorage implements IStorage {
       if (await tableExists(tx, "patient_allergies")) {
         await tx.update(patientAllergies).set({ patientId: targetId }).where(eq(patientAllergies.patientId, sourceId));
       }
+      // Referrals (B3.5) follow the patient, re-pointed at the surviving visit.
+      if (await tableExists(tx, "referrals")) {
+        await tx.execute(sql`
+          UPDATE referrals rf SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND rf.visit_id = sv.id`);
+        await tx.update(referrals).set({ patientId: targetId }).where(eq(referrals.patientId, sourceId));
+      }
       await tx.execute(sql`
         DELETE FROM ${visits} sv USING ${visits} tv
         WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
@@ -1678,12 +1962,23 @@ export class PgStorage implements IStorage {
       byOrder.set(item.orderId, list);
     }
 
+    // Referral numbers only for the orders that came from a doctor.
+    const referralIds = Array.from(new Set(rows.map((o) => o.referralId).filter((id): id is string => Boolean(id))));
+    const numbers = referralIds.length
+      ? await db
+          .select({ id: referrals.id, n: referrals.referralNumber })
+          .from(referrals)
+          .where(inArray(referrals.id, referralIds))
+      : [];
+    const byReferral = new Map(numbers.map((r) => [r.id, r.n]));
+
     return rows.map((row) => ({
       ...mapOrder(row),
       patient: byPatient.get(row.patientId) ?? null,
       items: byOrder.get(row.id) ?? [],
       // Null for orders created before sample tracking existed.
       sample: bySample.get(row.id) ?? null,
+      referralNumber: row.referralId ? (byReferral.get(row.referralId) ?? null) : null,
     }));
   }
 
@@ -1825,14 +2120,22 @@ export class PgStorage implements IStorage {
     const selected = await db.select().from(tests).where(inArray(tests.id, input.testIds));
     if (selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
 
+    // One transaction, so an order never exists without its line items.
+    const orderId = await db.transaction((tx) => this.insertOrderTx(tx, input, selected, null));
+    return (await this.getOrder(orderId))!;
+  }
+
+  /**
+   * The order, its lines, its tube and the opening payment, written inside the
+   * caller's transaction. Shared by the desk (createOrder) and the doctor's
+   * lab referral (createReferrals), so both make exactly the same order.
+   */
+  private async insertOrderTx(tx: Tx, input: CreateOrderArgs, selected: Test[], referralId: string | null): Promise<string> {
     const subtotal = selected.reduce((sum, t) => sum + t.price, 0);
     const discount = Math.min(input.discount, subtotal);
     const total = subtotal - discount;
-
     const opening = Math.min(input.paidAmount, total);
-
-    // One transaction, so an order never exists without its line items.
-    const orderId = await db.transaction(async (tx) => {
+    {
       // Today's visit for this patient, made on first use. ON CONFLICT with a
       // no-op update so the existing row's id comes back too, and two
       // registrars saving at once still end up on one visit.
@@ -1853,6 +2156,7 @@ export class PgStorage implements IStorage {
           status: "pending",
           notes: input.notes ?? null,
           referrer: input.referrer ?? null,
+          referralId,
           createdBy: input.createdBy ?? null,
         })
         .returning({ id: orders.id, orderNumber: orders.orderNumber });
@@ -1894,9 +2198,7 @@ export class PgStorage implements IStorage {
       }
 
       return order.id;
-    });
-
-    return (await this.getOrder(orderId))!;
+    }
   }
 
   async updateOrder(id: string, input: UpdateOrderInput, actor?: Actor): Promise<OrderWithDetails | undefined> {

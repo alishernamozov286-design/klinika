@@ -192,6 +192,40 @@ export const RECORD_FIELD_LABELS: Record<RecordField, string> = {
   recommendations: "Tavsiyalar",
 };
 
+/**
+ * Yo'llanma (TZ §5.1.4): what a doctor sends a patient on to.
+ * - lab: laboratory tests — becomes a lab order at once (TZ §11 Shifokor → Laboratoriya).
+ * - exam: UZI and other examinations from the service catalogue — booked by the desk.
+ * - consult: a specialist consultation — booked by the desk with that specialist.
+ */
+export const REFERRAL_KINDS = ["lab", "exam", "consult"] as const;
+export type ReferralKind = (typeof REFERRAL_KINDS)[number];
+
+export const REFERRAL_KIND_LABELS: Record<ReferralKind, string> = {
+  lab: "Laboratoriya tahlillari",
+  exam: "Tekshiruv",
+  consult: "Mutaxassis konsultatsiyasi",
+};
+
+/** Catalogue kinds a doctor may refer to as an examination. */
+export const REFERRAL_EXAM_SERVICE_KINDS = ["uzi", "boshqa"] as const;
+
+/** Stored lifecycle. Progress (booked, in the lab, done) is derived from the order or the booking. */
+export const REFERRAL_STATUSES = ["active", "cancelled"] as const;
+export type ReferralStatus = (typeof REFERRAL_STATUSES)[number];
+
+/** Where a referral stands, as every screen shows it (shared/referral.ts). */
+export const REFERRAL_STAGES = ["awaiting_booking", "scheduled", "in_lab", "done", "cancelled"] as const;
+export type ReferralStage = (typeof REFERRAL_STAGES)[number];
+
+export const REFERRAL_STAGE_LABELS: Record<ReferralStage, string> = {
+  awaiting_booking: "Navbatga yozilmagan",
+  scheduled: "Navbatga yozilgan",
+  in_lab: "Laboratoriyada",
+  done: "Bajarildi",
+  cancelled: "Bekor qilingan",
+};
+
 /** ISO weekday numbers, Monday first. */
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 export const WEEKDAY_SHORT: Record<number, string> = { 1: "Du", 2: "Se", 3: "Ch", 4: "Pa", 5: "Ju", 6: "Sh", 7: "Ya" };
@@ -381,6 +415,8 @@ export const appointments = pgTable(
     price: money("price").notNull().default(0),
     /** Why the patient is coming, as told to the registrar. */
     reason: text("reason"),
+    /** The referral this booking fulfils (B3.5), if any. */
+    referralId: varchar("referral_id"),
     arrivedAt: isoTimestamp("arrived_at"),
     startedAt: isoTimestamp("started_at"),
     completedAt: isoTimestamp("completed_at"),
@@ -401,6 +437,10 @@ export const appointments = pgTable(
     slotIdx: uniqueIndex("UQ_appointments_slot")
       .on(t.doctorId, t.date, t.startTime)
       .where(sql`status NOT IN ('cancelled', 'no_show')`),
+    // One live booking per referral: two registrars cannot book it twice.
+    referralIdx: uniqueIndex("UQ_appointments_referral")
+      .on(t.referralId)
+      .where(sql`referral_id IS NOT NULL AND status NOT IN ('cancelled', 'no_show')`),
   }),
 );
 
@@ -472,6 +512,52 @@ export const medicalRecordVersions = pgTable(
     replaceReason: text("replace_reason").notNull(),
   },
   (t) => ({ recordVersionIdx: uniqueIndex("UQ_medical_record_versions").on(t.recordId, t.version) }),
+);
+
+/**
+ * Referrals (TZ §5.1.4, §11; B3.5). Issued by the doctor from the
+ * examination window. A lab referral is fulfilled by the lab order created
+ * with it (orders.referral_id); an examination or consultation by the
+ * appointment the desk books for it (appointments.referral_id). The referral
+ * stores only its own lifecycle — whether it is booked, in the lab or done is
+ * read from that order or booking, so the two can never disagree.
+ *
+ * Never deleted: a referral the patient will not use is cancelled with a reason.
+ */
+export const referrals = pgTable(
+  "referrals",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    /** "Yo'llanma №12": what the patient and the lab quote. */
+    referralNumber: integer("referral_number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+    patientId: varchar("patient_id").notNull(),
+    visitId: varchar("visit_id"),
+    /** The examination it was issued from; null only for future non-clinic sources. */
+    appointmentId: varchar("appointment_id"),
+    /** Issuing doctor (doctors.id). */
+    doctorId: varchar("doctor_id").notNull(),
+    kind: text("kind").notNull(),
+    status: text("status").notNull().default("active"),
+    /** exam: the catalogue service (UZI, ...). */
+    serviceId: varchar("service_id"),
+    /** consult: the specialty, and optionally the one doctor asked for. */
+    targetSpecialty: text("target_specialty"),
+    targetDoctorId: varchar("target_doctor_id"),
+    /** Clinical indication: why the doctor sends the patient. */
+    note: text("note"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+    cancelledAt: isoTimestamp("cancelled_at"),
+    cancelledBy: varchar("cancelled_by"),
+    cancelReason: text("cancel_reason"),
+  },
+  (t) => ({
+    patientIdx: index("IDX_referrals_patient").on(t.patientId),
+    appointmentIdx: index("IDX_referrals_appointment").on(t.appointmentId),
+    statusIdx: index("IDX_referrals_status_kind").on(t.status, t.kind),
+  }),
 );
 
 /**
@@ -589,6 +675,8 @@ export const orders = pgTable("orders", {
   patientId: varchar("patient_id").notNull(),
   /** The visit this order belongs to; null only for rows older than visits. */
   visitId: varchar("visit_id"),
+  /** The doctor's lab referral this order fulfils (B3.5); null for desk orders. UQ_orders_referral (migration). */
+  referralId: varchar("referral_id"),
   totalAmount: money("total_amount").notNull(),
   discount: money("discount").notNull().default(0),
   paidAmount: money("paid_amount").notNull().default(0),
@@ -1018,6 +1106,51 @@ export type LabResultEntry = {
   flag: ResultFlag | null;
 };
 
+export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
+  kind: ReferralKind;
+  status: ReferralStatus;
+};
+
+/** The lab order a lab referral became, in brief. */
+export type ReferralOrder = {
+  id: string;
+  orderNumber: number;
+  status: OrderStatus;
+  totalAmount: number;
+  paidAmount: number;
+  tests: number;
+  done: number;
+  testNames: string[];
+};
+
+/** The live booking an examination or consultation referral has, in brief. */
+export type ReferralBooking = {
+  id: string;
+  date: string;
+  startTime: string;
+  status: AppointmentStatus;
+  queueNumber: number;
+  doctorName: string;
+};
+
+export type ReferralWithDetails = Referral & {
+  patientNumber: number;
+  patientName: string;
+  patientPhone: string;
+  /** Issuing doctor. */
+  doctorName: string;
+  doctorUserId: string;
+  specialty: string;
+  serviceName: string | null;
+  serviceKind: ServiceKind | null;
+  servicePrice: number | null;
+  targetDoctorName: string | null;
+  cancelledByName: string | null;
+  order: ReferralOrder | null;
+  booking: ReferralBooking | null;
+  stage: ReferralStage;
+};
+
 /** The electronic medical record (TZ §5.1.2): one summary of everything clinical. */
 export type MedicalCard = {
   patient: Pick<
@@ -1030,6 +1163,8 @@ export type MedicalCard = {
   diagnoses: DiagnosisEntry[];
   /** Null when the viewer may not see lab orders. */
   labResults: LabResultEntry[] | null;
+  /** UZI, examinations, consultations and lab referrals (TZ §5.1.2); null without referrals.read. */
+  referrals: ReferralWithDetails[] | null;
 };
 
 /** The examination window's data in one request. */
@@ -1039,6 +1174,10 @@ export type ExaminationData = {
   /** May the viewer write and sign this record? */
   canWrite: boolean;
   canAmend: boolean;
+  /** Referrals issued from this appointment (B3.5). */
+  referrals: ReferralWithDetails[];
+  /** May the viewer issue referrals from it? */
+  canRefer: boolean;
 };
 
 export type Test = typeof tests.$inferSelect;
@@ -1107,6 +1246,8 @@ export type OrderWithDetails = Order & {
    * as "no sample tracking on this one" rather than as an error.
    */
   sample?: Sample | null;
+  /** "Yo'llanma №12" when the order came from a doctor's referral (TZ §6.1.2). */
+  referralNumber?: number | null;
 };
 
 /** A page of rows plus the row count of the whole (unpaginated) match. */
@@ -1553,11 +1694,17 @@ export const createAppointmentSchema = z.object({
     .max(300, "Juda uzun")
     .nullish()
     .transform((v) => v || null),
+  /** Booking a doctor's referral (B3.5). */
+  referralId: z
+    .string()
+    .min(1)
+    .nullish()
+    .transform((v) => v || null),
 });
 export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
 
 /** Moving a booking: another day, time, doctor or service. Only while it is still "yozildi". */
-export const rescheduleAppointmentSchema = createAppointmentSchema.omit({ patientId: true }).partial().refine(
+export const rescheduleAppointmentSchema = createAppointmentSchema.omit({ patientId: true, referralId: true }).partial().refine(
   (v) => Object.values(v).some((x) => x !== undefined),
   "O'zgartirish uchun ma'lumot yo'q",
 );
@@ -1612,6 +1759,50 @@ export const insertAllergySchema = z.object({
     .max(200, "Juda uzun")
     .nullish()
     .transform((v) => v || null),
+});
+
+const referralNote = z
+  .string()
+  .trim()
+  .max(500, "Juda uzun")
+  .nullish()
+  .transform((v) => v || null);
+
+/** What the doctor fills in the referral dialog; one request may make several referrals. */
+export const createReferralSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("lab"),
+    testIds: z
+      .array(z.string().min(1))
+      .min(1, "Kamida bitta tahlilni tanlang")
+      .max(60, "Juda ko'p tahlil")
+      .transform((ids) => Array.from(new Set(ids))),
+    note: referralNote,
+  }),
+  z.object({
+    kind: z.literal("exam"),
+    serviceIds: z
+      .array(z.string().min(1))
+      .min(1, "Kamida bitta tekshiruvni tanlang")
+      .max(10, "Juda ko'p tekshiruv")
+      .transform((ids) => Array.from(new Set(ids))),
+    note: referralNote,
+  }),
+  z.object({
+    kind: z.literal("consult"),
+    targetSpecialty: z.string().trim().min(2, "Mutaxassislikni tanlang").max(80, "Juda uzun"),
+    targetDoctorId: z
+      .string()
+      .min(1)
+      .nullish()
+      .transform((v) => v || null),
+    note: z.string().trim().min(3, "Konsultatsiya sababini yozing").max(500, "Juda uzun"),
+  }),
+]);
+export type CreateReferralInput = z.infer<typeof createReferralSchema>;
+
+export const cancelReferralSchema = z.object({
+  reason: z.string().trim().min(3, "Bekor qilish sababini yozing").max(300, "Juda uzun"),
 });
 
 export const removeAllergySchema = z.object({
@@ -1780,6 +1971,8 @@ export type ReceptionBoard = {
     /** Still to come, by booked time. */
     upcoming: AppointmentWithDetails[];
   } | null;
+  /** Doctors' referrals to examinations and specialists nobody has booked yet, oldest first. */
+  referrals: { total: number; items: ReferralWithDetails[] } | null;
 };
 
 export type RevenuePoint = {

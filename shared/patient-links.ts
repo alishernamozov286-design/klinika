@@ -29,6 +29,7 @@ export const PATIENT_LINKS = {
   appointments: { merge: "move", delete: "block", label: "qabullar" },
   medical_records: { merge: "move", delete: "block", label: "ko'rik yozuvlari" },
   patient_allergies: { merge: "move", delete: "block", label: "allergiyalar" },
+  referrals: { merge: "move", delete: "block", label: "yo'llanmalar" },
 } as const satisfies Record<string, PatientLinkRule>;
 
 export type PatientLinkedTable = keyof typeof PATIENT_LINKS;

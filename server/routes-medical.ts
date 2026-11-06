@@ -13,7 +13,10 @@
  */
 import type { Express, Request } from "express";
 import {
+  REFERRAL_KIND_LABELS,
   amendRecordSchema,
+  cancelReferralSchema,
+  createReferralSchema,
   insertAllergySchema,
   removeAllergySchema,
   saveRecordSchema,
@@ -24,11 +27,14 @@ import {
   type MedicalRecordWithDetails,
   type OrderWithDetails,
   type Patient,
+  type ReferralWithDetails,
 } from "@shared/schema";
+import { isExamServiceKind, referralSubject } from "@shared/referral";
 import { changedFields, diagnosisHistory, fieldList, pickFields, signProblem } from "@shared/medical-record";
 import { patientAge } from "@shared/patient-identity";
 import { hasPermission, requirePermission } from "./rbac";
-import { audit, emptyIfMissing, handle, logPatientView } from "./route-helpers";
+import { audit, emptyIfMissing, handle, logPatientView, stringParam } from "./route-helpers";
+import type { NewReferrals } from "./storage-types";
 import { storage } from "./storage";
 import { localDay } from "./storage-types";
 
@@ -74,7 +80,13 @@ export function registerMedicalRoutes(app: Express) {
       // A doctor without records.read sees only their own patients' examinations.
       if (!own && !hasPermission(req, "records.read")) return res.status(404).json({ message: "Qabul topilmadi" });
 
-      const record = await storage.getRecordByAppointment(appointment.id).catch((e) => emptyIfMissing(e, undefined));
+      const seesReferrals = own || hasPermission(req, "referrals.read");
+      const [record, referrals] = await Promise.all([
+        storage.getRecordByAppointment(appointment.id).catch((e) => emptyIfMissing(e, undefined)),
+        seesReferrals
+          ? storage.listReferrals({ appointmentId: appointment.id }).catch((e) => emptyIfMissing(e, [] as ReferralWithDetails[]))
+          : Promise.resolve([] as ReferralWithDetails[]),
+      ]);
       await logPatientView(req, { id: appointment.patientId, patientNumber: appointment.patientNumber, fullName: appointment.patientName }, "ko'rik yozuvi ochildi");
 
       const data: ExaminationData = {
@@ -82,6 +94,8 @@ export function registerMedicalRoutes(app: Express) {
         record: record && visibleTo(req)(record) ? record : null,
         canWrite: own && hasPermission(req, "records.write") && WRITABLE_APPOINTMENT.has(appointment.status),
         canAmend: own && hasPermission(req, "records.amend"),
+        referrals,
+        canRefer: own && hasPermission(req, "referrals.create") && WRITABLE_APPOINTMENT.has(appointment.status),
       };
       res.json(data);
     }),
@@ -209,10 +223,14 @@ export function registerMedicalRoutes(app: Express) {
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
       const seesLab = hasPermission(req, "orders.read");
 
-      const [allergies, records, orders] = await Promise.all([
+      const seesReferrals = hasPermission(req, "referrals.read");
+      const [allergies, records, orders, referrals] = await Promise.all([
         storage.listAllergies(patient.id, { includeInactive: true }).catch((e) => emptyIfMissing(e, [])),
         storage.listRecords({ patientId: patient.id }).catch((e) => emptyIfMissing(e, [])),
         seesLab ? storage.listOrders({ patientId: patient.id }) : Promise.resolve(null),
+        seesReferrals
+          ? storage.listReferrals({ patientId: patient.id }).catch((e) => emptyIfMissing(e, [] as ReferralWithDetails[]))
+          : Promise.resolve(null),
       ]);
       await logPatientView(req, patient, "tibbiy kartasi ochildi");
 
@@ -223,8 +241,123 @@ export function registerMedicalRoutes(app: Express) {
         records: visible,
         diagnoses: diagnosisHistory(visible),
         labResults: orders ? labResults(orders.items) : null,
+        referrals,
       };
       res.json(card);
+    }),
+  );
+
+  // -------------------------------------------------------------- referrals
+
+  /**
+   * Yo'llanma (TZ §5.1.4): the appointment's own doctor sends the patient on —
+   * to the lab (the order is created at once and waits for payment at the
+   * desk), to an examination from the catalogue, or to a specialist. The two
+   * last are booked by the desk.
+   */
+  app.post(
+    "/api/appointments/:id/referrals",
+    requirePermission("referrals.create"),
+    handle(async (req, res) => {
+      const input = createReferralSchema.parse(req.body);
+      const appointment = await storage.getAppointment(req.params.id);
+      if (!appointment || !isAuthor(req, appointment)) return res.status(404).json({ message: "Qabul topilmadi" });
+      if (!WRITABLE_APPOINTMENT.has(appointment.status)) {
+        return res.status(400).json({ message: "Yo'llanmani faqat qabul boshlangandan keyin berish mumkin" });
+      }
+
+      const origin = {
+        patientId: appointment.patientId,
+        visitId: appointment.visitId,
+        appointmentId: appointment.id,
+        doctorId: appointment.doctorId,
+        note: input.note,
+      };
+      let batch: NewReferrals;
+      if (input.kind === "lab") {
+        const catalogue = new Map((await storage.listTests()).map((t) => [t.id, t]));
+        const missing = input.testIds.filter((id) => !catalogue.get(id)?.isActive);
+        if (missing.length) return res.status(400).json({ message: "Tanlangan tahlillardan biri katalogda yo'q yoki to'xtatilgan" });
+        batch = { ...origin, kind: "lab", testIds: input.testIds, referrer: `${appointment.doctorName}, ${appointment.specialty}` };
+      } else if (input.kind === "exam") {
+        const services = new Map((await storage.listServices()).map((s) => [s.id, s]));
+        for (const id of input.serviceIds) {
+          const s = services.get(id);
+          if (!s || !s.isActive) return res.status(400).json({ message: "Tanlangan tekshiruvlardan biri katalogda yo'q yoki to'xtatilgan" });
+          if (!isExamServiceKind(s.kind)) return res.status(400).json({ message: `"${s.name}" tekshiruv emas` });
+        }
+        batch = { ...origin, kind: "exam", serviceIds: input.serviceIds };
+      } else {
+        let specialty = input.targetSpecialty;
+        if (input.targetDoctorId) {
+          const target = await storage.getDoctor(input.targetDoctorId);
+          if (!target || !target.isActive || !target.userActive) {
+            return res.status(400).json({ message: "Tanlangan shifokor hozir qabul qilmaydi" });
+          }
+          specialty = target.specialty;
+        }
+        batch = { ...origin, kind: "consult", targetSpecialty: specialty, targetDoctorId: input.targetDoctorId };
+      }
+
+      const made = await storage.createReferrals(batch, { id: req.user!.id, name: req.user!.fullName });
+      for (const r of made) {
+        await audit(
+          req,
+          "create",
+          "referral",
+          r.id,
+          `${patientLabel(appointment)} — yo'llanma №${r.referralNumber}: ${REFERRAL_KIND_LABELS[r.kind]} (${referralSubject(r)})${
+            r.order ? `, tahlil buyurtmasi #${r.order.orderNumber}` : ""
+          }`,
+        );
+      }
+      res.status(201).json(made);
+    }),
+  );
+
+  /**
+   * The desk's and the card's view of referrals. awaiting=1: examinations and
+   * consultations no one has booked yet, oldest first — the desk's to-do list.
+   */
+  app.get(
+    "/api/referrals",
+    requirePermission("referrals.read"),
+    handle(async (req, res) => {
+      const patientId = stringParam(req.query.patientId);
+      const awaiting = req.query.awaiting === "1";
+      if (!patientId && !awaiting) return res.status(400).json({ message: "Bemor yoki holat ko'rsatilishi kerak" });
+      const list = await storage
+        .listReferrals({ patientId, awaitingBooking: awaiting, limit: awaiting ? 200 : undefined })
+        .catch((e) => emptyIfMissing(e, [] as ReferralWithDetails[]));
+      res.json(list);
+    }),
+  );
+
+  /** The issuing doctor, or the desk (referrals.manage), cancels with a reason. */
+  app.post(
+    "/api/referrals/:id/cancel",
+    requirePermission("referrals.create", "referrals.manage"),
+    handle(async (req, res) => {
+      const { reason } = cancelReferralSchema.parse(req.body);
+      const before = await storage.getReferral(req.params.id);
+      if (!before) return res.status(404).json({ message: "Yo'llanma topilmadi" });
+      const issuer = before.doctorUserId === req.user!.id && hasPermission(req, "referrals.create");
+      if (!issuer && !hasPermission(req, "referrals.manage")) {
+        return res.status(403).json({ message: "Faqat yo'llanmani bergan shifokor yoki registratura bekor qila oladi" });
+      }
+      if (before.stage === "done") return res.status(409).json({ message: "Yo'llanma bajarilgan, uni bekor qilib bo'lmaydi" });
+      const referral = await storage.cancelReferral(before.id, reason, { id: req.user!.id, name: req.user!.fullName });
+      if (!referral) return res.status(404).json({ message: "Yo'llanma topilmadi" });
+      await audit(
+        req,
+        "update",
+        "referral",
+        referral.id,
+        `${patientLabel(referral)} — yo'llanma №${referral.referralNumber} bekor qilindi (${referralSubject(referral)}). Sabab: ${reason}${
+          referral.order ? `; tahlil buyurtmasi #${referral.order.orderNumber} ham bekor qilindi` : ""
+        }`,
+      );
+      res.json(referral);
     }),
   );
 

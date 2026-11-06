@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CalendarDays, CalendarX2, ChevronLeft, ChevronRight, Clock, DoorOpen, Loader2, Stethoscope, UserPlus, X } from "lucide-react";
+import { CalendarDays, CalendarX2, ChevronLeft, ChevronRight, Clock, DoorOpen, Loader2, Send, Stethoscope, UserPlus, X } from "lucide-react";
 import {
   SERVICE_KIND_LABELS,
   WEEKDAY_SHORT,
@@ -19,8 +19,10 @@ import {
   type DoctorDaySlots,
   type DoctorWithDetails,
   type Patient,
+  type ReferralWithDetails,
   type ServiceWithDetails,
 } from "@shared/schema";
+import { referralSubject } from "@shared/referral";
 import { MAX_BOOKING_DAYS_AHEAD, weekdayOf } from "@shared/appointment";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,7 +38,7 @@ import { PatientDialog } from "@/components/patient-dialog";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useDebounced } from "@/hooks/use-debounced";
 import { useToast } from "@/hooks/use-toast";
-import { dayKey, formatDay, formatDayLong, money, shiftDay } from "@/lib/format";
+import { dayKey, formatDate, formatDay, formatDayLong, money, shiftDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_SERVICE = "doctor";
@@ -48,12 +50,15 @@ export function AppointmentDialog({
   appointment,
   defaultDoctorId,
   defaultDate,
+  referral,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Opened from a patient: skip the search. */
   presetPatient?: Patient | null;
+  /** Booking a doctor's referral (B3.5): patient, service or specialist are fixed by it. */
+  referral?: ReferralWithDetails | null;
   /** Present = move this booking. */
   appointment?: AppointmentWithDetails | null;
   defaultDoctorId?: string | null;
@@ -65,8 +70,9 @@ export function AppointmentDialog({
       <DialogContent className="flex max-h-[94vh] flex-col gap-0 p-0 sm:max-w-4xl">
         {open && (
           <BookingForm
-            key={appointment?.id ?? presetPatient?.id ?? "new"}
+            key={appointment?.id ?? referral?.id ?? presetPatient?.id ?? "new"}
             presetPatient={presetPatient}
+            referral={referral}
             appointment={appointment}
             defaultDoctorId={defaultDoctorId}
             defaultDate={defaultDate}
@@ -86,6 +92,7 @@ type PickedPatient = Pick<Patient, "id" | "fullName" | "phone" | "patientNumber"
 
 function BookingForm({
   presetPatient,
+  referral,
   appointment,
   defaultDoctorId,
   defaultDate,
@@ -93,6 +100,7 @@ function BookingForm({
   onCancel,
 }: {
   presetPatient?: Patient | null;
+  referral?: ReferralWithDetails | null;
   appointment?: AppointmentWithDetails | null;
   defaultDoctorId?: string | null;
   defaultDate?: string | null;
@@ -106,15 +114,24 @@ function BookingForm({
   const [patient, setPatient] = useState<PickedPatient | null>(
     appointment
       ? { id: appointment.patientId, fullName: appointment.patientName, phone: appointment.patientPhone, patientNumber: appointment.patientNumber }
-      : (presetPatient ?? null),
+      : referral
+        ? { id: referral.patientId, fullName: referral.patientName, phone: referral.patientPhone, patientNumber: referral.patientNumber }
+        : (presetPatient ?? null),
   );
+  // An examination referral is booked for its own service; the choice is locked.
+  const lockedService = referral?.kind === "exam" ? referral.serviceId : null;
   const [patientSearch, setPatientSearch] = useState("");
   const [newPatientOpen, setNewPatientOpen] = useState(false);
-  const [doctorId, setDoctorId] = useState<string>(appointment?.doctorId ?? defaultDoctorId ?? "");
-  const [serviceId, setServiceId] = useState<string>(appointment?.serviceId ?? DEFAULT_SERVICE);
+  const [doctorId, setDoctorId] = useState<string>(
+    appointment?.doctorId ?? (referral?.kind === "consult" ? referral.targetDoctorId : null) ?? defaultDoctorId ?? "",
+  );
+  const [serviceId, setServiceId] = useState<string>(appointment?.serviceId ?? lockedService ?? DEFAULT_SERVICE);
   const [date, setDate] = useState<string>(appointment?.date ?? (defaultDate && defaultDate >= today ? defaultDate : today));
   const [startTime, setStartTime] = useState<string | null>(appointment?.startTime ?? null);
-  const [reason, setReason] = useState(appointment?.reason ?? "");
+  const [reason, setReason] = useState(
+    appointment?.reason ??
+      (referral ? `Yo'llanma №${referral.referralNumber} (${referral.doctorName})${referral.note ? `: ${referral.note}` : ""}`.slice(0, 300) : ""),
+  );
   const [error, setError] = useState<string | null>(null);
 
   const debounced = useDebounced(patientSearch.trim(), 250);
@@ -122,8 +139,22 @@ function BookingForm({
     queryKey: [`/api/patients?search=${encodeURIComponent(debounced)}&limit=8`],
     enabled: !patient,
   });
-  const { data: doctors = [] } = useQuery<DoctorWithDetails[]>({ queryKey: ["/api/doctors?active=1"] });
+  const { data: allDoctors = [] } = useQuery<DoctorWithDetails[]>({ queryKey: ["/api/doctors?active=1"] });
   const { data: services = [] } = useQuery<ServiceWithDetails[]>({ queryKey: ["/api/services?active=1"] });
+
+  // A referral narrows the doctors to those who can fulfil it: the one asked
+  // for, the specialty asked for, or the department that provides the service.
+  const doctors = useMemo(() => {
+    if (!referral) return allDoctors;
+    if (referral.kind === "consult") {
+      if (referral.targetDoctorId) return allDoctors.filter((d) => d.id === referral.targetDoctorId);
+      const want = (referral.targetSpecialty ?? "").trim().toLowerCase();
+      return allDoctors.filter((d) => d.specialty.trim().toLowerCase() === want);
+    }
+    const dept = services.find((x) => x.id === referral.serviceId)?.departmentId;
+    const inDept = dept ? allDoctors.filter((d) => d.departmentId === dept) : [];
+    return inDept.length ? inDept : allDoctors;
+  }, [allDoctors, services, referral]);
 
   const doctor = doctors.find((d) => d.id === doctorId);
   const workdays = useMemo(() => new Set(doctor?.schedule.map((s) => s.day) ?? []), [doctor]);
@@ -190,11 +221,11 @@ function BookingForm({
       };
       const res = isMove
         ? await apiRequest("PATCH", `/api/appointments/${appointment!.id}`, body)
-        : await apiRequest("POST", "/api/appointments", { ...body, patientId: patient.id });
+        : await apiRequest("POST", "/api/appointments", { ...body, patientId: patient.id, referralId: referral?.id ?? null });
       return (await res.json()) as AppointmentWithDetails;
     },
     onSuccess: (a) => {
-      invalidateApi("/api/appointments", "/api/doctors", "/api/cabinet", "/api/services", "/api/reception");
+      invalidateApi("/api/appointments", "/api/doctors", "/api/cabinet", "/api/services", "/api/reception", "/api/referrals");
       toast({
         title: isMove ? "Qabul ko'chirildi" : `Qabulga yozildi — navbat №${a.queueNumber}`,
         description: `${a.patientName} · ${a.doctorName} · ${formatDay(a.date)} ${a.startTime}`,
@@ -229,6 +260,20 @@ function BookingForm({
             ? `Hozir: ${formatDay(appointment!.date)} ${appointment!.startTime}, ${appointment!.doctorName}, navbat №${appointment!.queueNumber}`
             : "Bemor, shifokor va bo'sh vaqtni tanlang. Navbat raqami avtomatik beriladi."}
         </DialogDescription>
+        {referral && (
+          <div className="mt-3 flex items-start gap-3 rounded-xl border border-primary/25 bg-primary/[0.05] p-3" data-testid="banner-booking-referral">
+            <Send className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <div className="min-w-0 text-sm">
+              <p className="font-medium">
+                Yo'llanma №{referral.referralNumber}: {referralSubject(referral)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {referral.doctorName} ({referral.specialty}), {formatDate(referral.createdAt)}
+                {referral.note ? ` · «${referral.note}»` : ""}
+              </p>
+            </div>
+          </div>
+        )}
       </DialogHeader>
 
       <div className="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -250,7 +295,7 @@ function BookingForm({
                     <PhoneText value={patient.phone} asLink={false} className="text-sm text-muted-foreground" />
                   </div>
                 </div>
-                {!isMove && !presetPatient && (
+                {!isMove && !presetPatient && !referral && (
                   <Button variant="ghost" size="sm" onClick={() => setPatient(null)} data-testid="button-booking-clear-patient">
                     <X className="mr-1 h-4 w-4" />
                     O'zgartirish
@@ -306,7 +351,9 @@ function BookingForm({
             <Label className="mb-2 block">2. Shifokor</Label>
             {doctors.length === 0 ? (
               <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-                Qabul qiladigan shifokor yo'q. Klinika → Shifokorlar bo'limida profil va ish jadvalini kiriting.
+                {referral
+                  ? "Bu yo'llanmani bajaradigan faol shifokor yo'q."
+                  : "Qabul qiladigan shifokor yo'q. Klinika → Shifokorlar bo'limida profil va ish jadvalini kiriting."}
               </p>
             ) : (
               <Select
@@ -314,7 +361,7 @@ function BookingForm({
                 onValueChange={(v) => {
                   setDoctorId(v);
                   setStartTime(null);
-                  setServiceId(DEFAULT_SERVICE);
+                  setServiceId(lockedService ?? DEFAULT_SERVICE);
                   setError(null);
                 }}
               >
@@ -364,7 +411,7 @@ function BookingForm({
 
           <div>
             <Label className="mb-2 block">3. Xizmat</Label>
-            <Select value={serviceId} onValueChange={setServiceId} disabled={!doctor}>
+            <Select value={serviceId} onValueChange={setServiceId} disabled={!doctor || Boolean(lockedService)}>
               <SelectTrigger data-testid="select-booking-service">
                 <SelectValue />
               </SelectTrigger>
@@ -372,7 +419,7 @@ function BookingForm({
                 <SelectItem value={DEFAULT_SERVICE}>
                   Shifokor ko'rigi{doctor ? ` — ${money(doctor.consultationPrice)}` : ""}
                 </SelectItem>
-                {relevantServices.map((s) => (
+                {(lockedService ? services.filter((x) => x.id === lockedService) : relevantServices).map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}
                     <span className="text-muted-foreground">

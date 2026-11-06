@@ -14,7 +14,7 @@
 export const PERMISSION_GROUPS = [
   { key: "patients", label: "Bemorlar", description: "Bemorlar bazasi va shaxsiy kartalar" },
   { key: "appointments", label: "Navbat va qabul", description: "Shifokor qabuliga yozish, navbat va shifokor kabineti" },
-  { key: "medical", label: "Tibbiy karta", description: "Ko'rik yozuvlari, tashxislar va allergiyalar (TZ §5)" },
+  { key: "medical", label: "Tibbiy karta", description: "Ko'rik yozuvlari, tashxislar, allergiyalar va yo'llanmalar (TZ §5)" },
   { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
   { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
   { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
@@ -99,6 +99,21 @@ export const PERMISSIONS = {
     label: "Tuzatish",
     description: "Tasdiqlangan yozuvga sababli tuzatish kiritish; eski nusxa saqlanadi",
     sensitive: true,
+  },
+  "referrals.read": {
+    group: "medical",
+    label: "Yo'llanmalarni ko'rish",
+    description: "Shifokor yo'llanmalari: tahlil, UZI va tekshiruvlar, konsultatsiyalar",
+  },
+  "referrals.create": {
+    group: "medical",
+    label: "Yo'llanma berish",
+    description: "O'z qabulidan laboratoriya, tekshiruv va mutaxassis konsultatsiyasiga yo'llanma berish",
+  },
+  "referrals.manage": {
+    group: "medical",
+    label: "Yo'llanmalarni boshqarish",
+    description: "Bemor foydalanmaydigan yo'llanmani sabab bilan bekor qilish",
   },
 
   "orders.read": {
@@ -298,6 +313,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "services.manage",
       "appointments.read",
       "records.read",
+      "referrals.read",
       "patients.read",
       "orders.read",
       "orders.cancel",
@@ -319,6 +335,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "patients.update",
       "appointments.read",
       "appointments.manage",
+      "referrals.read",
+      "referrals.manage",
       "orders.read",
       "orders.create",
       "orders.update",
@@ -340,6 +358,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "records.write",
       "records.sign",
       "records.amend",
+      "referrals.read",
+      "referrals.create",
     ],
   },
   {
@@ -401,6 +421,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     permissions: [
       "patients.read",
       "appointments.read",
+      "referrals.read",
       "orders.read",
       "finance.view",
       "expenses.read",

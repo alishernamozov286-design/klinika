@@ -27,7 +27,7 @@ var init_permissions = __esm({
     PERMISSION_GROUPS = [
       { key: "patients", label: "Bemorlar", description: "Bemorlar bazasi va shaxsiy kartalar" },
       { key: "appointments", label: "Navbat va qabul", description: "Shifokor qabuliga yozish, navbat va shifokor kabineti" },
-      { key: "medical", label: "Tibbiy karta", description: "Ko'rik yozuvlari, tashxislar va allergiyalar (TZ \xA75)" },
+      { key: "medical", label: "Tibbiy karta", description: "Ko'rik yozuvlari, tashxislar, allergiyalar va yo'llanmalar (TZ \xA75)" },
       { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
       { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
       { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
@@ -95,6 +95,21 @@ var init_permissions = __esm({
         label: "Tuzatish",
         description: "Tasdiqlangan yozuvga sababli tuzatish kiritish; eski nusxa saqlanadi",
         sensitive: true
+      },
+      "referrals.read": {
+        group: "medical",
+        label: "Yo'llanmalarni ko'rish",
+        description: "Shifokor yo'llanmalari: tahlil, UZI va tekshiruvlar, konsultatsiyalar"
+      },
+      "referrals.create": {
+        group: "medical",
+        label: "Yo'llanma berish",
+        description: "O'z qabulidan laboratoriya, tekshiruv va mutaxassis konsultatsiyasiga yo'llanma berish"
+      },
+      "referrals.manage": {
+        group: "medical",
+        label: "Yo'llanmalarni boshqarish",
+        description: "Bemor foydalanmaydigan yo'llanmani sabab bilan bekor qilish"
       },
       "orders.read": {
         group: "orders",
@@ -249,6 +264,7 @@ var init_permissions = __esm({
           "services.manage",
           "appointments.read",
           "records.read",
+          "referrals.read",
           "patients.read",
           "orders.read",
           "orders.cancel",
@@ -270,6 +286,8 @@ var init_permissions = __esm({
           "patients.update",
           "appointments.read",
           "appointments.manage",
+          "referrals.read",
+          "referrals.manage",
           "orders.read",
           "orders.create",
           "orders.update",
@@ -290,7 +308,9 @@ var init_permissions = __esm({
           "records.read",
           "records.write",
           "records.sign",
-          "records.amend"
+          "records.amend",
+          "referrals.read",
+          "referrals.create"
         ]
       },
       {
@@ -352,6 +372,7 @@ var init_permissions = __esm({
         permissions: [
           "patients.read",
           "appointments.read",
+          "referrals.read",
           "orders.read",
           "finance.view",
           "expenses.read",
@@ -470,6 +491,12 @@ __export(schema_exports, {
   RECORD_FIELD_LABELS: () => RECORD_FIELD_LABELS,
   RECORD_STATUSES: () => RECORD_STATUSES,
   RECORD_STATUS_LABELS: () => RECORD_STATUS_LABELS,
+  REFERRAL_EXAM_SERVICE_KINDS: () => REFERRAL_EXAM_SERVICE_KINDS,
+  REFERRAL_KINDS: () => REFERRAL_KINDS,
+  REFERRAL_KIND_LABELS: () => REFERRAL_KIND_LABELS,
+  REFERRAL_STAGES: () => REFERRAL_STAGES,
+  REFERRAL_STAGE_LABELS: () => REFERRAL_STAGE_LABELS,
+  REFERRAL_STATUSES: () => REFERRAL_STATUSES,
   RESULT_FLAGS: () => RESULT_FLAGS,
   SAMPLE_REJECT_REASONS: () => SAMPLE_REJECT_REASONS,
   SAMPLE_STATUSES: () => SAMPLE_STATUSES,
@@ -486,10 +513,12 @@ __export(schema_exports, {
   appointments: () => appointments,
   auditLog: () => auditLog,
   cancelExpenseSchema: () => cancelExpenseSchema,
+  cancelReferralSchema: () => cancelReferralSchema,
   changePasswordSchema: () => changePasswordSchema,
   createAppointmentSchema: () => createAppointmentSchema,
   createOrderSchema: () => createOrderSchema,
   createPaymentSchema: () => createPaymentSchema,
+  createReferralSchema: () => createReferralSchema,
   daysBetween: () => daysBetween,
   departments: () => departments,
   doctors: () => doctors,
@@ -523,6 +552,7 @@ __export(schema_exports, {
   payments: () => payments,
   previousRange: () => previousRange,
   recordFieldsSchema: () => recordFieldsSchema,
+  referrals: () => referrals,
   removeAllergySchema: () => removeAllergySchema,
   rescheduleAppointmentSchema: () => rescheduleAppointmentSchema,
   roles: () => roles,
@@ -588,7 +618,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_FIELD_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -681,6 +711,22 @@ var init_schema = __esm({
       preliminaryDiagnosis: "Dastlabki tashxis",
       finalDiagnosis: "Yakuniy tashxis",
       recommendations: "Tavsiyalar"
+    };
+    REFERRAL_KINDS = ["lab", "exam", "consult"];
+    REFERRAL_KIND_LABELS = {
+      lab: "Laboratoriya tahlillari",
+      exam: "Tekshiruv",
+      consult: "Mutaxassis konsultatsiyasi"
+    };
+    REFERRAL_EXAM_SERVICE_KINDS = ["uzi", "boshqa"];
+    REFERRAL_STATUSES = ["active", "cancelled"];
+    REFERRAL_STAGES = ["awaiting_booking", "scheduled", "in_lab", "done", "cancelled"];
+    REFERRAL_STAGE_LABELS = {
+      awaiting_booking: "Navbatga yozilmagan",
+      scheduled: "Navbatga yozilgan",
+      in_lab: "Laboratoriyada",
+      done: "Bajarildi",
+      cancelled: "Bekor qilingan"
     };
     WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
     WEEKDAY_SHORT = { 1: "Du", 2: "Se", 3: "Ch", 4: "Pa", 5: "Ju", 6: "Sh", 7: "Ya" };
@@ -814,6 +860,8 @@ var init_schema = __esm({
         price: money("price").notNull().default(0),
         /** Why the patient is coming, as told to the registrar. */
         reason: text("reason"),
+        /** The referral this booking fulfils (B3.5), if any. */
+        referralId: varchar("referral_id"),
         arrivedAt: isoTimestamp("arrived_at"),
         startedAt: isoTimestamp("started_at"),
         completedAt: isoTimestamp("completed_at"),
@@ -831,7 +879,9 @@ var init_schema = __esm({
         queueIdx: uniqueIndex("UQ_appointments_queue").on(t.doctorId, t.date, t.queueNumber),
         // One live booking per doctor per start time — the database is the last
         // word when two registrars take the same slot at the same moment.
-        slotIdx: uniqueIndex("UQ_appointments_slot").on(t.doctorId, t.date, t.startTime).where(sql`status NOT IN ('cancelled', 'no_show')`)
+        slotIdx: uniqueIndex("UQ_appointments_slot").on(t.doctorId, t.date, t.startTime).where(sql`status NOT IN ('cancelled', 'no_show')`),
+        // One live booking per referral: two registrars cannot book it twice.
+        referralIdx: uniqueIndex("UQ_appointments_referral").on(t.referralId).where(sql`referral_id IS NOT NULL AND status NOT IN ('cancelled', 'no_show')`)
       })
     );
     medicalRecords = pgTable(
@@ -887,6 +937,41 @@ var init_schema = __esm({
         replaceReason: text("replace_reason").notNull()
       },
       (t) => ({ recordVersionIdx: uniqueIndex("UQ_medical_record_versions").on(t.recordId, t.version) })
+    );
+    referrals = pgTable(
+      "referrals",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        /** "Yo'llanma №12": what the patient and the lab quote. */
+        referralNumber: integer("referral_number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+        patientId: varchar("patient_id").notNull(),
+        visitId: varchar("visit_id"),
+        /** The examination it was issued from; null only for future non-clinic sources. */
+        appointmentId: varchar("appointment_id"),
+        /** Issuing doctor (doctors.id). */
+        doctorId: varchar("doctor_id").notNull(),
+        kind: text("kind").notNull(),
+        status: text("status").notNull().default("active"),
+        /** exam: the catalogue service (UZI, ...). */
+        serviceId: varchar("service_id"),
+        /** consult: the specialty, and optionally the one doctor asked for. */
+        targetSpecialty: text("target_specialty"),
+        targetDoctorId: varchar("target_doctor_id"),
+        /** Clinical indication: why the doctor sends the patient. */
+        note: text("note"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by"),
+        cancelledAt: isoTimestamp("cancelled_at"),
+        cancelledBy: varchar("cancelled_by"),
+        cancelReason: text("cancel_reason")
+      },
+      (t) => ({
+        patientIdx: index("IDX_referrals_patient").on(t.patientId),
+        appointmentIdx: index("IDX_referrals_appointment").on(t.appointmentId),
+        statusIdx: index("IDX_referrals_status_kind").on(t.status, t.kind)
+      })
     );
     patientAllergies = pgTable(
       "patient_allergies",
@@ -983,6 +1068,8 @@ var init_schema = __esm({
       patientId: varchar("patient_id").notNull(),
       /** The visit this order belongs to; null only for rows older than visits. */
       visitId: varchar("visit_id"),
+      /** The doctor's lab referral this order fulfils (B3.5); null for desk orders. UQ_orders_referral (migration). */
+      referralId: varchar("referral_id"),
       totalAmount: money("total_amount").notNull(),
       discount: money("discount").notNull().default(0),
       paidAmount: money("paid_amount").notNull().default(0),
@@ -1335,9 +1422,11 @@ var init_schema = __esm({
       serviceId: z.string().min(1).nullish().transform((v) => v || null),
       date: dayString,
       startTime: timeOfDay,
-      reason: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null)
+      reason: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null),
+      /** Booking a doctor's referral (B3.5). */
+      referralId: z.string().min(1).nullish().transform((v) => v || null)
     });
-    rescheduleAppointmentSchema = createAppointmentSchema.omit({ patientId: true }).partial().refine(
+    rescheduleAppointmentSchema = createAppointmentSchema.omit({ patientId: true, referralId: true }).partial().refine(
       (v) => Object.values(v).some((x) => x !== void 0),
       "O'zgartirish uchun ma'lumot yo'q"
     );
@@ -1365,6 +1454,28 @@ var init_schema = __esm({
     insertAllergySchema = z.object({
       allergen: z.string().trim().min(2, "Allergenni kiriting").max(120, "Juda uzun"),
       reaction: z.string().trim().max(200, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    referralNote = z.string().trim().max(500, "Juda uzun").nullish().transform((v) => v || null);
+    createReferralSchema = z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("lab"),
+        testIds: z.array(z.string().min(1)).min(1, "Kamida bitta tahlilni tanlang").max(60, "Juda ko'p tahlil").transform((ids) => Array.from(new Set(ids))),
+        note: referralNote
+      }),
+      z.object({
+        kind: z.literal("exam"),
+        serviceIds: z.array(z.string().min(1)).min(1, "Kamida bitta tekshiruvni tanlang").max(10, "Juda ko'p tekshiruv").transform((ids) => Array.from(new Set(ids))),
+        note: referralNote
+      }),
+      z.object({
+        kind: z.literal("consult"),
+        targetSpecialty: z.string().trim().min(2, "Mutaxassislikni tanlang").max(80, "Juda uzun"),
+        targetDoctorId: z.string().min(1).nullish().transform((v) => v || null),
+        note: z.string().trim().min(3, "Konsultatsiya sababini yozing").max(500, "Juda uzun")
+      })
+    ]);
+    cancelReferralSchema = z.object({
+      reason: z.string().trim().min(3, "Bekor qilish sababini yozing").max(300, "Juda uzun")
     });
     removeAllergySchema = z.object({
       reason: z.string().trim().min(3, "Sababini yozing").max(200, "Juda uzun")
@@ -1919,6 +2030,52 @@ var init_sample = __esm({
   }
 });
 
+// shared/referral.ts
+function referralStage(r) {
+  if (r.status === "cancelled") return "cancelled";
+  if (r.kind === "lab") {
+    if (!r.order || r.order.status === "cancelled") return "cancelled";
+    return r.order.status === "completed" ? "done" : "in_lab";
+  }
+  if (!r.booking) return "awaiting_booking";
+  return r.booking.status === "completed" ? "done" : "scheduled";
+}
+function referralBookingProblem(referral, booking) {
+  if (referral.status === "cancelled") return "Yo'llanma bekor qilingan";
+  if (referral.kind === "lab") return "Laboratoriya yo'llanmasi qabulga yozilmaydi: buyurtma laboratoriyaga allaqachon tushgan";
+  if (referral.patientId !== booking.patientId) return "Yo'llanma boshqa bemorga berilgan";
+  if (referral.kind === "exam" && booking.serviceId !== referral.serviceId) {
+    return `Yo'llanma "${referral.serviceName ?? "tekshiruv"}" xizmatiga berilgan, qabul shu xizmat bilan bo'lishi kerak`;
+  }
+  if (referral.kind === "consult") {
+    if (referral.targetDoctorId && booking.doctorId !== referral.targetDoctorId) {
+      return `Yo'llanma ${referral.targetDoctorName ?? "boshqa shifokor"}ga berilgan`;
+    }
+    const want = (referral.targetSpecialty ?? "").trim().toLowerCase();
+    if (!referral.targetDoctorId && want && booking.doctorSpecialty.trim().toLowerCase() !== want) {
+      return `Yo'llanma "${referral.targetSpecialty}" mutaxassisiga berilgan`;
+    }
+  }
+  return null;
+}
+function referralSubject(r) {
+  if (r.kind === "lab") {
+    const names = r.order?.testNames ?? [];
+    if (names.length === 0) return "Laboratoriya tahlillari";
+    return names.length <= 3 ? names.join(", ") : `${names.slice(0, 3).join(", ")} va yana ${names.length - 3} ta`;
+  }
+  if (r.kind === "exam") return r.serviceName ?? "Tekshiruv";
+  return r.targetDoctorName ? `${r.targetSpecialty} \xB7 ${r.targetDoctorName}` : r.targetSpecialty ?? "Konsultatsiya";
+}
+var isExamServiceKind;
+var init_referral = __esm({
+  "shared/referral.ts"() {
+    "use strict";
+    init_schema();
+    isExamServiceKind = (kind) => REFERRAL_EXAM_SERVICE_KINDS.includes(kind);
+  }
+});
+
 // shared/patient-links.ts
 function patientHistoryProblem(counts) {
   const held = BLOCKING_TABLES.filter((t) => (counts[t] ?? 0) > 0).map((t) => PATIENT_LINKS[t].label);
@@ -1936,7 +2093,8 @@ var init_patient_links = __esm({
       orders: { merge: "move", delete: "block", label: "laboratoriya buyurtmalari" },
       appointments: { merge: "move", delete: "block", label: "qabullar" },
       medical_records: { merge: "move", delete: "block", label: "ko'rik yozuvlari" },
-      patient_allergies: { merge: "move", delete: "block", label: "allergiyalar" }
+      patient_allergies: { merge: "move", delete: "block", label: "allergiyalar" },
+      referrals: { merge: "move", delete: "block", label: "yo'llanmalar" }
     };
     BLOCKING_TABLES = Object.keys(PATIENT_LINKS).filter(
       (t) => PATIENT_LINKS[t].delete === "block"
@@ -2139,20 +2297,23 @@ var init_db_pg = __esm({
 var storage_pg_exports = {};
 __export(storage_pg_exports, {
   PgStorage: () => PgStorage,
-  isMissingTable: () => isMissingTable
+  appointmentSelect: () => appointmentSelect,
+  isMissingTable: () => isMissingTable,
+  referralSelect: () => referralSelect
 });
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql as sql2 } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, notInArray, or, sql as sql2 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapPayment, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
+var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapPayment, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
     init_tests_data();
     init_schema();
     init_sample();
+    init_referral();
     init_patient_links();
     init_ledger();
     init_appointment();
@@ -2287,6 +2448,33 @@ var init_storage_pg = __esm({
       departmentName: r.departmentName ?? null,
       serviceName: r.serviceName ?? null
     });
+    issuerUser = alias(users, "issuer_user");
+    targetDoctor = alias(doctors, "target_doctor");
+    targetUser = alias(users, "target_user");
+    cancelUser = alias(users, "cancel_user");
+    referralSelect = () => db.select({
+      r: referrals,
+      patientNumber: patients.patientNumber,
+      patientName: patients.fullName,
+      patientPhone: patients.phone,
+      doctorName: issuerUser.fullName,
+      doctorUserId: doctors.userId,
+      specialty: doctors.specialty,
+      serviceName: services.name,
+      serviceKind: services.kind,
+      servicePrice: services.price,
+      targetDoctorName: targetUser.fullName,
+      cancelledByName: cancelUser.fullName
+    }).from(referrals).leftJoin(patients, eq(patients.id, referrals.patientId)).leftJoin(doctors, eq(doctors.id, referrals.doctorId)).leftJoin(issuerUser, eq(issuerUser.id, doctors.userId)).leftJoin(services, eq(services.id, referrals.serviceId)).leftJoin(targetDoctor, eq(targetDoctor.id, referrals.targetDoctorId)).leftJoin(targetUser, eq(targetUser.id, targetDoctor.userId)).leftJoin(cancelUser, eq(cancelUser.id, referrals.cancelledBy));
+    mapReferral = (row) => ({
+      ...row,
+      kind: row.kind,
+      status: row.status,
+      createdAt: iso(row.createdAt) ?? row.createdAt,
+      updatedAt: iso(row.updatedAt),
+      cancelledAt: iso(row.cancelledAt)
+    });
+    LIVE_BOOKING = sql2`status NOT IN ('cancelled', 'no_show')`;
     lockDoctorDay = (tx, doctorId, date) => tx.execute(sql2`SELECT pg_advisory_xact_lock(hashtext(${`appointments:${doctorId}:${date}`}))`);
     tableExists = async (tx, table) => {
       const { rows } = await tx.execute(sql2`SELECT to_regclass(${"public." + table}) IS NOT NULL AS ok`);
@@ -2606,6 +2794,12 @@ var init_storage_pg = __esm({
       async createAppointment(input, actor, check) {
         const id = await db.transaction(async (tx) => {
           await lockDoctorDay(tx, input.doctorId, input.date);
+          if (input.referralId) {
+            const [ref] = await tx.select({ id: referrals.id, status: referrals.status }).from(referrals).where(eq(referrals.id, input.referralId)).for("update");
+            if (!ref || ref.status !== "active") throw new StorageConflict("Yo'llanma bekor qilingan yoki topilmadi");
+            const [taken] = await tx.select({ date: appointments.date, startTime: appointments.startTime }).from(appointments).where(and(eq(appointments.referralId, input.referralId), LIVE_BOOKING)).limit(1);
+            if (taken) throw new StorageConflict(`Bu yo'llanma bo'yicha bemor allaqachon yozilgan (${taken.date} ${taken.startTime})`);
+          }
           const day = await this.dayBookings(tx, input.doctorId, input.date);
           const problem = check(day);
           if (problem) throw new StorageConflict(problem);
@@ -2620,6 +2814,7 @@ var init_storage_pg = __esm({
             status: "scheduled",
             price: input.price,
             reason: input.reason ?? null,
+            referralId: input.referralId ?? null,
             createdBy: actor.id
           }).returning({ id: appointments.id });
           return row.id;
@@ -2802,6 +2997,168 @@ var init_storage_pg = __esm({
         const rows = await db.update(patientAllergies).set({ isActive: false, removedAt: (/* @__PURE__ */ new Date()).toISOString(), removedBy: actor.id, removeReason: reason }).where(and(eq(patientAllergies.id, id), eq(patientAllergies.isActive, true))).returning({ id: patientAllergies.id });
         if (!rows.length) throw new StorageConflict("Bu yozuv allaqachon faol emas");
         return await this.getAllergy(id);
+      }
+      // ------------------------------------------------------------ referrals
+      async listReferrals(q) {
+        if (q.ids && q.ids.length === 0) return [];
+        const parts = [];
+        if (q.ids) parts.push(inArray(referrals.id, q.ids));
+        if (q.patientId) parts.push(eq(referrals.patientId, q.patientId));
+        if (q.appointmentId) parts.push(eq(referrals.appointmentId, q.appointmentId));
+        if (q.awaitingBooking) {
+          parts.push(eq(referrals.status, "active"));
+          parts.push(sql2`"referrals"."kind" <> 'lab'`);
+          parts.push(sql2`NOT EXISTS (SELECT 1 FROM appointments x
+        WHERE x.referral_id = "referrals"."id" AND x.status NOT IN ('cancelled', 'no_show'))`);
+        }
+        const query = referralSelect().where(parts.length ? and(...parts) : void 0).orderBy(q.awaitingBooking ? asc(referrals.createdAt) : desc(referrals.createdAt));
+        const rows = await (q.limit ? query.limit(q.limit) : query);
+        return this.withProgress(rows);
+      }
+      async getReferral(id) {
+        return (await this.listReferrals({ ids: [id] }))[0];
+      }
+      /** Adds the order or booking behind each referral, and the stage it puts it in. Two parallel queries. */
+      async withProgress(rows) {
+        if (rows.length === 0) return [];
+        const labIds = rows.filter((r) => r.r.kind === "lab").map((r) => r.r.id);
+        const bookedIds = rows.filter((r) => r.r.kind !== "lab").map((r) => r.r.id);
+        const [orderRows, bookingRows] = await Promise.all([
+          labIds.length ? db.select({
+            id: orders.id,
+            referralId: orders.referralId,
+            orderNumber: orders.orderNumber,
+            status: orders.status,
+            totalAmount: orders.totalAmount,
+            paidAmount: orders.paidAmount,
+            tests: sql2`count(${orderTests.id})::int`,
+            done: sql2`count(${orderTests.result})::int`,
+            names: sql2`coalesce(array_agg(${orderTests.testName} ORDER BY ${orderTests.testName})
+                FILTER (WHERE ${orderTests.id} IS NOT NULL), '{}')`
+          }).from(orders).leftJoin(orderTests, eq(orderTests.orderId, orders.id)).where(inArray(orders.referralId, labIds)).groupBy(orders.id) : Promise.resolve([]),
+          bookedIds.length ? appointmentSelect().where(
+            and(inArray(appointments.referralId, bookedIds), notInArray(appointments.status, ["cancelled", "no_show"]))
+          ) : Promise.resolve([])
+        ]);
+        const orderBy = new Map(
+          orderRows.map((o) => [
+            o.referralId,
+            {
+              id: o.id,
+              orderNumber: o.orderNumber,
+              status: o.status,
+              totalAmount: o.totalAmount,
+              paidAmount: o.paidAmount,
+              tests: o.tests,
+              done: o.done,
+              testNames: o.names ?? []
+            }
+          ])
+        );
+        const bookingBy = /* @__PURE__ */ new Map();
+        for (const b of bookingRows.map(mapAppointmentRow)) {
+          bookingBy.set(b.referralId, {
+            id: b.id,
+            date: b.date,
+            startTime: b.startTime,
+            status: b.status,
+            queueNumber: b.queueNumber,
+            doctorName: b.doctorName
+          });
+        }
+        return rows.map((r) => {
+          const base = mapReferral(r.r);
+          const order = orderBy.get(base.id) ?? null;
+          const booking = bookingBy.get(base.id) ?? null;
+          return {
+            ...base,
+            patientNumber: r.patientNumber ?? 0,
+            patientName: r.patientName ?? "\u2014",
+            patientPhone: r.patientPhone ?? "",
+            doctorName: r.doctorName ?? "\u2014",
+            doctorUserId: r.doctorUserId ?? "",
+            specialty: r.specialty ?? "",
+            serviceName: r.serviceName ?? null,
+            serviceKind: r.serviceKind ?? null,
+            servicePrice: r.servicePrice ?? null,
+            targetDoctorName: r.targetDoctorName ?? null,
+            cancelledByName: r.cancelledByName ?? null,
+            order,
+            booking,
+            stage: referralStage({ kind: base.kind, status: base.status, order, booking })
+          };
+        });
+      }
+      async createReferrals(input, actor) {
+        const selected = input.kind === "lab" ? await db.select().from(tests).where(inArray(tests.id, input.testIds)) : [];
+        if (input.kind === "lab" && selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
+        const ids = await db.transaction(async (tx) => {
+          const origin = {
+            patientId: input.patientId,
+            visitId: input.visitId,
+            appointmentId: input.appointmentId,
+            doctorId: input.doctorId,
+            note: input.note,
+            createdBy: actor.id
+          };
+          if (input.kind === "lab") {
+            const [ref2] = await tx.insert(referrals).values({ ...origin, kind: "lab" }).returning({ id: referrals.id });
+            await this.insertOrderTx(
+              tx,
+              {
+                patientId: input.patientId,
+                testIds: input.testIds,
+                discount: 0,
+                paidAmount: 0,
+                notes: input.note,
+                referrer: input.referrer,
+                createdBy: actor.id
+              },
+              selected,
+              ref2.id
+            );
+            return [ref2.id];
+          }
+          if (input.kind === "exam") {
+            const made = await tx.insert(referrals).values(input.serviceIds.map((serviceId) => ({ ...origin, kind: "exam", serviceId }))).returning({ id: referrals.id });
+            return made.map((r) => r.id);
+          }
+          const [ref] = await tx.insert(referrals).values({ ...origin, kind: "consult", targetSpecialty: input.targetSpecialty, targetDoctorId: input.targetDoctorId }).returning({ id: referrals.id });
+          return [ref.id];
+        });
+        return this.listReferrals({ ids });
+      }
+      async cancelReferral(id, reason, actor) {
+        const found = await db.transaction(async (tx) => {
+          const [ref] = await tx.select().from(referrals).where(eq(referrals.id, id)).for("update");
+          if (!ref) return false;
+          if (ref.status === "cancelled") throw new StorageConflict("Yo'llanma allaqachon bekor qilingan");
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          if (ref.kind === "lab") {
+            const [order] = await tx.select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status }).from(orders).where(eq(orders.referralId, id)).for("update");
+            if (order && order.status !== "cancelled") {
+              const orderId = order.id;
+              const { rows: [held] } = await tx.execute(sql2`
+            SELECT
+              (SELECT count(*) FROM payments p WHERE p.order_id = ${orderId} AND p.voided_at IS NULL)::int AS paid,
+              (SELECT count(*) FROM order_tests ot WHERE ot.order_id = ${orderId} AND ot.result IS NOT NULL)::int AS results`);
+              if ((held?.paid ?? 0) > 0 || (held?.results ?? 0) > 0) {
+                throw new StorageConflict(
+                  `Tahlil buyurtmasi #${order.orderNumber} bo'yicha to'lov yoki natija bor. Uni registratura yoki laboratoriya hal qiladi`
+                );
+              }
+              await tx.update(orders).set({ status: "cancelled", completedAt: null, updatedAt: now, updatedBy: actor.id }).where(eq(orders.id, order.id));
+            }
+          } else {
+            const [booked] = await tx.select({ date: appointments.date, startTime: appointments.startTime }).from(appointments).where(and(eq(appointments.referralId, id), LIVE_BOOKING)).limit(1);
+            if (booked) {
+              throw new StorageConflict(`Bemor bu yo'llanma bo'yicha navbatga yozilgan (${booked.date} ${booked.startTime}). Avval qabulni bekor qiling`);
+            }
+          }
+          await tx.update(referrals).set({ status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelReason: reason, updatedAt: now, updatedBy: actor.id }).where(eq(referrals.id, id));
+          return true;
+        });
+        return found ? this.getReferral(id) : void 0;
       }
       async doctorHasAppointments(doctorId) {
         if (!await appointmentsTableExists(db)) return false;
@@ -3082,6 +3439,13 @@ var init_storage_pg = __esm({
           if (await tableExists(tx, "patient_allergies")) {
             await tx.update(patientAllergies).set({ patientId: targetId }).where(eq(patientAllergies.patientId, sourceId));
           }
+          if (await tableExists(tx, "referrals")) {
+            await tx.execute(sql2`
+          UPDATE referrals rf SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND rf.visit_id = sv.id`);
+            await tx.update(referrals).set({ patientId: targetId }).where(eq(referrals.patientId, sourceId));
+          }
           await tx.execute(sql2`
         DELETE FROM ${visits} sv USING ${visits} tv
         WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
@@ -3240,12 +3604,16 @@ var init_storage_pg = __esm({
           list.push(mapItem(item));
           byOrder.set(item.orderId, list);
         }
+        const referralIds = Array.from(new Set(rows.map((o) => o.referralId).filter((id) => Boolean(id))));
+        const numbers = referralIds.length ? await db.select({ id: referrals.id, n: referrals.referralNumber }).from(referrals).where(inArray(referrals.id, referralIds)) : [];
+        const byReferral = new Map(numbers.map((r) => [r.id, r.n]));
         return rows.map((row) => ({
           ...mapOrder(row),
           patient: byPatient.get(row.patientId) ?? null,
           items: byOrder.get(row.id) ?? [],
           // Null for orders created before sample tracking existed.
-          sample: bySample.get(row.id) ?? null
+          sample: bySample.get(row.id) ?? null,
+          referralNumber: row.referralId ? byReferral.get(row.referralId) ?? null : null
         }));
       }
       async listOrders(query = {}) {
@@ -3345,11 +3713,20 @@ var init_storage_pg = __esm({
         if (!patient) throw new Error("Bemor topilmadi");
         const selected = await db.select().from(tests).where(inArray(tests.id, input.testIds));
         if (selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
+        const orderId = await db.transaction((tx) => this.insertOrderTx(tx, input, selected, null));
+        return await this.getOrder(orderId);
+      }
+      /**
+       * The order, its lines, its tube and the opening payment, written inside the
+       * caller's transaction. Shared by the desk (createOrder) and the doctor's
+       * lab referral (createReferrals), so both make exactly the same order.
+       */
+      async insertOrderTx(tx, input, selected, referralId) {
         const subtotal = selected.reduce((sum, t) => sum + t.price, 0);
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
         const opening = Math.min(input.paidAmount, total);
-        const orderId = await db.transaction(async (tx) => {
+        {
           const [visit] = await tx.insert(visits).values({ patientId: input.patientId, visitDate: todayKey(), createdBy: input.createdBy ?? null }).onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql2`excluded.patient_id` } }).returning({ id: visits.id });
           const [order] = await tx.insert(orders).values({
             patientId: input.patientId,
@@ -3360,6 +3737,7 @@ var init_storage_pg = __esm({
             status: "pending",
             notes: input.notes ?? null,
             referrer: input.referrer ?? null,
+            referralId,
             createdBy: input.createdBy ?? null
           }).returning({ id: orders.id, orderNumber: orders.orderNumber });
           await tx.insert(orderTests).values(
@@ -3388,8 +3766,7 @@ var init_storage_pg = __esm({
             });
           }
           return order.id;
-        });
-        return await this.getOrder(orderId);
+        }
       }
       async updateOrder(id, input, actor) {
         const [current] = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
@@ -4005,6 +4382,7 @@ var init_db = __esm({
       medicalRecords: [],
       medicalRecordVersions: [],
       patientAllergies: [],
+      referrals: [],
       security: null,
       patients: [],
       patientContacts: [],
@@ -4026,7 +4404,7 @@ var init_db = __esm({
         director: null,
         licenseNumber: null
       },
-      counters: { orderNumber: 1e3, patientNumber: 0 }
+      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0 }
     });
     queue = Promise.resolve();
   }
@@ -4065,6 +4443,7 @@ var init_storage_file = __esm({
     init_appointment();
     init_sample();
     init_patient_links();
+    init_referral();
     init_ledger();
     init_db();
     init_password();
@@ -4432,6 +4811,12 @@ var init_storage_file = __esm({
         return this.db.appointments.filter((a) => a.doctorId === doctorId && a.date === date).map((a) => ({ ...a }));
       }
       async createAppointment(input, actor, check) {
+        if (input.referralId) {
+          const ref = this.db.referrals.find((r) => r.id === input.referralId);
+          if (!ref || ref.status !== "active") throw new StorageConflict("Yo'llanma bekor qilingan yoki topilmadi");
+          const taken = this.liveBooking(input.referralId);
+          if (taken) throw new StorageConflict(`Bu yo'llanma bo'yicha bemor allaqachon yozilgan (${taken.date} ${taken.startTime})`);
+        }
         const day = this.dayBookings(input.doctorId, input.date);
         const problem = check(day);
         if (problem) throw new StorageConflict(problem);
@@ -4448,6 +4833,7 @@ var init_storage_file = __esm({
           status: "scheduled",
           price: input.price,
           reason: input.reason ?? null,
+          referralId: input.referralId ?? null,
           arrivedAt: null,
           startedAt: null,
           completedAt: null,
@@ -4687,6 +5073,166 @@ var init_storage_file = __esm({
         await this.persist();
         return this.allergyDetails(a);
       }
+      // ------------------------------------------------------------ referrals
+      /** The booking that still fulfils a referral: anything but cancelled or no-show. */
+      liveBooking(referralId) {
+        return this.db.appointments.find(
+          (a) => a.referralId === referralId && a.status !== "cancelled" && a.status !== "no_show"
+        );
+      }
+      referralDetails(r) {
+        const patient = this.db.patients.find((p) => p.id === r.patientId);
+        const issuer = this.db.doctors.find((d) => d.id === r.doctorId);
+        const issuerUser2 = issuer && this.db.users.find((u) => u.id === issuer.userId);
+        const service = r.serviceId ? this.db.services.find((s) => s.id === r.serviceId) : void 0;
+        const target = r.targetDoctorId ? this.db.doctors.find((d) => d.id === r.targetDoctorId) : void 0;
+        const targetUser2 = target && this.db.users.find((u) => u.id === target.userId);
+        const canceller = r.cancelledBy ? this.db.users.find((u) => u.id === r.cancelledBy) : void 0;
+        let order = null;
+        if (r.kind === "lab") {
+          const o = this.db.orders.find((x) => x.referralId === r.id);
+          if (o) {
+            const lines = this.db.orderTests.filter((i) => i.orderId === o.id);
+            order = {
+              id: o.id,
+              orderNumber: o.orderNumber,
+              status: o.status,
+              totalAmount: o.totalAmount,
+              paidAmount: o.paidAmount,
+              tests: lines.length,
+              done: lines.filter((i) => i.result).length,
+              testNames: lines.map((i) => i.testName).sort((a, b) => a.localeCompare(b))
+            };
+          }
+        }
+        let booking = null;
+        if (r.kind !== "lab") {
+          const b = this.liveBooking(r.id);
+          if (b) {
+            const doc = this.db.doctors.find((d) => d.id === b.doctorId);
+            booking = {
+              id: b.id,
+              date: b.date,
+              startTime: b.startTime,
+              status: b.status,
+              queueNumber: b.queueNumber,
+              doctorName: this.db.users.find((u) => u.id === doc?.userId)?.fullName ?? "\u2014"
+            };
+          }
+        }
+        return {
+          ...r,
+          patientNumber: patient?.patientNumber ?? 0,
+          patientName: patient?.fullName ?? "\u2014",
+          patientPhone: patient?.phone ?? "",
+          doctorName: issuerUser2?.fullName ?? "\u2014",
+          doctorUserId: issuer?.userId ?? "",
+          specialty: issuer?.specialty ?? "",
+          serviceName: service?.name ?? null,
+          serviceKind: service?.kind ?? null,
+          servicePrice: service?.price ?? null,
+          targetDoctorName: targetUser2?.fullName ?? null,
+          cancelledByName: canceller?.fullName ?? null,
+          order,
+          booking,
+          stage: referralStage({ kind: r.kind, status: r.status, order, booking })
+        };
+      }
+      async listReferrals(q) {
+        let rows = this.db.referrals.filter(
+          (r) => (!q.ids || q.ids.includes(r.id)) && (!q.patientId || r.patientId === q.patientId) && (!q.appointmentId || r.appointmentId === q.appointmentId) && (!q.awaitingBooking || r.status === "active" && r.kind !== "lab" && !this.liveBooking(r.id))
+        );
+        rows = rows.sort(
+          (a, b) => q.awaitingBooking ? a.createdAt.localeCompare(b.createdAt) : b.createdAt.localeCompare(a.createdAt)
+        );
+        if (q.limit) rows = rows.slice(0, q.limit);
+        return rows.map((r) => this.referralDetails(r));
+      }
+      async getReferral(id) {
+        const r = this.db.referrals.find((x) => x.id === id);
+        return r && this.referralDetails(r);
+      }
+      async createReferrals(input, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const make = (extra) => {
+          this.db.counters.referralNumber += 1;
+          return {
+            id: randomUUID(),
+            referralNumber: this.db.counters.referralNumber,
+            patientId: input.patientId,
+            visitId: input.visitId,
+            appointmentId: input.appointmentId,
+            doctorId: input.doctorId,
+            status: "active",
+            serviceId: null,
+            targetSpecialty: null,
+            targetDoctorId: null,
+            note: input.note,
+            createdAt: now,
+            createdBy: actor.id,
+            updatedAt: null,
+            updatedBy: null,
+            cancelledAt: null,
+            cancelledBy: null,
+            cancelReason: null,
+            ...extra
+          };
+        };
+        let made;
+        if (input.kind === "lab") {
+          if (!input.testIds.some((id) => this.db.tests.some((t) => t.id === id))) throw new Error("Tanlangan tahlillar topilmadi");
+          const ref = make({ kind: "lab" });
+          this.db.referrals.push(ref);
+          await this.placeOrder(
+            {
+              patientId: input.patientId,
+              testIds: input.testIds,
+              discount: 0,
+              paidAmount: 0,
+              notes: input.note,
+              referrer: input.referrer,
+              createdBy: actor.id
+            },
+            ref.id
+          );
+          made = [ref];
+        } else if (input.kind === "exam") {
+          made = input.serviceIds.map((serviceId) => make({ kind: "exam", serviceId }));
+          this.db.referrals.push(...made);
+        } else {
+          made = [make({ kind: "consult", targetSpecialty: input.targetSpecialty, targetDoctorId: input.targetDoctorId })];
+          this.db.referrals.push(...made);
+        }
+        await this.persist();
+        return made.map((r) => this.referralDetails(r));
+      }
+      async cancelReferral(id, reason, actor) {
+        const ref = this.db.referrals.find((r) => r.id === id);
+        if (!ref) return void 0;
+        if (ref.status === "cancelled") throw new StorageConflict("Yo'llanma allaqachon bekor qilingan");
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        if (ref.kind === "lab") {
+          const order = this.db.orders.find((o) => o.referralId === id);
+          if (order && order.status !== "cancelled") {
+            const paid = this.db.payments.some((p) => p.orderId === order.id && !p.voidedAt);
+            const results = this.db.orderTests.some((i) => i.orderId === order.id && i.result);
+            if (paid || results) {
+              throw new StorageConflict(
+                `Tahlil buyurtmasi #${order.orderNumber} bo'yicha to'lov yoki natija bor. Uni registratura yoki laboratoriya hal qiladi`
+              );
+            }
+            Object.assign(order, { status: "cancelled", completedAt: null, updatedAt: now, updatedBy: actor.id });
+          }
+        } else {
+          const booked = this.liveBooking(id);
+          if (booked) {
+            throw new StorageConflict(`Bemor bu yo'llanma bo'yicha navbatga yozilgan (${booked.date} ${booked.startTime}). Avval qabulni bekor qiling`);
+          }
+        }
+        Object.assign(ref, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
+        await this.persist();
+        return this.referralDetails(ref);
+      }
       async deleteDoctor(id) {
         const before = this.db.doctors.length;
         this.db.doctors = this.db.doctors.filter((d) => d.id !== id);
@@ -4890,6 +5436,7 @@ var init_storage_file = __esm({
             for (const o of this.db.orders) if (o.visitId === v.id) o.visitId = same.id;
             for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
             for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
+            for (const r of this.db.referrals) if (r.visitId === v.id) r.visitId = same.id;
             this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
           } else {
             v.patientId = targetId;
@@ -4906,6 +5453,7 @@ var init_storage_file = __esm({
         for (const a of this.db.appointments) if (a.patientId === sourceId) a.patientId = targetId, appointments2++;
         for (const r of this.db.medicalRecords) if (r.patientId === sourceId) r.patientId = targetId;
         for (const a of this.db.patientAllergies) if (a.patientId === sourceId) a.patientId = targetId;
+        for (const r of this.db.referrals) if (r.patientId === sourceId) r.patientId = targetId;
         this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
         await this.persist();
         return { orders: orders2, contacts, appointments: appointments2 };
@@ -4968,7 +5516,8 @@ var init_storage_file = __esm({
           orders: mine(this.db.orders),
           appointments: mine(this.db.appointments),
           medical_records: mine(this.db.medicalRecords),
-          patient_allergies: mine(this.db.patientAllergies)
+          patient_allergies: mine(this.db.patientAllergies),
+          referrals: mine(this.db.referrals)
         });
         if (problem) throw new StorageConflict(problem);
         const before = this.db.patients.length;
@@ -5035,6 +5584,7 @@ var init_storage_file = __esm({
       hydrate(order, withPayments = false) {
         const full = {
           ...order,
+          referralNumber: order.referralId ? this.db.referrals.find((r) => r.id === order.referralId)?.referralNumber ?? null : null,
           patient: this.db.patients.find((p) => p.id === order.patientId) ?? null,
           items: this.db.orderTests.filter((ot) => ot.orderId === order.id),
           // Null for orders created before sample tracking existed.
@@ -5098,6 +5648,10 @@ var init_storage_file = __esm({
         return order ? this.hydrate(order, true) : void 0;
       }
       async createOrder(input) {
+        return this.placeOrder(input, null);
+      }
+      /** Shared by the desk and the doctor's lab referral, so both make the same order. */
+      async placeOrder(input, referralId) {
         if (!this.db.patients.some((p) => p.id === input.patientId)) {
           throw new Error("Bemor topilmadi");
         }
@@ -5113,6 +5667,7 @@ var init_storage_file = __esm({
           orderNumber: this.db.counters.orderNumber,
           patientId: input.patientId,
           visitId: this.ensureVisit(input.patientId, todayKey(), input.createdBy ?? null).id,
+          referralId,
           totalAmount: total,
           discount,
           paidAmount: 0,
@@ -6743,6 +7298,7 @@ function summarizeQueue(list, opts) {
 }
 
 // server/routes-clinic.ts
+init_referral();
 init_appointment();
 var money2 = (n) => `${n.toLocaleString("ru-RU").replace(/,/g, " ")} so'm`;
 var patientLabel = (a) => `\u2116${a.patientNumber} ${a.patientName}`;
@@ -6961,6 +7517,20 @@ function registerClinicRoutes(app) {
       const picked = await pickedService(input.serviceId);
       if ("error" in picked) return res.status(400).json({ message: picked.error });
       const { doctor } = found;
+      let referralNumber = null;
+      if (input.referralId) {
+        if (!hasPermission(req, "referrals.read")) return res.status(403).json({ message: "Yo'llanmalarni ko'rish uchun ruxsatingiz yo'q" });
+        const referral = await storage.getReferral(input.referralId);
+        if (!referral) return res.status(404).json({ message: "Yo'llanma topilmadi" });
+        const problem = referralBookingProblem(referral, {
+          patientId: patient.id,
+          doctorId: doctor.id,
+          doctorSpecialty: doctor.specialty,
+          serviceId: input.serviceId
+        });
+        if (problem) return res.status(400).json({ message: problem });
+        referralNumber = referral.referralNumber;
+      }
       const appointment = await storage.createAppointment(
         {
           ...input,
@@ -6976,7 +7546,7 @@ function registerClinicRoutes(app) {
         "create",
         "appointment",
         appointment.id,
-        `${patientLabel(appointment)} \u2014 ${appointment.doctorName} qabuliga yozildi (${when(appointment)}, navbat \u2116${appointment.queueNumber})`
+        `${patientLabel(appointment)} \u2014 ${appointment.doctorName} qabuliga yozildi (${when(appointment)}, navbat \u2116${appointment.queueNumber})${referralNumber ? `, yo'llanma \u2116${referralNumber} bo'yicha` : ""}`
       );
       res.status(201).json(appointment);
     })
@@ -6999,6 +7569,14 @@ function registerClinicRoutes(app) {
       const picked = await pickedService(serviceId);
       if ("error" in picked && serviceId !== before.serviceId) return res.status(400).json({ message: picked.error });
       const service = "service" in picked ? picked.service : null;
+      if (before.referralId) {
+        const referral = await storage.getReferral(before.referralId);
+        const problem = referral && referralBookingProblem(
+          { ...referral, status: "active" },
+          { patientId: before.patientId, doctorId: doctor.id, doctorSpecialty: doctor.specialty, serviceId }
+        );
+        if (problem) return res.status(400).json({ message: problem });
+      }
       const date = input.date ?? before.date;
       const startTime = input.startTime ?? before.startTime;
       const repriced = doctorId !== before.doctorId || serviceId !== before.serviceId;
@@ -7083,9 +7661,10 @@ function registerClinicRoutes(app) {
       const date = stringParam(req.query.date) ?? clock.date;
       if (!isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
       const seesQueue = hasPermission(req, "appointments.read");
-      const [day, list] = await Promise.all([
+      const [day, list, waitingReferrals] = await Promise.all([
         storage.getReceptionDay(date),
-        seesQueue ? storage.listAppointments({ date }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve(null)
+        seesQueue ? storage.listAppointments({ date }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve(null),
+        hasPermission(req, "referrals.read") ? storage.listReferrals({ awaitingBooking: true, limit: 200 }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve(null)
       ]);
       const now = fromMinutes(clock.minutes);
       const seesMoney = hasPermission(req, "finance.view");
@@ -7095,7 +7674,8 @@ function registerClinicRoutes(app) {
         patientsToday: day.patientsToday,
         newPatients: hasPermission(req, "patients.read") ? day.newPatients : null,
         payments: hasPermission(req, "orders.read") ? seesMoney ? day.payments : { ...day.payments, billed: null, collected: null, due: null } : null,
-        queue: list ? summarizeQueue(list, { isToday: date === clock.date, now }) : null
+        queue: list ? summarizeQueue(list, { isToday: date === clock.date, now }) : null,
+        referrals: waitingReferrals ? { total: waitingReferrals.length, items: waitingReferrals.slice(0, RECEPTION_LIST_LIMIT) } : null
       };
       res.json(board);
     })
@@ -7154,6 +7734,7 @@ function registerClinicRoutes(app) {
 
 // server/routes-medical.ts
 init_schema();
+init_referral();
 
 // shared/medical-record.ts
 init_schema();
@@ -7209,13 +7790,19 @@ function registerMedicalRoutes(app) {
       if (!appointment) return res.status(404).json({ message: "Qabul topilmadi" });
       const own = isAuthor(req, appointment);
       if (!own && !hasPermission(req, "records.read")) return res.status(404).json({ message: "Qabul topilmadi" });
-      const record = await storage.getRecordByAppointment(appointment.id).catch((e) => emptyIfMissing(e, void 0));
+      const seesReferrals = own || hasPermission(req, "referrals.read");
+      const [record, referrals2] = await Promise.all([
+        storage.getRecordByAppointment(appointment.id).catch((e) => emptyIfMissing(e, void 0)),
+        seesReferrals ? storage.listReferrals({ appointmentId: appointment.id }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve([])
+      ]);
       await logPatientView(req, { id: appointment.patientId, patientNumber: appointment.patientNumber, fullName: appointment.patientName }, "ko'rik yozuvi ochildi");
       const data = {
         appointment,
         record: record && visibleTo(req)(record) ? record : null,
         canWrite: own && hasPermission(req, "records.write") && WRITABLE_APPOINTMENT.has(appointment.status),
-        canAmend: own && hasPermission(req, "records.amend")
+        canAmend: own && hasPermission(req, "records.amend"),
+        referrals: referrals2,
+        canRefer: own && hasPermission(req, "referrals.create") && WRITABLE_APPOINTMENT.has(appointment.status)
       };
       res.json(data);
     })
@@ -7323,10 +7910,12 @@ function registerMedicalRoutes(app) {
       const patient = await storage.getPatient(req.params.id);
       if (!patient) return res.status(404).json({ message: "Bemor topilmadi" });
       const seesLab = hasPermission(req, "orders.read");
-      const [allergies, records, orders2] = await Promise.all([
+      const seesReferrals = hasPermission(req, "referrals.read");
+      const [allergies, records, orders2, referrals2] = await Promise.all([
         storage.listAllergies(patient.id, { includeInactive: true }).catch((e) => emptyIfMissing(e, [])),
         storage.listRecords({ patientId: patient.id }).catch((e) => emptyIfMissing(e, [])),
-        seesLab ? storage.listOrders({ patientId: patient.id }) : Promise.resolve(null)
+        seesLab ? storage.listOrders({ patientId: patient.id }) : Promise.resolve(null),
+        seesReferrals ? storage.listReferrals({ patientId: patient.id }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve(null)
       ]);
       await logPatientView(req, patient, "tibbiy kartasi ochildi");
       const visible = records.filter(visibleTo(req));
@@ -7335,9 +7924,100 @@ function registerMedicalRoutes(app) {
         allergies,
         records: visible,
         diagnoses: diagnosisHistory(visible),
-        labResults: orders2 ? labResults(orders2.items) : null
+        labResults: orders2 ? labResults(orders2.items) : null,
+        referrals: referrals2
       };
       res.json(card);
+    })
+  );
+  app.post(
+    "/api/appointments/:id/referrals",
+    requirePermission("referrals.create"),
+    handle(async (req, res) => {
+      const input = createReferralSchema.parse(req.body);
+      const appointment = await storage.getAppointment(req.params.id);
+      if (!appointment || !isAuthor(req, appointment)) return res.status(404).json({ message: "Qabul topilmadi" });
+      if (!WRITABLE_APPOINTMENT.has(appointment.status)) {
+        return res.status(400).json({ message: "Yo'llanmani faqat qabul boshlangandan keyin berish mumkin" });
+      }
+      const origin = {
+        patientId: appointment.patientId,
+        visitId: appointment.visitId,
+        appointmentId: appointment.id,
+        doctorId: appointment.doctorId,
+        note: input.note
+      };
+      let batch;
+      if (input.kind === "lab") {
+        const catalogue = new Map((await storage.listTests()).map((t) => [t.id, t]));
+        const missing = input.testIds.filter((id) => !catalogue.get(id)?.isActive);
+        if (missing.length) return res.status(400).json({ message: "Tanlangan tahlillardan biri katalogda yo'q yoki to'xtatilgan" });
+        batch = { ...origin, kind: "lab", testIds: input.testIds, referrer: `${appointment.doctorName}, ${appointment.specialty}` };
+      } else if (input.kind === "exam") {
+        const services2 = new Map((await storage.listServices()).map((s) => [s.id, s]));
+        for (const id of input.serviceIds) {
+          const s = services2.get(id);
+          if (!s || !s.isActive) return res.status(400).json({ message: "Tanlangan tekshiruvlardan biri katalogda yo'q yoki to'xtatilgan" });
+          if (!isExamServiceKind(s.kind)) return res.status(400).json({ message: `"${s.name}" tekshiruv emas` });
+        }
+        batch = { ...origin, kind: "exam", serviceIds: input.serviceIds };
+      } else {
+        let specialty = input.targetSpecialty;
+        if (input.targetDoctorId) {
+          const target = await storage.getDoctor(input.targetDoctorId);
+          if (!target || !target.isActive || !target.userActive) {
+            return res.status(400).json({ message: "Tanlangan shifokor hozir qabul qilmaydi" });
+          }
+          specialty = target.specialty;
+        }
+        batch = { ...origin, kind: "consult", targetSpecialty: specialty, targetDoctorId: input.targetDoctorId };
+      }
+      const made = await storage.createReferrals(batch, { id: req.user.id, name: req.user.fullName });
+      for (const r of made) {
+        await audit(
+          req,
+          "create",
+          "referral",
+          r.id,
+          `${patientLabel2(appointment)} \u2014 yo'llanma \u2116${r.referralNumber}: ${REFERRAL_KIND_LABELS[r.kind]} (${referralSubject(r)})${r.order ? `, tahlil buyurtmasi #${r.order.orderNumber}` : ""}`
+        );
+      }
+      res.status(201).json(made);
+    })
+  );
+  app.get(
+    "/api/referrals",
+    requirePermission("referrals.read"),
+    handle(async (req, res) => {
+      const patientId = stringParam(req.query.patientId);
+      const awaiting = req.query.awaiting === "1";
+      if (!patientId && !awaiting) return res.status(400).json({ message: "Bemor yoki holat ko'rsatilishi kerak" });
+      const list = await storage.listReferrals({ patientId, awaitingBooking: awaiting, limit: awaiting ? 200 : void 0 }).catch((e) => emptyIfMissing(e, []));
+      res.json(list);
+    })
+  );
+  app.post(
+    "/api/referrals/:id/cancel",
+    requirePermission("referrals.create", "referrals.manage"),
+    handle(async (req, res) => {
+      const { reason } = cancelReferralSchema.parse(req.body);
+      const before = await storage.getReferral(req.params.id);
+      if (!before) return res.status(404).json({ message: "Yo'llanma topilmadi" });
+      const issuer = before.doctorUserId === req.user.id && hasPermission(req, "referrals.create");
+      if (!issuer && !hasPermission(req, "referrals.manage")) {
+        return res.status(403).json({ message: "Faqat yo'llanmani bergan shifokor yoki registratura bekor qila oladi" });
+      }
+      if (before.stage === "done") return res.status(409).json({ message: "Yo'llanma bajarilgan, uni bekor qilib bo'lmaydi" });
+      const referral = await storage.cancelReferral(before.id, reason, { id: req.user.id, name: req.user.fullName });
+      if (!referral) return res.status(404).json({ message: "Yo'llanma topilmadi" });
+      await audit(
+        req,
+        "update",
+        "referral",
+        referral.id,
+        `${patientLabel2(referral)} \u2014 yo'llanma \u2116${referral.referralNumber} bekor qilindi (${referralSubject(referral)}). Sabab: ${reason}${referral.order ? `; tahlil buyurtmasi #${referral.order.orderNumber} ham bekor qilindi` : ""}`
+      );
+      res.json(referral);
     })
   );
   app.post(

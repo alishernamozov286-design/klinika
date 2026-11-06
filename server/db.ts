@@ -25,6 +25,7 @@ import type {
   MedicalRecord,
   MedicalRecordVersion,
   PatientAllergy,
+  Referral,
 } from "@shared/schema";
 
 export type DbShape = {
@@ -38,6 +39,7 @@ export type DbShape = {
   medicalRecords: MedicalRecord[];
   medicalRecordVersions: Omit<MedicalRecordVersion, "replacedByName">[];
   patientAllergies: Omit<PatientAllergy, "createdByName">[];
+  referrals: Referral[];
   security: SecuritySettings | null;
   patients: Patient[];
   patientContacts: PatientContact[];
@@ -52,7 +54,7 @@ export type DbShape = {
   telegramContacts: TelegramContact[];
   settings: LabSettings;
   /** Last number handed out for each human-facing sequence; next = value + 1. */
-  counters: { orderNumber: number; patientNumber: number };
+  counters: { orderNumber: number; patientNumber: number; referralNumber: number };
 };
 
 /**
@@ -77,6 +79,7 @@ export const emptyDb = (): DbShape => ({
   medicalRecords: [],
   medicalRecordVersions: [],
   patientAllergies: [],
+  referrals: [],
   security: null,
   patients: [],
   patientContacts: [],
@@ -98,7 +101,7 @@ export const emptyDb = (): DbShape => ({
     director: null,
     licenseNumber: null,
   },
-  counters: { orderNumber: 1000, patientNumber: 0 },
+  counters: { orderNumber: 1000, patientNumber: 0, referralNumber: 0 },
 });
 
 export function readDbSync(): DbShape {

@@ -53,6 +53,7 @@ import {
   RecordVersionsDialog,
 } from "@/components/medical-record";
 import { useAppointmentStatus } from "@/components/appointment-actions";
+import { ExaminationReferrals } from "@/components/referrals";
 import { ApiError, apiRequest, invalidateApi, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -205,7 +206,7 @@ export default function Examination() {
       {medical && <AllergyAlert allergies={medical.allergies} />}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-5">
           {record ? (
             <RecordEditor
               key={`${record.id}:${record.status}:${record.version}`}
@@ -235,6 +236,9 @@ export default function Examination() {
                 }
               />
             </div>
+          )}
+          {(data.canRefer || data.referrals.length > 0) && (
+            <ExaminationReferrals appointment={a} referrals={data.referrals} canRefer={data.canRefer} />
           )}
         </div>
 
