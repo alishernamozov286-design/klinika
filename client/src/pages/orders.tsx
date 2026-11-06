@@ -82,7 +82,7 @@ const EXPORT_COLUMNS: ExportColumn<OrderWithDetails>[] = [
 
 const EMPTY_SUMMARY: OrderListResponse["summary"] = {
   counts: { all: 0, pending: 0, in_progress: 0, completed: 0, cancelled: 0 },
-  results: { waiting: 0, ready: 0 },
+  results: { waiting: 0, review: 0, ready: 0 },
   totals: { sum: 0, paid: 0, debt: 0 },
 };
 

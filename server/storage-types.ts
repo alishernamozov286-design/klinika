@@ -6,6 +6,7 @@ import type {
   CreatePaymentInput,
   DashboardStatsData,
   ReferralWithDetails,
+  OrderTestVersion,
   ReceptionDay,
   Expense,
   ExpenseSummary,
@@ -95,8 +96,11 @@ export type OrderQuery = {
   patientId?: string;
   from?: string;
   to?: string;
-  /** The results workbench: "waiting" still has empty results, "ready" has none. */
-  queue?: "waiting" | "ready";
+  /**
+   * The results workbench (B4.5): "waiting" has a value to enter or fix,
+   * "review" has a value for the lab head to check, "ready" is fully verified.
+   */
+  queue?: "waiting" | "review" | "ready";
   limit?: number;
   offset?: number;
 };
@@ -141,6 +145,37 @@ export function resolveFlag(
 
 /** Who is performing the write — carried into payments, expenses and the log. */
 export type Actor = { id: string | null; name: string };
+
+/** One line as saveResults will write it. */
+export type ResultChange = { id: string; result: string | null; flag: ResultFlag | null; notes: string | null };
+
+/**
+ * Which lines a save actually changes (B4.5). Unchanged lines are left alone —
+ * re-saving must not move the entry time or the person who entered it. A
+ * verified line is locked: changing it is a StorageConflict, the way back is
+ * amendment, which keeps the replaced value.
+ */
+export function planResultSave(
+  lines: { id: string; testName: string; result: string | null; flag: string | null; notes: string | null; referenceRange: string | null; verifiedAt: string | null }[],
+  incoming: ResultInput[],
+  gender: string | null | undefined,
+): ResultChange[] {
+  const byId = new Map(lines.map((l) => [l.id, l]));
+  const changes: ResultChange[] = [];
+  for (const inc of incoming) {
+    const line = byId.get(inc.id);
+    if (!line) continue;
+    const result = inc.result?.trim() || null;
+    const flag = resolveFlag(inc, line, gender);
+    const notes = inc.notes?.trim() || null;
+    if (result === (line.result || null) && flag === (line.flag ?? null) && notes === (line.notes || null)) continue;
+    if (line.verifiedAt) {
+      throw new StorageConflict(`"${line.testName}" natijasi tasdiqlangan. O'zgartirish uchun "Tuzatish"dan foydalaning`);
+    }
+    changes.push({ id: line.id, result, flag, notes });
+  }
+  return changes;
+}
 
 /**
  * A write refused because of what is already in the database — a slot taken
@@ -566,6 +601,30 @@ export interface IStorage {
   updateOrder(id: string, input: UpdateOrderInput, actor?: Actor): Promise<OrderWithDetails | undefined>;
   /** `actor` is stamped on every line this call fills in. */
   saveResults(id: string, results: ResultInput[], actor?: Actor): Promise<OrderWithDetails | undefined>;
+  /**
+   * The lab head verifies entered lines (all of them when `itemIds` is null).
+   * Listed lines that are not waiting for review are a StorageConflict.
+   * `selfChecked` counts lines the verifier entered themselves.
+   */
+  verifyResults(
+    orderId: string,
+    itemIds: string[] | null,
+    actor: Actor,
+  ): Promise<{ order: OrderWithDetails; verified: number; selfChecked: number } | undefined>;
+  /** Sends entered, unverified lines back to the laborant with a reason. */
+  returnResults(orderId: string, itemIds: string[], reason: string, actor: Actor): Promise<OrderWithDetails | undefined>;
+  /**
+   * Corrects a verified value: the current one goes to order_test_versions,
+   * the new one becomes the next version, verified by the amender.
+   */
+  amendResult(
+    orderId: string,
+    itemId: string,
+    input: { result: string; flag: ResultFlag | null; notes: string | null },
+    reason: string,
+    actor: Actor,
+  ): Promise<{ order: OrderWithDetails; previous: { result: string | null; version: number } } | undefined>;
+  listResultVersions(itemId: string): Promise<OrderTestVersion[]>;
   /**
    * Only an order entered by mistake goes: one with a payment (even a voided
    * one) or a result throws StorageConflict — that order is cancelled instead.

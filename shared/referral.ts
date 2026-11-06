@@ -18,13 +18,14 @@ import { REFERRAL_EXAM_SERVICE_KINDS } from "./schema";
 export function referralStage(r: {
   kind: ReferralKind;
   status: ReferralStatus;
-  order: Pick<ReferralOrder, "status"> | null;
+  order: Pick<ReferralOrder, "status" | "tests" | "verified"> | null;
   booking: Pick<ReferralBooking, "status"> | null;
 }): ReferralStage {
   if (r.status === "cancelled") return "cancelled";
   if (r.kind === "lab") {
     if (!r.order || r.order.status === "cancelled") return "cancelled";
-    return r.order.status === "completed" ? "done" : "in_lab";
+    // Done for the doctor only when the lab head has verified every value (B4.5).
+    return r.order.tests > 0 && r.order.verified === r.order.tests ? "done" : "in_lab";
   }
   if (!r.booking) return "awaiting_booking";
   return r.booking.status === "completed" ? "done" : "scheduled";

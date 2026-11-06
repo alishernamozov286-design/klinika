@@ -153,6 +153,17 @@ export const PERMISSIONS = {
     label: "Natija kiritish",
     description: "Tahlil natijalarini kiritish va tuzatish",
   },
+  "results.verify": {
+    group: "lab",
+    label: "Natijani tasdiqlash",
+    description: "Laborant kiritgan natijani tekshirish, tasdiqlash yoki sabab bilan qaytarish (TZ §6.1.5)",
+  },
+  "results.amend": {
+    group: "lab",
+    label: "Tasdiqlangan natijani tuzatish",
+    description: "Tasdiqlangan natijaga sababli tuzatish kiritish; eski qiymat versiya sifatida saqlanadi",
+    sensitive: true,
+  },
   "results.send": {
     group: "lab",
     label: "Natija yuborish",
@@ -378,6 +389,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "orders.cancel",
       "samples.manage",
       "results.enter",
+      "results.verify",
+      "results.amend",
       "results.send",
       "tests.manage",
       "reports.view",

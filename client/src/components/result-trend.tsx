@@ -54,6 +54,8 @@ export function buildSeries(orders: OrderWithDetails[]): Series[] {
 
   for (const order of orders) {
     for (const item of order.items) {
+      // Only verified values (B4.5); one awaiting the lab head is not a result yet.
+      if (item.verifiedAt === null) continue;
       const value = parseResultValue(item.result);
       if (value === null) continue;
 

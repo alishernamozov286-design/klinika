@@ -711,11 +711,54 @@ export const orderTests = pgTable("order_tests", {
   /** Who signed off this value. A result on a medical form always has to be
       answerable for, and orders.createdBy only covers the registration. */
   enteredBy: varchar("entered_by"),
+  /** The same person as an id, so verification can tell who checked whose work. */
+  enteredById: varchar("entered_by_id"),
   completedAt: isoTimestamp("completed_at"),
+
+  /**
+   * Verification by the lab head (TZ §6.1.5, B4.5). Only a verified value
+   * leaves the lab — on the blank, to Telegram, to the doctor. Once verified
+   * the value is locked; a correction goes through amendment and keeps the
+   * replaced value in order_test_versions.
+   */
+  verifiedAt: isoTimestamp("verified_at"),
+  verifiedBy: varchar("verified_by"),
+  verifiedByName: text("verified_by_name"),
+  /** Sent back to the laborant with a reason; cleared when the value is re-entered. */
+  returnedAt: isoTimestamp("returned_at"),
+  returnedByName: text("returned_by_name"),
+  returnReason: text("return_reason"),
+  /** 1 for the value as first verified; each amendment adds one. */
+  version: integer("version").notNull().default(1),
 }, (t) => ({
   // Backs the "has any order used this test?" check that guards deletion.
   testIdx: index("IDX_order_tests_test").on(t.testId),
 }));
+
+/**
+ * A verified result as it stood before an amendment (TZ §6.1.5 "tasdiqlangandan
+ * keyin tuzatish versiya bilan"). Rows are only ever inserted.
+ */
+export const orderTestVersions = pgTable(
+  "order_test_versions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    orderTestId: varchar("order_test_id").notNull(),
+    orderId: varchar("order_id").notNull(),
+    version: integer("version").notNull(),
+    result: text("result"),
+    flag: text("flag"),
+    notes: text("notes"),
+    enteredBy: text("entered_by"),
+    verifiedAt: isoTimestamp("verified_at"),
+    verifiedByName: text("verified_by_name"),
+    replacedAt: isoTimestamp("replaced_at").defaultNow().notNull(),
+    replacedBy: varchar("replaced_by"),
+    replacedByName: text("replaced_by_name"),
+    replaceReason: text("replace_reason").notNull(),
+  },
+  (t) => ({ lineVersionIdx: uniqueIndex("UQ_order_test_versions").on(t.orderTestId, t.version) }),
+);
 
 /**
  * The physical tube behind an order.
@@ -1120,6 +1163,8 @@ export type ReferralOrder = {
   paidAmount: number;
   tests: number;
   done: number;
+  /** Lines verified by the lab head: only these reach the doctor. */
+  verified: number;
   testNames: string[];
 };
 
@@ -1186,6 +1231,8 @@ export type Test = typeof tests.$inferSelect;
 export type Order = Omit<typeof orders.$inferSelect, "status"> & { status: OrderStatus };
 
 export type OrderTest = Omit<typeof orderTests.$inferSelect, "flag"> & { flag: ResultFlag | null };
+
+export type OrderTestVersion = Omit<typeof orderTestVersions.$inferSelect, "flag"> & { flag: ResultFlag | null };
 
 export type LabSettings = typeof labSettings.$inferSelect;
 
@@ -1262,8 +1309,11 @@ export type Paged<T> = { items: T[]; total: number };
 export type OrderSummary = {
   /** Per-status counts with the status filter itself lifted, so the tabs stay usable. */
   counts: Record<OrderStatus, number> & { all: number };
-  /** Results-queue split of the non-cancelled matches. */
-  results: { waiting: number; ready: number };
+  /**
+   * Results-queue split of the non-cancelled matches (B4.5). An order with
+   * some values to enter and others to check is in both work queues.
+   */
+  results: { waiting: number; review: number; ready: number };
   /** Money for the current filter; cancelled orders never count. */
   totals: { sum: number; paid: number; debt: number };
 };
@@ -1805,6 +1855,29 @@ export const cancelReferralSchema = z.object({
   reason: z.string().trim().min(3, "Bekor qilish sababini yozing").max(300, "Juda uzun"),
 });
 
+/** The lab head verifies the listed lines, or every entered line when none are listed. */
+export const verifyResultsSchema = z.object({
+  itemIds: z.array(z.string().min(1)).max(200).optional(),
+});
+
+export const returnResultsSchema = z.object({
+  itemIds: z.array(z.string().min(1)).min(1, "Qaytariladigan tahlilni tanlang").max(200),
+  reason: z.string().trim().min(3, "Qaytarish sababini yozing").max(300, "Juda uzun"),
+});
+
+export const amendResultSchema = z.object({
+  result: z.string().trim().min(1, "Natijani kiriting").max(200, "Juda uzun"),
+  flag: z.enum(RESULT_FLAGS).nullish().transform((v) => v ?? null),
+  notes: z
+    .string()
+    .trim()
+    .max(300, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+  reason: z.string().trim().min(5, "Tuzatish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun"),
+});
+export type AmendResultInput = z.infer<typeof amendResultSchema>;
+
 export const removeAllergySchema = z.object({
   reason: z.string().trim().min(3, "Sababini yozing").max(200, "Juda uzun"),
 });
@@ -1908,7 +1981,10 @@ export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type DashboardStatsData = {
   todayPatients: number;
   pendingTests: number;
+  /** Verified: ready for the blank and the patient. */
   readyTests: number;
+  /** Entered, waiting for the lab head (B4.5). */
+  reviewTests: number;
   /** Null for users without finance.view — the server withholds it. */
   todayRevenue: number | null;
   totalPatients: number;

@@ -30,6 +30,7 @@ import {
   type ReferralWithDetails,
 } from "@shared/schema";
 import { isExamServiceKind, referralSubject } from "@shared/referral";
+import { releasedLines } from "@shared/lab-verification";
 import { changedFields, diagnosisHistory, fieldList, pickFields, signProblem } from "@shared/medical-record";
 import { patientAge } from "@shared/patient-identity";
 import { hasPermission, requirePermission } from "./rbac";
@@ -427,8 +428,7 @@ function labResults(orders: OrderWithDetails[]): LabResultEntry[] {
     .filter((o) => o.status !== "cancelled")
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .flatMap((o) =>
-      o.items
-        .filter((i) => i.result)
+      releasedLines(o.items)
         .map((i) => ({
           orderId: o.id,
           orderNumber: o.orderNumber,

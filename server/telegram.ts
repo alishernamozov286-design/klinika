@@ -7,6 +7,7 @@ import type {
   TelegramPhoneStatus,
 } from "@shared/schema";
 import { normalizeUzPhone } from "@shared/schema";
+import { isOrderReleased } from "@shared/lab-verification";
 import { storage } from "./storage";
 import { log } from "./logger";
 
@@ -62,9 +63,12 @@ function formatDate(value: string | null): string {
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
-/** All line items present and filled in — the same rule the results queue uses. */
+/**
+ * Every value verified by the lab head (TZ §6.1.5, B4.5) — the same rule the
+ * results queue uses for "ready". An entered but unchecked value never leaves.
+ */
 export function isOrderReady(order: OrderWithDetails): boolean {
-  return order.items.length > 0 && order.items.every((i) => Boolean(i.result));
+  return isOrderReleased(order);
 }
 
 /** The patient-facing panel: one line per test, with reference ranges. */
@@ -374,7 +378,7 @@ export async function deliverOrderResults(
 ): Promise<DeliveryResult> {
   if (!telegramEnabled) return { sent: false, reason: "Telegram bot sozlanmagan" };
   if (order.status === "cancelled") return { sent: false, reason: "Buyurtma bekor qilingan" };
-  if (!isOrderReady(order)) return { sent: false, reason: "Natijalar to'liq emas" };
+  if (!isOrderReady(order)) return { sent: false, reason: "Natijalar hali to'liq tasdiqlanmagan" };
 
   const chatId = order.patient?.telegramChatId;
   if (!chatId) return { sent: false, reason: "Bemor Telegram botga ulanmagan" };

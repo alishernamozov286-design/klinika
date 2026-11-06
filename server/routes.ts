@@ -10,6 +10,9 @@ import {
   createOrderSchema,
   createPaymentSchema,
   voidPaymentSchema,
+  verifyResultsSchema,
+  returnResultsSchema,
+  amendResultSchema,
   insertExpenseSchema,
   updateExpenseSchema,
   cancelExpenseSchema,
@@ -111,6 +114,7 @@ import {
 
 import { actorOf, audit, emptyIfMissing, handle, logPatientView, numberParam, stringParam } from "./route-helpers";
 import { registerClinicRoutes } from "./routes-clinic";
+import { isOrderReleased } from "@shared/lab-verification";
 import { registerMedicalRoutes } from "./routes-medical";
 
 export async function registerRoutes(app: Express): Promise<void> {
@@ -942,7 +946,7 @@ export async function registerRoutes(app: Express): Promise<void> {
       const statusParam = req.query.status;
       const status = ORDER_STATUSES.find((s) => s === statusParam);
       const queueParam = req.query.queue;
-      const queue = queueParam === "waiting" || queueParam === "ready" ? queueParam : undefined;
+      const queue = queueParam === "waiting" || queueParam === "review" || queueParam === "ready" ? queueParam : undefined;
       const result = await storage.listOrders({
         search: typeof req.query.search === "string" ? req.query.search : undefined,
         status,
@@ -1062,6 +1066,81 @@ export async function registerRoutes(app: Express): Promise<void> {
       // because Telegram is down.
       const delivery = await notifyIfReady(order);
       res.json({ ...order, telegram: delivery });
+    }),
+  );
+
+  // ------------------------------------------------- verification (B4.5)
+
+  /**
+   * The lab head checks entered values (TZ §6.1.5). Verifying the last open
+   * line releases the order: it goes to Telegram and to the doctor.
+   */
+  app.post(
+    "/api/orders/:id/verify",
+    requirePermission("results.verify"),
+    handle(async (req, res) => {
+      const { itemIds } = verifyResultsSchema.parse(req.body ?? {});
+      const outcome = await storage.verifyResults(req.params.id, itemIds ?? null, actorOf(req));
+      if (!outcome) return res.status(404).json({ message: "Buyurtma topilmadi" });
+      const { order, verified, selfChecked } = outcome;
+      const released = isOrderReleased(order);
+      await audit(
+        req,
+        "verify",
+        "order",
+        order.id,
+        `#${order.orderNumber}: ${verified} ta natija tasdiqlandi${selfChecked ? ` (${selfChecked} tasini o'zi kiritgan)` : ""}${
+          released ? " — buyurtma to'liq tasdiqlandi" : ""
+        }`,
+      );
+      const delivery = released ? await notifyIfReady(order) : undefined;
+      res.json({ ...order, telegram: delivery });
+    }),
+  );
+
+  /** Sends values back to the laborant with a reason. */
+  app.post(
+    "/api/orders/:id/return",
+    requirePermission("results.verify"),
+    handle(async (req, res) => {
+      const { itemIds, reason } = returnResultsSchema.parse(req.body);
+      const order = await storage.returnResults(req.params.id, itemIds, reason, actorOf(req));
+      if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
+      const names = order.items.filter((i) => itemIds.includes(i.id)).map((i) => i.testName);
+      await audit(req, "return", "order", order.id, `#${order.orderNumber}: qayta tekshirishga qaytarildi — ${names.join(", ")}. Sabab: ${reason}`);
+      res.json(order);
+    }),
+  );
+
+  /** Corrects a verified value; the replaced one is kept as a version. */
+  app.post(
+    "/api/orders/:id/items/:itemId/amend",
+    requirePermission("results.amend"),
+    handle(async (req, res) => {
+      const { reason, ...input } = amendResultSchema.parse(req.body);
+      const outcome = await storage.amendResult(req.params.id, req.params.itemId, input, reason, actorOf(req));
+      if (!outcome) return res.status(404).json({ message: "Natija topilmadi" });
+      const line = outcome.order.items.find((i) => i.id === req.params.itemId)!;
+      await audit(
+        req,
+        "amend",
+        "order",
+        outcome.order.id,
+        `#${outcome.order.orderNumber}: "${line.testName}" tuzatildi ${outcome.previous.result ?? "—"} → ${line.result} (v${outcome.previous.version} → v${line.version}). Sabab: ${reason}`,
+      );
+      res.json(outcome.order);
+    }),
+  );
+
+  app.get(
+    "/api/orders/:id/items/:itemId/versions",
+    requirePermission("orders.read"),
+    handle(async (req, res) => {
+      const order = await storage.getOrder(req.params.id);
+      if (!order || !order.items.some((i) => i.id === req.params.itemId)) {
+        return res.status(404).json({ message: "Natija topilmadi" });
+      }
+      res.json(await storage.listResultVersions(req.params.itemId).catch((e) => emptyIfMissing(e, [])));
     }),
   );
 

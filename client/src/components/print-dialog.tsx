@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FLAG_LABELS, ageGender, formatDate, formatDateTime, formatLongDate, formatPhone, money } from "@/lib/format";
 import { patientAge } from "@shared/patient-identity";
+import { LEGACY_VERIFIER, lineState } from "@shared/lab-verification";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,9 +27,14 @@ export function PrintDialog({
   if (!order) return null;
 
   const lab = settings ?? { labName: "MedLab", tagline: "Tibbiy Laboratoriya", address: null, phone: null, director: null, licenseNumber: null, id: "default" };
-  const completed = order.items.filter((i) => i.result);
-  /** Distinct people who signed off the values on this blank. */
+  // TZ §6.1.5: only values the lab head verified go on the blank.
+  const completed = order.items.filter((i) => lineState(i) === "verified");
+  /** Distinct people who entered and who verified the values on this blank. */
   const analysts = Array.from(new Set(completed.map((i) => i.enteredBy).filter(Boolean))) as string[];
+  const verifiers = Array.from(
+    new Set(completed.map((i) => i.verifiedByName).filter((n): n is string => Boolean(n) && n !== LEGACY_VERIFIER)),
+  );
+  const lastVerified = completed.map((i) => i.verifiedAt).filter(Boolean).sort().at(-1) ?? null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -44,7 +50,7 @@ export function PrintDialog({
               </DialogTitle>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 {order.patient?.fullName ?? "Noma'lum bemor"} · {completed.length}/{order.items.length} ta
-                natija tayyor
+                natija tasdiqlangan
               </p>
             </div>
           </div>
@@ -87,7 +93,8 @@ export function PrintDialog({
                   <Field label="Tug'ilgan sana" value={formatDate(order.patient.birthDate)} />
                 )}
                 <Field label="Qabul sanasi" value={formatLongDate(order.createdAt)} />
-                {order.completedAt && <Field label="Natija sanasi" value={formatDateTime(order.completedAt)} />}
+                {lastVerified && <Field label="Natija sanasi" value={formatDateTime(lastVerified)} />}
+                {order.sample?.barcode && <Field label="Namuna №" value={order.sample.barcode} />}
                 {order.patient?.address && <Field label="Manzil" value={order.patient.address} />}
               </div>
 
@@ -103,14 +110,19 @@ export function PrintDialog({
                   </tr>
                 </thead>
                 <tbody>
-                  {order.items.map((item, i) => (
+                  {order.items.map((item, i) => {
+                    const released = lineState(item) === "verified";
+                    return (
                     <tr key={item.id} className="border-b border-black/15 print-avoid-break align-top">
                       <td className="py-2 pr-3 tabular text-black/60">{i + 1}</td>
                       <td className="py-2 pr-3">
                         {item.testName}
-                        {item.notes && <p className="text-xs text-black/55 mt-0.5 italic">{item.notes}</p>}
+                        {released && item.notes && <p className="text-xs text-black/55 mt-0.5 italic">{item.notes}</p>}
                       </td>
                       <td className="py-2 pr-3">
+                        {!released ? (
+                          <span className="text-xs italic text-black/50">tayyor emas</span>
+                        ) : (
                         <span
                           className={cn(
                             "font-semibold tabular",
@@ -120,7 +132,8 @@ export function PrintDialog({
                         >
                           {item.result ?? "—"}
                         </span>
-                        {item.flag && (
+                        )}
+                        {released && item.flag && (
                           <span className="ml-1.5 text-xs text-black/60">
                             ({FLAG_LABELS[item.flag]}
                             {item.flag === "high" ? " ↑" : item.flag === "low" ? " ↓" : ""})
@@ -130,7 +143,8 @@ export function PrintDialog({
                       <td className="py-2 pr-3 text-black/70">{item.unit ?? "—"}</td>
                       <td className="py-2 text-black/70">{item.referenceRange ?? "—"}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
 
@@ -183,10 +197,19 @@ export function PrintDialog({
                 </div>
 
                 <div>
-                  <p className="text-black/60">{lab.director ? `Rahbar: ${lab.director}` : "Rahbar imzosi:"}</p>
+                  {/* TZ §6.3: the verifying specialist, and the electronic mark. */}
+                  <p className="text-black/60">
+                    {verifiers.length === 1 ? `Tasdiqladi: ${verifiers[0]}` : verifiers.length > 1 ? `Tasdiqladi: ${verifiers.join(", ")}` : "Tasdiqlovchi:"}
+                  </p>
                   <div className="mt-10 w-52 border-t border-black/50" />
                 </div>
               </div>
+
+              {verifiers.length > 0 && lastVerified && (
+                <p className="mt-4 inline-flex items-center gap-1.5 rounded border border-emerald-700/40 px-2 py-1 text-[11px] font-semibold text-emerald-800">
+                  ✓ Elektron tasdiqlangan · {verifiers.join(", ")} · {formatDateTime(lastVerified)}
+                </p>
+              )}
 
               <p className="mt-8 pt-3 border-t border-black/15 text-[11px] text-black/45 text-center">
                 Natijalar faqat topshirilgan namuna uchun amal qiladi va shifokor xulosasi o'rnini bosmaydi.
@@ -199,7 +222,7 @@ export function PrintDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Yopish
           </Button>
-          <Button onClick={() => window.print()} data-testid="button-print">
+          <Button onClick={() => window.print()} disabled={completed.length === 0} data-testid="button-print">
             <Printer className="h-4 w-4 mr-2" />
             Chop etish
           </Button>

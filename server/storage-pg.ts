@@ -26,6 +26,8 @@ import {
   medicalRecordVersions,
   patientAllergies,
   referrals,
+  orderTestVersions,
+  type OrderTestVersion,
   type Referral,
   type ReferralBooking,
   type ReferralOrder,
@@ -102,6 +104,7 @@ import {
 } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { referralStage } from "@shared/referral";
+import { amendProblem, pickForVerification } from "./lab-rules";
 import { BLOCKING_TABLES, patientHistoryProblem, type BlockingTable } from "@shared/patient-links";
 import { PAYMENT_ALREADY_VOIDED, TEST_IN_USE, orderDeleteProblem } from "@shared/ledger";
 import { nextQueueNumber } from "@shared/appointment";
@@ -122,6 +125,7 @@ import {
   type AppointmentQuery,
   type NewReferrals,
   type ReferralQuery,
+  planResultSave,
   type AppointmentStatusChange,
   type BookingCheck,
   type NewAppointment,
@@ -186,6 +190,8 @@ const mapItem = (row: typeof orderTests.$inferSelect): OrderTest => ({
   ...row,
   flag: row.flag as ResultFlag | null,
   completedAt: iso(row.completedAt),
+  verifiedAt: iso(row.verifiedAt),
+  returnedAt: iso(row.returnedAt),
 });
 
 const mapSample = (row: typeof samples.$inferSelect): Sample => ({
@@ -1181,6 +1187,7 @@ export class PgStorage implements IStorage {
               paidAmount: orders.paidAmount,
               tests: sql<number>`count(${orderTests.id})::int`,
               done: sql<number>`count(${orderTests.result})::int`,
+              verified: sql<number>`count(${orderTests.verifiedAt})::int`,
               names: sql<string[]>`coalesce(array_agg(${orderTests.testName} ORDER BY ${orderTests.testName})
                 FILTER (WHERE ${orderTests.id} IS NOT NULL), '{}')`,
             })
@@ -1207,6 +1214,7 @@ export class PgStorage implements IStorage {
           paidAmount: o.paidAmount,
           tests: o.tests,
           done: o.done,
+          verified: o.verified,
           testNames: o.names ?? [],
         },
       ]),
@@ -2013,16 +2021,23 @@ export class PgStorage implements IStorage {
 
     const notCancelled = sql`${orders.status} <> 'cancelled'`;
     const hasItems = sql`EXISTS (SELECT 1 FROM ${orderTests} ot WHERE ot.order_id = "orders"."id")`;
+    // B4.5: the laborant's queue (a value to enter, or one sent back), the lab
+    // head's queue (entered, not yet checked), and released (all verified).
     const hasBlank = sql`EXISTS (SELECT 1 FROM ${orderTests} ot
-                                 WHERE ot.order_id = "orders"."id"
-                                   AND (ot.result IS NULL OR ot.result = ''))`;
-    const readyExpr = sql`(${hasItems} AND NOT ${hasBlank})`;
+                                 WHERE ot.order_id = "orders"."id" AND ot.verified_at IS NULL
+                                   AND (ot.result IS NULL OR ot.result = '' OR ot.returned_at IS NOT NULL))`;
+    const hasReview = sql`EXISTS (SELECT 1 FROM ${orderTests} ot
+                                  WHERE ot.order_id = "orders"."id" AND ot.verified_at IS NULL
+                                    AND ot.result IS NOT NULL AND ot.result <> '' AND ot.returned_at IS NULL)`;
+    const hasUnverified = sql`EXISTS (SELECT 1 FROM ${orderTests} ot
+                                      WHERE ot.order_id = "orders"."id" AND ot.verified_at IS NULL)`;
+    const readyExpr = sql`(${hasItems} AND NOT ${hasUnverified})`;
 
     const conditions = [...base];
     if (query.status) conditions.push(eq(orders.status, query.status));
     if (query.queue) {
       conditions.push(notCancelled);
-      conditions.push(query.queue === "waiting" ? hasBlank : readyExpr);
+      conditions.push(query.queue === "waiting" ? hasBlank : query.queue === "review" ? hasReview : readyExpr);
     }
     const where = conditions.length ? and(...conditions) : undefined;
 
@@ -2043,6 +2058,7 @@ export class PgStorage implements IStorage {
       db
         .select({
           waiting: sql<number>`count(*) FILTER (WHERE ${hasBlank})::int`,
+          review: sql<number>`count(*) FILTER (WHERE ${hasReview})::int`,
           ready: sql<number>`count(*) FILTER (WHERE ${readyExpr})::int`,
         })
         .from(orders)
@@ -2071,7 +2087,7 @@ export class PgStorage implements IStorage {
       total: count,
       summary: {
         counts,
-        results: { waiting: queueRow?.waiting ?? 0, ready: queueRow?.ready ?? 0 },
+        results: { waiting: queueRow?.waiting ?? 0, review: queueRow?.review ?? 0, ready: queueRow?.ready ?? 0 },
         totals: { sum, paid, debt: Math.max(0, sum - paid) },
       },
     };
@@ -2292,30 +2308,31 @@ export class PgStorage implements IStorage {
       .from(patients)
       .where(eq(patients.id, current.patientId))
       .limit(1);
-    const lines = await db
-      .select({ id: orderTests.id, referenceRange: orderTests.referenceRange })
-      .from(orderTests)
-      .where(eq(orderTests.orderId, id));
-    const rangeById = new Map(lines.map((l) => [l.id, l.referenceRange]));
 
     await db.transaction(async (tx) => {
-      for (const incoming of results) {
-        const value = incoming.result?.trim() || null;
-        const flag = resolveFlag(
-          incoming,
-          { referenceRange: rangeById.get(incoming.id) ?? null },
-          patient?.gender,
-        );
+      // Locked, so a verification landing between the read and the write
+      // cannot be overwritten by a laborant's stale form.
+      const lines = await tx.select().from(orderTests).where(eq(orderTests.orderId, id)).for("update");
+      const changes = planResultSave(
+        lines.map((l) => ({ ...l, verifiedAt: iso(l.verifiedAt) })),
+        results,
+        patient?.gender,
+      );
+      for (const c of changes) {
         await tx
           .update(orderTests)
           .set({
-            result: value,
-            flag,
-            notes: incoming.notes?.trim() || null,
-            completedAt: value ? now : null,
-            ...(value && actor ? { enteredBy: actor.name } : {}),
+            result: c.result,
+            flag: c.flag,
+            notes: c.notes,
+            completedAt: c.result ? now : null,
+            ...(c.result && actor ? { enteredBy: actor.name, enteredById: actor.id } : {}),
+            // A re-entered value answers the lab head's return.
+            returnedAt: null,
+            returnedByName: null,
+            returnReason: null,
           })
-          .where(and(eq(orderTests.id, incoming.id), eq(orderTests.orderId, id)));
+          .where(and(eq(orderTests.id, c.id), eq(orderTests.orderId, id)));
       }
 
       // Status follows the line items: all filled -> completed, some -> in_progress.
@@ -2331,12 +2348,127 @@ export class PgStorage implements IStorage {
 
         const status = total > 0 && filled === total ? "completed" : filled > 0 ? "in_progress" : "pending";
         patch.status = status;
-        patch.completedAt = status === "completed" ? now : null;
+        patch.completedAt = status === "completed" ? (current.status === "completed" && current.completedAt ? current.completedAt : now) : null;
       }
-      await tx.update(orders).set(patch).where(eq(orders.id, id));
+      if (changes.length) await tx.update(orders).set(patch).where(eq(orders.id, id));
     });
 
     return this.getOrder(id);
+  }
+
+  async verifyResults(
+    orderId: string,
+    itemIds: string[] | null,
+    actor: Actor,
+  ): Promise<{ order: OrderWithDetails; verified: number; selfChecked: number } | undefined> {
+    const outcome = await db.transaction(async (tx) => {
+      const [order] = await tx.select({ id: orders.id, status: orders.status }).from(orders).where(eq(orders.id, orderId)).for("update");
+      if (!order) return undefined;
+      if (order.status === "cancelled") throw new StorageConflict("Buyurtma bekor qilingan");
+      const lines = await tx.select().from(orderTests).where(eq(orderTests.orderId, orderId));
+      const target = pickForVerification(
+        lines.map((l) => ({ ...l, verifiedAt: iso(l.verifiedAt), returnedAt: iso(l.returnedAt) })),
+        itemIds,
+      );
+      const now = new Date().toISOString();
+      for (const l of target) {
+        await tx
+          .update(orderTests)
+          .set({ verifiedAt: now, verifiedBy: actor.id, verifiedByName: actor.name })
+          .where(and(eq(orderTests.id, l.id), isNull(orderTests.verifiedAt)));
+      }
+      await tx.update(orders).set({ updatedAt: now, updatedBy: actor.id }).where(eq(orders.id, orderId));
+      return { verified: target.length, selfChecked: target.filter((l) => l.enteredById && l.enteredById === actor.id).length };
+    });
+    if (!outcome) return undefined;
+    return { order: (await this.getOrder(orderId))!, ...outcome };
+  }
+
+  async returnResults(orderId: string, itemIds: string[], reason: string, actor: Actor): Promise<OrderWithDetails | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const [order] = await tx.select({ id: orders.id }).from(orders).where(eq(orders.id, orderId)).for("update");
+      if (!order) return false;
+      const lines = await tx.select().from(orderTests).where(eq(orderTests.orderId, orderId));
+      const target = pickForVerification(
+        lines.map((l) => ({ ...l, verifiedAt: iso(l.verifiedAt), returnedAt: iso(l.returnedAt) })),
+        itemIds,
+      );
+      const now = new Date().toISOString();
+      await tx
+        .update(orderTests)
+        .set({ returnedAt: now, returnedByName: actor.name, returnReason: reason })
+        .where(inArray(orderTests.id, target.map((l) => l.id)));
+      await tx.update(orders).set({ updatedAt: now, updatedBy: actor.id }).where(eq(orders.id, orderId));
+      return true;
+    });
+    return found ? this.getOrder(orderId) : undefined;
+  }
+
+  async amendResult(
+    orderId: string,
+    itemId: string,
+    input: { result: string; flag: ResultFlag | null; notes: string | null },
+    reason: string,
+    actor: Actor,
+  ): Promise<{ order: OrderWithDetails; previous: { result: string | null; version: number } } | undefined> {
+    const previous = await db.transaction(async (tx) => {
+      const [line] = await tx
+        .select()
+        .from(orderTests)
+        .where(and(eq(orderTests.id, itemId), eq(orderTests.orderId, orderId)))
+        .for("update");
+      if (!line) return undefined;
+      const problem = amendProblem({ ...line, verifiedAt: iso(line.verifiedAt) }, input);
+      if (problem) throw new StorageConflict(problem);
+      const now = new Date().toISOString();
+      await tx.insert(orderTestVersions).values({
+        orderTestId: line.id,
+        orderId,
+        version: line.version,
+        result: line.result,
+        flag: line.flag,
+        notes: line.notes,
+        enteredBy: line.enteredBy,
+        verifiedAt: line.verifiedAt,
+        verifiedByName: line.verifiedByName,
+        replacedBy: actor.id,
+        replacedByName: actor.name,
+        replaceReason: reason,
+      });
+      await tx
+        .update(orderTests)
+        .set({
+          result: input.result,
+          flag: input.flag,
+          notes: input.notes,
+          version: line.version + 1,
+          completedAt: now,
+          enteredBy: actor.name,
+          enteredById: actor.id,
+          verifiedAt: now,
+          verifiedBy: actor.id,
+          verifiedByName: actor.name,
+        })
+        .where(eq(orderTests.id, line.id));
+      await tx.update(orders).set({ updatedAt: now, updatedBy: actor.id }).where(eq(orders.id, orderId));
+      return { result: line.result, version: line.version };
+    });
+    if (!previous) return undefined;
+    return { order: (await this.getOrder(orderId))!, previous };
+  }
+
+  async listResultVersions(itemId: string): Promise<OrderTestVersion[]> {
+    const rows = await db
+      .select()
+      .from(orderTestVersions)
+      .where(eq(orderTestVersions.orderTestId, itemId))
+      .orderBy(desc(orderTestVersions.version));
+    return rows.map((r) => ({
+      ...r,
+      flag: r.flag as ResultFlag | null,
+      verifiedAt: iso(r.verifiedAt),
+      replacedAt: iso(r.replacedAt) ?? r.replacedAt,
+    }));
   }
 
   async deleteOrder(id: string): Promise<boolean> {
@@ -2798,6 +2930,7 @@ export class PgStorage implements IStorage {
       today_revenue: number;
       pending: number;
       ready: number;
+      review: number;
       total_patients: number;
       unpaid: number;
     }>(sql`
@@ -2813,7 +2946,10 @@ export class PgStorage implements IStorage {
         (SELECT count(*) FROM ${orderTests} ot JOIN active a ON a.id = ot.order_id
           WHERE ot.result IS NULL)::int                                                       AS pending,
         (SELECT count(*) FROM ${orderTests} ot JOIN active a ON a.id = ot.order_id
-          WHERE ot.result IS NOT NULL)::int                                                   AS ready,
+          WHERE ot.verified_at IS NOT NULL)::int                                              AS ready,
+        (SELECT count(*) FROM ${orderTests} ot JOIN active a ON a.id = ot.order_id
+          WHERE ot.verified_at IS NULL AND ot.result IS NOT NULL AND ot.result <> ''
+            AND ot.returned_at IS NULL)::int                                                  AS review,
         (SELECT count(*) FROM ${patients})::int                                               AS total_patients,
         (SELECT coalesce(sum(greatest(total_amount - paid_amount, 0)), 0) FROM active)::int    AS unpaid
     `);
@@ -2823,6 +2959,7 @@ export class PgStorage implements IStorage {
       todayPatients: r?.today_patients ?? 0,
       pendingTests: r?.pending ?? 0,
       readyTests: r?.ready ?? 0,
+      reviewTests: r?.review ?? 0,
       todayRevenue: r?.today_revenue ?? 0,
       totalPatients: r?.total_patients ?? 0,
       unpaidAmount: r?.unpaid ?? 0,

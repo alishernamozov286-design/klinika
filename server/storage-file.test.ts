@@ -1392,8 +1392,10 @@ describe("referrals (B3.5, TZ §5.1.4)", () => {
     expect(order?.notes).toBe("Tashxisni aniqlash");
     expect(order?.sample?.barcode).toBe(`LAB-${order!.orderNumber}`);
 
-    // Results complete the order, and with it the referral.
+    // Entered results are not enough: the referral is done once the lab head verifies them (B4.5).
     await storage.saveResults(order!.id, order!.items.map((i) => ({ id: i.id, result: "5" })), ACTOR);
+    expect((await storage.getReferral(r.id))?.stage).toBe("in_lab");
+    await storage.verifyResults(order!.id, null, { id: "head", name: "Lab mudiri" });
     expect((await storage.getReferral(r.id))?.stage).toBe("done");
   });
 
@@ -1479,5 +1481,106 @@ describe("referrals (B3.5, TZ §5.1.4)", () => {
     expect(byAppt.map((r) => r.kind)).toEqual(["lab", "consult"]);
     expect((await storage.listReferrals({ patientId: patient.id })).length).toBe(2);
     await expect(storage.deletePatient(patient.id)).rejects.toThrow(/kartasida/);
+  });
+});
+
+describe("result verification (B4.5, TZ §6.1.5)", () => {
+  const HEAD = { id: "head-1", name: "Laboratoriya mudiri" };
+  const LAB = { id: "lab-1", name: "Laborant Bir" };
+
+  async function entered() {
+    const { order } = await makeOrder(["3", "22"]);
+    const [a, b] = order.items;
+    const saved = await storage.saveResults(order.id, [{ id: a.id, result: "5.2" }, { id: b.id, result: "140" }], LAB);
+    return { order: saved!, a, b };
+  }
+
+  it("entered values wait for the lab head and stay out of 'ready'", async () => {
+    const { order } = await entered();
+    expect(order.status).toBe("completed");
+    expect(order.items.every((i) => i.verifiedAt === null && i.enteredById === LAB.id)).toBe(true);
+    const lists = await storage.listOrders({ queue: "review" });
+    expect(lists.items.map((o) => o.id)).toContain(order.id);
+    expect(lists.summary.results).toMatchObject({ review: 1, ready: 0 });
+    expect((await storage.listOrders({ queue: "ready" })).items).toHaveLength(0);
+    const stats = await storage.getDashboardStats();
+    expect([stats.reviewTests, stats.readyTests]).toEqual([2, 0]);
+  });
+
+  it("verifying releases the order; a verified value is locked", async () => {
+    const { order, a } = await entered();
+    const out = await storage.verifyResults(order.id, null, HEAD);
+    expect(out).toMatchObject({ verified: 2, selfChecked: 0 });
+    expect(out!.order.items.every((i) => i.verifiedByName === HEAD.name && i.verifiedAt)).toBe(true);
+    expect((await storage.listOrders({ queue: "ready" })).items.map((o) => o.id)).toEqual([order.id]);
+    await expect(storage.saveResults(order.id, [{ id: a.id, result: "9.9" }], LAB)).rejects.toThrow(/tasdiqlangan/);
+    // Re-saving the same values is not a change, so it is allowed.
+    await expect(storage.saveResults(order.id, [{ id: a.id, result: "5.2" }], LAB)).resolves.toBeDefined();
+    await expect(storage.verifyResults(order.id, null, HEAD)).rejects.toThrow(/kutayotgan natija yo'q/);
+  });
+
+  it("counts values the verifier entered themselves", async () => {
+    const { order } = await makeOrder(["3"]);
+    await storage.saveResults(order.id, [{ id: order.items[0].id, result: "5" }], HEAD);
+    expect((await storage.verifyResults(order.id, null, HEAD))?.selfChecked).toBe(1);
+  });
+
+  it("verifies only the listed lines, and only ones waiting for review", async () => {
+    const { order } = await makeOrder(["3", "22"]);
+    const [a, b] = order.items;
+    await storage.saveResults(order.id, [{ id: a.id, result: "5" }], LAB);
+    await expect(storage.verifyResults(order.id, [b.id], HEAD)).rejects.toThrow(/kiritilmagan/);
+    const out = await storage.verifyResults(order.id, [a.id], HEAD);
+    expect(out?.verified).toBe(1);
+    // Partly verified: still in the laborant's queue for the other line, not ready.
+    expect((await storage.listOrders({ queue: "waiting" })).items.map((o) => o.id)).toContain(order.id);
+    expect((await storage.listOrders({ queue: "ready" })).items).toHaveLength(0);
+  });
+
+  it("a returned value goes back to the laborant; re-entering it answers the return", async () => {
+    const { order, a } = await entered();
+    const back = await storage.returnResults(order.id, [a.id], "Qayta o'lchang", HEAD);
+    const line = back!.items.find((i) => i.id === a.id)!;
+    expect(line).toMatchObject({ returnReason: "Qayta o'lchang", returnedByName: HEAD.name, verifiedAt: null });
+    expect((await storage.listOrders({ queue: "waiting" })).items.map((o) => o.id)).toContain(order.id);
+    // A returned line cannot be verified until it is re-entered.
+    await expect(storage.verifyResults(order.id, [a.id], HEAD)).rejects.toThrow(/qaytarilgan/);
+
+    const fixed = await storage.saveResults(order.id, [{ id: a.id, result: "5.6" }], LAB);
+    expect(fixed!.items.find((i) => i.id === a.id)).toMatchObject({ result: "5.6", returnedAt: null, returnReason: null });
+    expect((await storage.verifyResults(order.id, null, HEAD))?.verified).toBe(2);
+  });
+
+  it("amending a verified value keeps the old one as a version", async () => {
+    const { order, a } = await entered();
+    const verified = (await storage.verifyResults(order.id, null, HEAD))!.order.items.find((i) => i.id === a.id)!;
+    // Same value, same (auto-computed) flag, same note: nothing to amend.
+    await expect(
+      storage.amendResult(order.id, a.id, { result: "5.2", flag: verified.flag, notes: null }, "Hech narsa", HEAD),
+    ).rejects.toThrow(/o'zgarmagan/);
+    const out = await storage.amendResult(order.id, a.id, { result: "6.1", flag: "high", notes: null }, "Qayta o'lchandi", HEAD);
+    expect(out?.previous).toEqual({ result: "5.2", version: 1 });
+    const line = out!.order.items.find((i) => i.id === a.id)!;
+    expect(line).toMatchObject({ result: "6.1", flag: "high", version: 2, verifiedByName: HEAD.name });
+    const versions = await storage.listResultVersions(a.id);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({ version: 1, result: "5.2", replaceReason: "Qayta o'lchandi", replacedByName: HEAD.name });
+  });
+
+  it("an unverified value is not amended — the laborant edits it", async () => {
+    const { order, a } = await entered();
+    await expect(storage.amendResult(order.id, a.id, { result: "1", flag: null, notes: null }, "Sabab yozildi", HEAD)).rejects.toThrow(
+      /Faqat tasdiqlangan/,
+    );
+    expect(await storage.amendResult(order.id, "nope", { result: "1", flag: null, notes: null }, "Sabab yozildi", HEAD)).toBeUndefined();
+  });
+
+  it("an unchanged re-save does not move who entered the value or when", async () => {
+    const { order, a } = await entered();
+    const before = order.items.find((i) => i.id === a.id)!;
+    await new Promise((r) => setTimeout(r, 5));
+    const again = await storage.saveResults(order.id, [{ id: a.id, result: "5.2" }], { id: "other", name: "Boshqa" });
+    const after = again!.items.find((i) => i.id === a.id)!;
+    expect([after.enteredBy, after.completedAt]).toEqual([before.enteredBy, before.completedAt]);
   });
 });

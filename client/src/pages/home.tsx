@@ -217,7 +217,13 @@ export default function Home() {
             index={2}
             label="Tayyor tahlillar"
             value={stats?.readyTests ?? 0}
-            hint="Blanka chop etishga tayyor"
+            hint={
+              (stats?.reviewTests ?? 0) > 0 ? (
+                <span className="text-amber-700 dark:text-amber-300">{stats!.reviewTests} tasi tasdiqlashni kutmoqda</span>
+              ) : (
+                "Tasdiqlangan, blankaga tayyor"
+              )
+            }
             icon={FileCheck2}
             tone="emerald"
             isLoading={statsLoading}

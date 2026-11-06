@@ -45,6 +45,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `server/routes.ts`: asosiy API. `server/routes-clinic.ts`: xizmatlar, qabullar, shifokor kabineti. `server/routes-medical.ts`: ko'rik yozuvlari, tibbiy karta, allergiyalar, yo'llanmalar. Umumiy yordamchilar (`handle`, `audit`, `actorOf`, `emptyIfMissing`, `logPatientView`) — `server/route-helpers.ts`. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali. Storage'ning `StorageConflict` xatosi avtomatik 409 bo‘ladi.
 - `shared/appointment.ts`: qabul qoidalari (bo‘sh vaqtlar to‘ri, ustma-ust tushish, holat mashinasi va kim qaysi o‘tishni qiladi). Server ham, UI ham shundan foydalanadi.
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
+- `shared/lab-verification.ts`: natija qatorining holati va qachon tashqariga chiqishi (B4.5). `server/lab-rules.ts`: tasdiqlash va tuzatishning yozish qoidalari.
 - `shared/patient-links.ts`: bemorga bog'langan jadvallar reyestri (birlashtirish va o'chirish qoidalari). `shared/ledger.ts`: nima o'chirilmaydi (to'lov, natijali buyurtma, ishlatilgan tahlil). `shared/reception.ts`: registratura panelining hisob-kitobi. `shared/referral.ts`: yo'llanma holati va qabulga mosligi.
 - `server/auth.ts`: sessiya, Passport, login blokirovkasi, `forgetSessionUser`, `requireMfaEnrollment`.
 - `server/mfa.ts`: TOTP, kalitni shifrlash, zaxira kodlar (B1.8).
@@ -95,7 +96,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 35 → ≈46%**.
+> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 36 → ≈47%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -213,15 +214,25 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B3.8** Ko‘rik xulosasi PDF (`§5.2`).
 - [ ] **B3.9** Natija shifokorga (`§11`, qabul mezoni 16.4): lab natijasi tasdiqlangach buyurtma bergan shifokorga bildirishnoma va kartaga biriktirish.
 
-### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 41%
+### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 50%
 
-- [~] **B4.1** Lab bosh sahifasi (`§6.1.1`): statistikalar bor. **Qoldi:** "tasdiqlanishi kerak" va "bekor qilingan" kartalari, holatlarni TZ bo‘yicha aniq ajratish.
+- [~] **B4.1** Lab bosh sahifasi (`§6.1.1`): statistikalar bor; "Tayyor tahlillar" endi faqat tasdiqlanganlar, "tasdiqlashni kutmoqda" soni ko'rsatiladi (B4.5). **Qoldi:** alohida "tasdiqlanishi kerak" va "bekor qilingan" kartalari, holatlarni TZ bo‘yicha aniq ajratish.
 - [~] **B4.2** Buyurtmalar ro‘yxati (`§6.1.2`): "yo‘llanma raqami" bor (B3.5). **Qoldi:** tahlil turi ustuni.
 - [~] **B4.3** Namuna qabul qilish (`§6.1.3`): shtrix-kod/QR, holatlar, rad sababi bor. **Qoldi:** namuna turi (qon, siydik, zardob…), probirka turi/rangi, namuna sifati maydoni, **Code 128** shtrix-kod (`§2`).
 - [x] **B4.4** Tahlil kiritish (`§6.1.4`): natija, birlik, referens, me'yor belgisi, izoh.
-- [ ] **B4.5** Natijalarni tasdiqlash (`§6.1.5`): laborant kiritadi → **lab mudiri** tekshiradi va tasdiqlaydi (yoki qaytaradi). Faqat tasdiqlangan natija blankaga va shifokorga chiqadi. Tasdiqlangandan keyin tuzatish versiya bilan.
+- [x] **B4.5** Natijalarni tasdiqlash (`§6.1.5`): laborant kiritadi → **lab mudiri** tekshiradi va tasdiqlaydi (yoki qaytaradi). Faqat tasdiqlangan natija blankaga va shifokorga chiqadi. Tasdiqlangandan keyin tuzatish versiya bilan.
+  - Har bir tahlil qatorida holat (`shared/lab-verification.ts`): kiritilmagan → tasdiqlash kutilmoqda → tasdiqlangan; mudiri sabab bilan qaytarsa "qaytarilgan", laborant qiymatni qayta kiritganda belgi o'zi tushadi. Holat saqlanmaydi, `verified_at` / `returned_at` dan hisoblanadi.
+  - Mudiri bir tugma bilan barcha kiritilganlarni tasdiqlaydi; qisman chiqarish mumkin (tayyor qatorlar tasdiqlanadi, qolganlari kutadi). Kim tasdiqladi, qachon; o'zi kiritganini tasdiqlasa auditda belgilanadi.
+  - Tasdiqlangan qiymat qulflanadi: oddiy saqlash 409. Tuzatish (`results.amend`, sensitive) bitta tranzaksiyada: eski qiymat `order_test_versions` ga (kim, qachon, sabab), yangi qiymat keyingi versiya bo'lib tuzatuvchi nomidan tasdiqlanadi. Natija tarixi dialogi.
+  - O'zgarmagan qatorni qayta saqlash kiritgan odam va vaqtni o'zgartirmaydi (`planResultSave`, ikkala storage uchun bitta qoida). Saqlash va tasdiqlash qatorlarni `FOR UPDATE` bilan qulflaydi.
+  - **Faqat tasdiqlangan natija tashqariga chiqadi:** blanka (tasdiqlanmagani "tayyor emas", tasdiqlovchi, elektron tasdiqlash belgisi, namuna raqami), Telegram (`isOrderReady` = to'liq tasdiqlangan), tibbiy karta va natijalar dinamikasi, yo'llanma "Bajarildi" holati.
+  - Navbatlar: Kiritish (bo'sh yoki qaytarilgan qator), Tasdiqlash (kiritilgan, tekshirilmagan), Tayyor (hammasi tasdiqlangan). Buyurtma ikki navbatda bo'lishi mumkin. Mudiri "Tasdiqlash" navbatida ochadi.
+  - Ruxsatlar: `results.verify`, `results.amend` (lab mudiri). Audit: `verify`, `return`, `amend`.
+  - Eski natijalar: migratsiya ustunlarni birinchi marta qo'shganda ularni "Tasdiqlash joriy etilishidan oldingi natija" deb belgilaydi (o'ylab topilgan tasdiqlovchi yo'q); keyingi ishga tushirishlar ularga tegmaydi. Fayl omborida `backfillVerification`.
+  - Migratsiya: `npm run db:results` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart.** Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi, **hali bajarilmagan**.
+  - Testlar: `shared/lab-verification.test.ts`, `storage-file.test.ts` (8 ta), 22 ta API E2E, brauzerda mudiri yo'li (navbat → qaytarish → tasdiqlash → blanka).
 - [~] **B4.6** Tahlillar katalogi (`§6.2`): katalog bor. **Qoldi:** TZ'dagi 8 guruh bo‘yicha qayta tasniflash, namuna turi, sarf normasi (B5.6 uchun).
-- [~] **B4.7** Natija blankasi (`§6.3`): bor; tug'ilgan sana va undan hisoblangan yosh qo'shildi. **Qoldi:** klinika logotipi (yuklash), namuna raqami, tasdiqlovchi mutaxassis, elektron tasdiqlash belgisi (QR orqali tekshirish).
+- [~] **B4.7** Natija blankasi (`§6.3`): bor; tug'ilgan sana, yosh, namuna raqami, tasdiqlovchi mutaxassis va elektron tasdiqlash belgisi (B4.5). **Qoldi:** klinika logotipi (yuklash), QR orqali tekshirish.
 - [ ] **B4.8** Sifat nazorati (`§6.5`): nazorat materiallari, QC natijalari kiritish, Levey–Jennings grafigi, Westgard qoidalari (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x) bilan avtomatik ogohlantirish, kalibratsiya tarixi, analizator xizmat jurnali, laboratoriyalararo QC natijalari.
 - [ ] **B4.9** Analizatorlar ro‘yxati (`§6.4`, `lab_devices`): qurilmalar, xatolar jurnali.
 - [ ] **B4.10** Analizator integratsiyasi (`§6.4`): import API + lokal ko‘prik (D-4), namuna ID bo‘yicha moslashtirish, avtotekshiruv, takroriy natija nazorati, operator tasdig‘i. Protokol bo‘lmasa qo‘lda kiritish qoladi.
@@ -312,6 +323,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B1.8 · Ikki bosqichli autentifikatsiya: TOTP, zaxira kodlar, rol bo'yicha majburiylik, admin reset, qulf bilan bog'langan kod xatolari.
 - 2026-11-05 · B2.6–B2.8, B3.1 · Xizmatlar katalogi va narxlar ro'yxati, qabulga yozish (bo'sh vaqtlar, navbat raqami, poyga himoyasi), navbat sahifasi, shifokor kabineti, qabullar bemor kartasi va tashriflarida. Yo'l-yo'lakay: route yordamchilari `route-helpers.ts` ga chiqarildi.
 - 2026-11-06 · B3.3, B3.7, B3.2 (qisman) · Ko'rik oynasi (avtosaqlash, revision to'qnashuvi himoyasi), tasdiqlash va versiyali tuzatish, elektron tibbiy karta (allergiyalar, tashxislar tarixi, lab natijalari), kabinetda tugallanmagan kartalar. Yo'l-yo'lakay: navbat va kabinet ekranlari eskirgan keshni ko'rsatardi (global `refetchOnMount: false`), tuzatildi.
+- 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
 - 2026-11-05 · fix · Postgres'dagi ichki so'rovlar: natijalar navbati (kutilmoqda/tayyor), tahlil nomi bo'yicha qidiruv, bemorlarning oxirgi tashrifi, bo'limlardagi shifokorlar soni noto'g'ri edi; tuzatildi va himoya testi qo'shildi.

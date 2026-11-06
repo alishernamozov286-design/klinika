@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { isOpenStage, referralBookingProblem, referralStage, referralSubject } from "./referral";
 
 describe("referral stage (B3.5) — derived, never stored", () => {
-  const lab = (status: "pending" | "in_progress" | "completed" | "cancelled" | null) => ({
+  const lab = (status: "pending" | "in_progress" | "completed" | "cancelled" | null, verified = 0) => ({
     kind: "lab" as const,
     status: "active" as const,
-    order: status ? { status } : null,
+    order: status ? { status, tests: 2, verified } : null,
     booking: null,
   });
   const booked = (status: "scheduled" | "arrived" | "in_progress" | "completed" | null, kind: "exam" | "consult" = "exam") => ({
@@ -15,10 +15,12 @@ describe("referral stage (B3.5) — derived, never stored", () => {
     booking: status ? { status } : null,
   });
 
-  it("a lab referral follows its order", () => {
+  it("a lab referral is done only when the lab head verified every value (B4.5)", () => {
     expect(referralStage(lab("pending"))).toBe("in_lab");
     expect(referralStage(lab("in_progress"))).toBe("in_lab");
-    expect(referralStage(lab("completed"))).toBe("done");
+    expect(referralStage(lab("completed"))).toBe("in_lab");
+    expect(referralStage(lab("completed", 1))).toBe("in_lab");
+    expect(referralStage(lab("completed", 2))).toBe("done");
     expect(referralStage(lab("cancelled"))).toBe("cancelled");
     expect(referralStage(lab(null))).toBe("cancelled");
   });

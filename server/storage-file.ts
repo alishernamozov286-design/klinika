@@ -60,6 +60,8 @@ import type {
   RecordFields,
   Referral,
   ReferralWithDetails,
+  OrderTestVersion,
+  ResultFlag,
   Visit,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
@@ -68,6 +70,8 @@ import { nextQueueNumber } from "@shared/appointment";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { patientHistoryProblem } from "@shared/patient-links";
 import { referralStage } from "@shared/referral";
+import { LEGACY_VERIFIER, isOrderReleased, lineState, needsEntry, needsReview } from "@shared/lab-verification";
+import { amendProblem, pickForVerification } from "./lab-rules";
 import { PAYMENT_ALREADY_VOIDED, TEST_IN_USE, ledgerTotal, orderDeleteProblem } from "@shared/ledger";
 import { type DbShape, readDbSync, writeDb } from "./db";
 import { hashPassword } from "./password";
@@ -85,6 +89,7 @@ import {
   type Actor,
   type NewReferrals,
   type ReferralQuery,
+  planResultSave,
   StorageConflict,
   type AppointmentQuery,
   type AppointmentStatusChange,
@@ -105,6 +110,17 @@ import {
   resolveFlag,
 } from "./storage-types";
 import type { LockState } from "@shared/lockout";
+
+/** A result line as created: entry, verification and return come later (B4.5). */
+const UNVERIFIED = {
+  verifiedAt: null,
+  verifiedBy: null,
+  verifiedByName: null,
+  returnedAt: null,
+  returnedByName: null,
+  returnReason: null,
+  version: 1,
+} as const;
 
 /** A ledger row as written: voiding is a later, separate act. */
 const UNVOIDED = { voidedAt: null, voidedBy: null, voidedByName: null, voidReason: null } as const;
@@ -133,15 +149,12 @@ function asNumberSearch(search: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** Still has at least one line item without a result. */
-function isWaiting(order: OrderWithDetails): boolean {
-  return order.items.some((i) => !i.result);
-}
-
-/** Every line item is filled in — the blank can be printed. */
-function isReady(order: OrderWithDetails): boolean {
-  return order.items.length > 0 && order.items.every((i) => i.result);
-}
+/** Something for the laborant: a value to enter, or one the lab head sent back. */
+const isWaiting = (order: OrderWithDetails) => needsEntry(order.items);
+/** Something for the lab head to check. */
+const isReview = (order: OrderWithDetails) => needsReview(order.items);
+/** Every value verified — the blank can be printed and the patient told. */
+const isReady = (order: OrderWithDetails) => isOrderReleased(order);
 
 /** Zero-setup fallback used when DATABASE_URL is not configured. */
 const copyRole = (r: RoleRecord): RoleRecord => ({ ...r, permissions: [...r.permissions] });
@@ -234,6 +247,7 @@ export class FileStorage implements IStorage {
 
     const numbered = this.backfillPatientNumbers();
     const visited = this.backfillVisits();
+    this.backfillVerification();
 
     let createdRoles = 0;
     const now = new Date().toISOString();
@@ -919,6 +933,7 @@ export class FileStorage implements IStorage {
           paidAmount: o.paidAmount,
           tests: lines.length,
           done: lines.filter((i) => i.result).length,
+          verified: lines.filter((i) => i.verifiedAt).length,
           testNames: lines.map((i) => i.testName).sort((a, b) => a.localeCompare(b)),
         };
       }
@@ -1079,6 +1094,28 @@ export class FileStorage implements IStorage {
   }
 
   /** Orders from before visits existed get the visit of their own day. */
+  /**
+   * Results entered before verification existed (B4.5) have no verification
+   * fields at all. They were already handed to patients, so they count as
+   * released — under a name that says so rather than an invented verifier.
+   * New lines carry explicit nulls and are never touched by this.
+   */
+  private backfillVerification(): void {
+    for (const line of this.db.orderTests) {
+      if ((line as { verifiedAt?: unknown }).verifiedAt !== undefined) continue;
+      Object.assign(line, {
+        enteredById: null,
+        returnedAt: null,
+        returnedByName: null,
+        returnReason: null,
+        version: 1,
+        verifiedBy: null,
+        verifiedAt: line.result ? (line.completedAt ?? new Date().toISOString()) : null,
+        verifiedByName: line.result ? LEGACY_VERIFIER : null,
+      });
+    }
+  }
+
   private backfillVisits(): number {
     let n = 0;
     for (const o of this.db.orders) {
@@ -1537,13 +1574,14 @@ export class FileStorage implements IStorage {
     const live = base.filter((o) => o.status !== "cancelled");
     const results = {
       waiting: live.filter(isWaiting).length,
+      review: live.filter(isReview).length,
       ready: live.filter(isReady).length,
     };
 
     let rows = base;
     if (query.status) rows = rows.filter((o) => o.status === query.status);
     if (query.queue) {
-      const match = query.queue === "waiting" ? isWaiting : isReady;
+      const match = query.queue === "waiting" ? isWaiting : query.queue === "review" ? isReview : isReady;
       rows = rows.filter((o) => o.status !== "cancelled" && match(o));
     }
 
@@ -1664,7 +1702,9 @@ export class FileStorage implements IStorage {
         flag: null,
         notes: null,
         enteredBy: null,
+        enteredById: null,
         completedAt: null,
+        ...UNVERIFIED,
       };
       this.db.orderTests.push(item);
     }
@@ -1751,7 +1791,9 @@ export class FileStorage implements IStorage {
         flag: null,
         notes: null,
         enteredBy: null,
+        enteredById: null,
         completedAt: null,
+        ...UNVERIFIED,
       });
       present.add(testId);
     }
@@ -1767,25 +1809,30 @@ export class FileStorage implements IStorage {
 
     const patient = this.db.patients.find((p) => p.id === order.patientId);
     const now = new Date().toISOString();
-    for (const incoming of results) {
-      const item = this.db.orderTests.find((i) => i.id === incoming.id && i.orderId === id);
-      if (!item) continue;
-      const value = incoming.result?.trim() || null;
-      item.result = value;
-      item.flag = resolveFlag(incoming, item, patient?.gender);
-      item.notes = incoming.notes?.trim() || null;
-      item.completedAt = value ? now : null;
-      if (value && actor) item.enteredBy = actor.name;
+    const lines = this.db.orderTests.filter((i) => i.orderId === id);
+    const changes = planResultSave(lines, results, patient?.gender);
+    for (const c of changes) {
+      const item = lines.find((i) => i.id === c.id)!;
+      Object.assign(item, {
+        result: c.result,
+        flag: c.flag,
+        notes: c.notes,
+        completedAt: c.result ? now : null,
+        returnedAt: null,
+        returnedByName: null,
+        returnReason: null,
+      });
+      if (c.result && actor) Object.assign(item, { enteredBy: actor.name, enteredById: actor.id });
     }
+    if (changes.length === 0) return this.hydrate(order, true);
 
     order.updatedAt = now;
     order.updatedBy = actor?.id ?? null;
-    const items = this.db.orderTests.filter((i) => i.orderId === id);
-    const filled = items.filter((i) => Boolean(i.result)).length;
+    const filled = lines.filter((i) => Boolean(i.result)).length;
     if (order.status !== "cancelled") {
-      if (filled === items.length && items.length > 0) {
+      if (filled === lines.length && lines.length > 0) {
+        order.completedAt = order.status === "completed" && order.completedAt ? order.completedAt : now;
         order.status = "completed";
-        order.completedAt = now;
       } else if (filled > 0) {
         order.status = "in_progress";
         order.completedAt = null;
@@ -1797,6 +1844,94 @@ export class FileStorage implements IStorage {
 
     await this.persist();
     return this.hydrate(order, true);
+  }
+
+  async verifyResults(
+    orderId: string,
+    itemIds: string[] | null,
+    actor: Actor,
+  ): Promise<{ order: OrderWithDetails; verified: number; selfChecked: number } | undefined> {
+    const order = this.db.orders.find((o) => o.id === orderId);
+    if (!order) return undefined;
+    if (order.status === "cancelled") throw new StorageConflict("Buyurtma bekor qilingan");
+    const target = pickForVerification(this.db.orderTests.filter((i) => i.orderId === orderId), itemIds);
+    const now = new Date().toISOString();
+    for (const l of target) Object.assign(l, { verifiedAt: now, verifiedBy: actor.id, verifiedByName: actor.name });
+    order.updatedAt = now;
+    order.updatedBy = actor.id;
+    await this.persist();
+    return {
+      order: this.hydrate(order, true),
+      verified: target.length,
+      selfChecked: target.filter((l) => l.enteredById && l.enteredById === actor.id).length,
+    };
+  }
+
+  async returnResults(orderId: string, itemIds: string[], reason: string, actor: Actor): Promise<OrderWithDetails | undefined> {
+    const order = this.db.orders.find((o) => o.id === orderId);
+    if (!order) return undefined;
+    const target = pickForVerification(this.db.orderTests.filter((i) => i.orderId === orderId), itemIds);
+    const now = new Date().toISOString();
+    for (const l of target) Object.assign(l, { returnedAt: now, returnedByName: actor.name, returnReason: reason });
+    order.updatedAt = now;
+    order.updatedBy = actor.id;
+    await this.persist();
+    return this.hydrate(order, true);
+  }
+
+  async amendResult(
+    orderId: string,
+    itemId: string,
+    input: { result: string; flag: ResultFlag | null; notes: string | null },
+    reason: string,
+    actor: Actor,
+  ): Promise<{ order: OrderWithDetails; previous: { result: string | null; version: number } } | undefined> {
+    const order = this.db.orders.find((o) => o.id === orderId);
+    const line = this.db.orderTests.find((i) => i.id === itemId && i.orderId === orderId);
+    if (!order || !line) return undefined;
+    const problem = amendProblem(line, input);
+    if (problem) throw new StorageConflict(problem);
+    const now = new Date().toISOString();
+    this.db.orderTestVersions.push({
+      id: randomUUID(),
+      orderTestId: line.id,
+      orderId,
+      version: line.version,
+      result: line.result,
+      flag: line.flag,
+      notes: line.notes,
+      enteredBy: line.enteredBy,
+      verifiedAt: line.verifiedAt,
+      verifiedByName: line.verifiedByName,
+      replacedAt: now,
+      replacedBy: actor.id,
+      replacedByName: actor.name,
+      replaceReason: reason,
+    });
+    const previous = { result: line.result, version: line.version };
+    Object.assign(line, {
+      result: input.result,
+      flag: input.flag,
+      notes: input.notes,
+      version: line.version + 1,
+      completedAt: now,
+      enteredBy: actor.name,
+      enteredById: actor.id,
+      verifiedAt: now,
+      verifiedBy: actor.id,
+      verifiedByName: actor.name,
+    });
+    order.updatedAt = now;
+    order.updatedBy = actor.id;
+    await this.persist();
+    return { order: this.hydrate(order, true), previous };
+  }
+
+  async listResultVersions(itemId: string): Promise<OrderTestVersion[]> {
+    return this.db.orderTestVersions
+      .filter((v) => v.orderTestId === itemId)
+      .sort((a, b) => b.version - a.version)
+      .map((v) => ({ ...v }));
   }
 
   async deleteOrder(id: string): Promise<boolean> {
@@ -2190,7 +2325,8 @@ export class FileStorage implements IStorage {
     return {
       todayPatients: new Set(todayOrders.map((o) => o.patientId)).size,
       pendingTests: activeItems.filter((i) => !i.result).length,
-      readyTests: activeItems.filter((i) => Boolean(i.result)).length,
+      readyTests: activeItems.filter((i) => lineState(i) === "verified").length,
+      reviewTests: activeItems.filter((i) => lineState(i) === "review").length,
       todayRevenue: todayOrders.reduce((sum, o) => sum + o.paidAmount, 0),
       totalPatients: this.db.patients.length,
       unpaidAmount: this.db.orders
