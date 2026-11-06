@@ -55,6 +55,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useDebounced } from "@/hooks/use-debounced";
 import { formatDate, formatPhone, formatTime, money } from "@/lib/format";
+import { TEST_GROUP_LABELS, type TestGroup } from "@shared/lab-catalogue";
+import { GroupFilter, GroupTags } from "@/components/lab-ui";
 
 type Filter = OrderStatus | "all";
 
@@ -63,9 +65,12 @@ const PAGE_SIZE = 25;
 /** Shared by the Excel and PDF writers — see lib/export.ts. */
 const EXPORT_COLUMNS: ExportColumn<OrderWithDetails>[] = [
   { header: "№", value: (o) => o.orderNumber, type: "number", width: 8 },
-  { header: "Sana", value: (o) => formatDate(o.createdAt), width: 12 },
+  { header: "Buyurtma vaqti", value: (o) => `${formatDate(o.createdAt)} ${formatTime(o.createdAt)}`, width: 17 },
+  { header: "Bemor ID", value: (o) => o.patient?.patientNumber ?? "", width: 10 },
   { header: "Bemor", value: (o) => o.patient?.fullName ?? "", width: 26 },
   { header: "Telefon", value: (o) => formatPhone(o.patient?.phone, true), width: 18 },
+  { header: "Yo'llanma", value: (o) => (o.referralNumber ? `№${o.referralNumber}` : ""), width: 11 },
+  { header: "Tahlil turi", value: (o) => (o.groups ?? []).map((g) => TEST_GROUP_LABELS[g]).join(", "), width: 24 },
   { header: "Tahlillar", value: (o) => o.items.map((i) => i.testName).join(", "), width: 40 },
   { header: "Soni", value: (o) => o.items.length, type: "number", width: 7 },
   { header: "Holat", value: (o) => ORDER_STATUS_LABELS[o.status], width: 13 },
@@ -84,6 +89,7 @@ const EMPTY_SUMMARY: OrderListResponse["summary"] = {
   counts: { all: 0, pending: 0, in_progress: 0, completed: 0, cancelled: 0 },
   results: { waiting: 0, review: 0, ready: 0 },
   totals: { sum: 0, paid: 0, debt: 0 },
+  groups: {},
 };
 
 export default function Orders() {
@@ -91,7 +97,12 @@ export default function Orders() {
   const { can } = useAuth();
 
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  // The lab board links straight to a status (?status=cancelled).
+  const [filter, setFilter] = useState<Filter>(() => {
+    const asked = new URLSearchParams(window.location.search).get("status");
+    return ORDER_STATUSES.find((s) => s === asked) ?? "all";
+  });
+  const [group, setGroup] = useState<TestGroup | "all">("all");
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [detail, setDetail] = useState<OrderWithDetails | null>(null);
@@ -101,7 +112,7 @@ export default function Orders() {
   const [editing, setEditing] = useState<OrderWithDetails | null>(null);
 
   const debouncedSearch = useDebounced(search.trim(), 300);
-  useEffect(() => setPage(0), [debouncedSearch, filter]);
+  useEffect(() => setPage(0), [debouncedSearch, filter, group]);
 
   const params = new URLSearchParams({
     search: debouncedSearch,
@@ -109,6 +120,7 @@ export default function Orders() {
     offset: String(page * PAGE_SIZE),
   });
   if (filter !== "all") params.set("status", filter);
+  if (group !== "all") params.set("group", group);
 
   const { data, isLoading, isFetching } = useQuery<OrderListResponse>({
     queryKey: [`/api/orders?${params.toString()}`],
@@ -119,7 +131,7 @@ export default function Orders() {
   const total = data?.total ?? 0;
   // Counts and money come from the server: they describe the whole filter,
   // not just the 25 rows currently on screen.
-  const { counts, totals } = data?.summary ?? EMPTY_SUMMARY;
+  const { counts, totals, groups: groupCounts } = data?.summary ?? EMPTY_SUMMARY;
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -152,6 +164,7 @@ export default function Orders() {
                   title: "Buyurtmalar",
                   subtitle: [
                     filter === "all" ? "Barcha holatlar" : ORDER_STATUS_LABELS[filter],
+                    group === "all" ? null : `tahlil turi: ${TEST_GROUP_LABELS[group]}`,
                     debouncedSearch ? `qidiruv: "${debouncedSearch}"` : null,
                     `${orders.length} ta yozuv (${page + 1}-sahifa, jami ${total} ta)`,
                   ]
@@ -229,6 +242,10 @@ export default function Orders() {
         </div>
       </div>
 
+      {/* TZ §6.1.2 "tahlil turi": counted with the other filters applied, so
+          the chips show where the work is before anyone clicks. */}
+      <GroupFilter value={group} onChange={setGroup} counts={groupCounts} total={counts.all} testIdPrefix="filter-order-group" />
+
       {/* ----------------------------------------------------------- table */}
       <div className="card-premium overflow-hidden">
         {isLoading ? (
@@ -236,14 +253,14 @@ export default function Orders() {
         ) : orders.length === 0 ? (
           <EmptyState
             icon={Receipt}
-            title={counts.all === 0 ? "Hali buyurtma yo'q" : "Filtrga mos buyurtma topilmadi"}
+            title={counts.all === 0 && group === "all" ? "Hali buyurtma yo'q" : "Filtrga mos buyurtma topilmadi"}
             description={
-              counts.all === 0
+              counts.all === 0 && group === "all"
                 ? "Bemorni tanlab, unga kerakli tahlillarni buyurtma qiling."
                 : "Filtrni yoki qidiruv so'zini o'zgartiring."
             }
             action={
-              counts.all === 0 && can("orders.create") ? (
+              counts.all === 0 && group === "all" && can("orders.create") ? (
                 <Button onClick={() => setCreateOpen(true)}>
                   <FlaskConical className="mr-2 h-4 w-4" />
                   Birinchi buyurtma
@@ -258,8 +275,9 @@ export default function Orders() {
                 <TableRow>
                   <TableHead className="w-20">№</TableHead>
                   <TableHead>Bemor</TableHead>
-                  <TableHead className="hidden w-40 lg:table-cell">Bajarildi</TableHead>
-                  <TableHead className="hidden md:table-cell">Sana</TableHead>
+                  <TableHead className="hidden md:table-cell">Tahlil turi</TableHead>
+                  <TableHead className="hidden w-40 xl:table-cell">Bajarildi</TableHead>
+                  <TableHead className="hidden lg:table-cell">Buyurtma vaqti</TableHead>
                   <TableHead>Holat</TableHead>
                   <TableHead className="hidden sm:table-cell">To'lov</TableHead>
                   <TableHead className="text-right">Summa</TableHead>
@@ -295,15 +313,22 @@ export default function Orders() {
                           <Avatar name={order.patient?.fullName ?? "??"} size="sm" />
                           <div className="min-w-0">
                             <p className="truncate font-medium">{order.patient?.fullName ?? "—"}</p>
-                            <PhoneText
-                              value={order.patient?.phone}
-                              asLink={false}
-                              className="text-xs text-muted-foreground"
-                            />
+                            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              {order.patient && (
+                                <span className="font-mono tabular" data-testid={`text-order-patient-id-${order.orderNumber}`}>
+                                  #{order.patient.patientNumber}
+                                </span>
+                              )}
+                              <PhoneText value={order.patient?.phone} asLink={false} className="truncate" />
+                            </p>
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="hidden lg:table-cell">
+                      <TableCell className="hidden md:table-cell" data-testid={`cell-order-groups-${order.orderNumber}`}>
+                        <GroupTags groups={order.groups ?? []} />
+                        <span className="mt-1 block text-[11px] text-muted-foreground">{order.items.length} ta tahlil</span>
+                      </TableCell>
+                      <TableCell className="hidden xl:table-cell">
                         <MeterBar
                           value={done}
                           max={order.items.length}
@@ -317,7 +342,7 @@ export default function Orders() {
                           }
                         />
                       </TableCell>
-                      <TableCell className="hidden whitespace-nowrap md:table-cell">
+                      <TableCell className="hidden whitespace-nowrap lg:table-cell">
                         <span className="tabular">{formatDate(order.createdAt)}</span>
                         <span className="ml-1.5 text-xs tabular text-muted-foreground">
                           {formatTime(order.createdAt)}

@@ -41,6 +41,7 @@ import { OrderDetailDialog } from "@/components/order-detail-dialog";
 import { ResultsDialog } from "@/components/results-dialog";
 import { PrintDialog } from "@/components/print-dialog";
 import { ReceptionBoard } from "@/components/reception-board";
+import { LabBoard } from "@/components/lab-board";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { formatDate, formatPhone, formatTime, formatWeekdayDate, money, timeAgo } from "@/lib/format";
@@ -77,6 +78,8 @@ export default function Home() {
   // The server withholds the money figures from roles without finance.view;
   // the cards follow the same rule rather than showing a misleading 0.
   const seesFinance = can("finance.view");
+  // Laboratoriya bosh sahifasi (TZ §6.1.1) for whoever works the bench.
+  const seesLab = can("orders.read") && can("samples.manage", "results.enter", "results.verify");
 
   const { data: recent, isLoading: ordersLoading } = useQuery<OrderListResponse>({
     queryKey: ["/api/orders?limit=6"],
@@ -184,16 +187,24 @@ export default function Home() {
       </section>
 
       {seesReception && <ReceptionBoard />}
+      {seesLab && <LabBoard onOpenOrder={setDetail} />}
 
       {/* ----------------------------------------------------------- stats */}
       {/* Lab counters only mean something to roles that work with orders. */}
-      {seesOrders && seesReception && (
+      {seesOrders && seesReception && !seesLab && (
         <p className="-mb-2 pt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           Laboratoriya
         </p>
       )}
-      {seesOrders && (
-        <div className={cn("grid gap-4 sm:grid-cols-2", seesFinance ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
+      {/* With the lab board on screen, its tiles replace the two lab counters
+          here; what is left (patients, takings) only shows for finance. */}
+      {seesOrders && (!seesLab || seesFinance) && (
+        <div
+          className={cn(
+            "grid gap-4 sm:grid-cols-2",
+            seesLab ? "" : seesFinance ? "xl:grid-cols-4" : "xl:grid-cols-3",
+          )}
+        >
           <StatCard
             index={0}
             label={seesReception ? "Laboratoriya bemorlari" : "Bugungi bemorlar"}
@@ -203,32 +214,36 @@ export default function Home() {
             isLoading={statsLoading}
             onClick={() => setLocation("/patients")}
           />
-          <StatCard
-            index={1}
-            label="Kutilayotgan tahlillar"
-            value={stats?.pendingTests ?? 0}
-            hint="Natijasi kiritilmagan"
-            icon={Clock}
-            tone="amber"
-            isLoading={statsLoading}
-            onClick={() => setLocation("/results")}
-          />
-          <StatCard
-            index={2}
-            label="Tayyor tahlillar"
-            value={stats?.readyTests ?? 0}
-            hint={
-              (stats?.reviewTests ?? 0) > 0 ? (
-                <span className="text-amber-700 dark:text-amber-300">{stats!.reviewTests} tasi tasdiqlashni kutmoqda</span>
-              ) : (
-                "Tasdiqlangan, blankaga tayyor"
-              )
-            }
-            icon={FileCheck2}
-            tone="emerald"
-            isLoading={statsLoading}
-            onClick={() => setLocation("/results")}
-          />
+          {!seesLab && (
+            <>
+              <StatCard
+                index={1}
+                label="Kutilayotgan tahlillar"
+                value={stats?.pendingTests ?? 0}
+                hint="Natijasi kiritilmagan"
+                icon={Clock}
+                tone="amber"
+                isLoading={statsLoading}
+                onClick={() => setLocation("/results")}
+              />
+              <StatCard
+                index={2}
+                label="Tayyor tahlillar"
+                value={stats?.readyTests ?? 0}
+                hint={
+                  (stats?.reviewTests ?? 0) > 0 ? (
+                    <span className="text-amber-700 dark:text-amber-300">{stats!.reviewTests} tasi tasdiqlashni kutmoqda</span>
+                  ) : (
+                    "Tasdiqlangan, blankaga tayyor"
+                  )
+                }
+                icon={FileCheck2}
+                tone="emerald"
+                isLoading={statsLoading}
+                onClick={() => setLocation("/results")}
+              />
+            </>
+          )}
           {seesFinance && (
             <StatCard
               index={3}

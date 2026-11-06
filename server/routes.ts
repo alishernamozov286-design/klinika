@@ -115,7 +115,7 @@ import {
 import { actorOf, audit, emptyIfMissing, handle, logPatientView, numberParam, stringParam } from "./route-helpers";
 import { registerClinicRoutes } from "./routes-clinic";
 import { isOrderReleased } from "@shared/lab-verification";
-import { SAMPLE_QUALITY_LABELS, type SampleQuality } from "@shared/lab-catalogue";
+import { SAMPLE_QUALITY_LABELS, isTestGroup, type SampleQuality } from "@shared/lab-catalogue";
 import { notifyOrderingDoctor } from "./result-delivery";
 import { registerMedicalRoutes } from "./routes-medical";
 
@@ -953,6 +953,7 @@ export async function registerRoutes(app: Express): Promise<void> {
         search: typeof req.query.search === "string" ? req.query.search : undefined,
         status,
         queue,
+        group: isTestGroup(req.query.group) ? req.query.group : undefined,
         patientId: typeof req.query.patientId === "string" ? req.query.patientId : undefined,
         from: typeof req.query.from === "string" ? req.query.from : undefined,
         to: typeof req.query.to === "string" ? req.query.to : undefined,

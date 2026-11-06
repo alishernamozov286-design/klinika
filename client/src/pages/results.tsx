@@ -115,7 +115,12 @@ export default function Results() {
   const canVerify = can("results.verify");
   // The lab head lands on their own queue: checking is their job, even when
   // they may also enter values.
-  const [queue, setQueue] = useState<Queue>(() => (canVerify ? "review" : "waiting"));
+  // The lab board links straight to a queue (?queue=review).
+  const [queue, setQueue] = useState<Queue>(() => {
+    const asked = new URLSearchParams(window.location.search).get("queue");
+    if (asked === "waiting" || asked === "review" || asked === "ready") return asked;
+    return canVerify ? "review" : "waiting";
+  });
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [editing, setEditing] = useState<OrderWithDetails | null>(null);

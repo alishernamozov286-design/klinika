@@ -513,6 +513,14 @@ function classifyTest(input) {
   else sampleType = "qon_zardob";
   return { group, sampleType };
 }
+function isTestGroup(value) {
+  return typeof value === "string" && TEST_GROUPS.includes(value);
+}
+function orderGroups(groups) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const g of Array.from(groups)) if (g) seen.add(g);
+  return TEST_GROUPS.filter((g) => seen.has(g));
+}
 var TEST_GROUPS, SAMPLE_TYPES, SAMPLE_QUALITIES, SAMPLE_QUALITY_LABELS, has;
 var init_lab_catalogue = __esm({
   "shared/lab-catalogue.ts"() {
@@ -2301,6 +2309,86 @@ var init_referral = __esm({
   }
 });
 
+// shared/lab-verification.ts
+function lineState(l) {
+  if (l.verifiedAt) return "verified";
+  if (!l.result || !l.result.trim()) return "empty";
+  if (l.returnedAt) return "returned";
+  return "review";
+}
+function labProgress(items) {
+  const p = { total: items.length, empty: 0, returned: 0, review: 0, verified: 0, released: false };
+  for (const i of items) p[lineState(i)]++;
+  p.released = p.total > 0 && p.verified === p.total;
+  return p;
+}
+var isOrderReleased, releasedLines, needsEntry, needsReview, LINE_STATE_LABELS, LEGACY_VERIFIER;
+var init_lab_verification = __esm({
+  "shared/lab-verification.ts"() {
+    "use strict";
+    isOrderReleased = (order) => labProgress(order.items).released;
+    releasedLines = (items) => items.filter((i) => lineState(i) === "verified");
+    needsEntry = (items) => items.some((i) => {
+      const s = lineState(i);
+      return s === "empty" || s === "returned";
+    });
+    needsReview = (items) => items.some((i) => lineState(i) === "review");
+    LINE_STATE_LABELS = {
+      empty: "Kiritilmagan",
+      returned: "Qaytarilgan",
+      review: "Tasdiqlash kutilmoqda",
+      verified: "Tasdiqlangan"
+    };
+    LEGACY_VERIFIER = "Tasdiqlash joriy etilishidan oldingi natija";
+  }
+});
+
+// shared/lab-board.ts
+function summarizeLabBoard(orders2, day, dayOf) {
+  const counts = {
+    today: 0,
+    awaitingSample: 0,
+    rejected: 0,
+    inProgress: 0,
+    review: 0,
+    readyToday: 0,
+    cancelledToday: 0
+  };
+  const groupsToday = {};
+  for (const o of orders2) {
+    if (o.status === "cancelled") {
+      if (dayOf(o.updatedAt ?? o.createdAt) === day) counts.cancelledToday += 1;
+      continue;
+    }
+    if (dayOf(o.createdAt) === day) {
+      counts.today += 1;
+      for (const g of orderGroups(o.groups ?? [])) groupsToday[g] = (groupsToday[g] ?? 0) + 1;
+    }
+    if (awaitsSample(o)) {
+      counts.awaitingSample += 1;
+      if (o.sample.status === "rad_etildi") counts.rejected += 1;
+    } else if (needsEntry(o.items)) {
+      counts.inProgress += 1;
+    }
+    if (needsReview(o.items)) counts.review += 1;
+    if (o.items.length > 0 && isOrderReleased(o)) {
+      const last = o.items.reduce((m, i) => i.verifiedAt && i.verifiedAt > m ? i.verifiedAt : m, "");
+      if (last && dayOf(last) === day) counts.readyToday += 1;
+    }
+  }
+  return { counts, groupsToday };
+}
+var LAB_BOARD_AWAITING_LIMIT, awaitsSample;
+var init_lab_board = __esm({
+  "shared/lab-board.ts"() {
+    "use strict";
+    init_lab_verification();
+    init_lab_catalogue();
+    LAB_BOARD_AWAITING_LIMIT = 6;
+    awaitsSample = (o) => o.status !== "cancelled" && !!o.sample && o.sample.status !== "qabul_qilindi";
+  }
+});
+
 // shared/icd10.ts
 function normalizeIcdCode(input) {
   const map = { \u0410: "A", \u0412: "B", \u0415: "E", \u041A: "K", \u041C: "M", \u041D: "H", \u041E: "O", \u0420: "P", \u0421: "C", \u0422: "T", \u0425: "X" };
@@ -2405,40 +2493,6 @@ var init_icd10 = __esm({
     ICD_SOURCE = "Rossiya SSV NSI, OID 1.2.643.5.1.13.13.11.1005, v2.27";
     ICD_CODE_RE = /^[A-Z]\d\d(\.\d{1,2})?$/;
     isIcdCode = (code) => ICD_CODE_RE.test(code);
-  }
-});
-
-// shared/lab-verification.ts
-function lineState(l) {
-  if (l.verifiedAt) return "verified";
-  if (!l.result || !l.result.trim()) return "empty";
-  if (l.returnedAt) return "returned";
-  return "review";
-}
-function labProgress(items) {
-  const p = { total: items.length, empty: 0, returned: 0, review: 0, verified: 0, released: false };
-  for (const i of items) p[lineState(i)]++;
-  p.released = p.total > 0 && p.verified === p.total;
-  return p;
-}
-var isOrderReleased, releasedLines, needsEntry, needsReview, LINE_STATE_LABELS, LEGACY_VERIFIER;
-var init_lab_verification = __esm({
-  "shared/lab-verification.ts"() {
-    "use strict";
-    isOrderReleased = (order) => labProgress(order.items).released;
-    releasedLines = (items) => items.filter((i) => lineState(i) === "verified");
-    needsEntry = (items) => items.some((i) => {
-      const s = lineState(i);
-      return s === "empty" || s === "returned";
-    });
-    needsReview = (items) => items.some((i) => lineState(i) === "review");
-    LINE_STATE_LABELS = {
-      empty: "Kiritilmagan",
-      returned: "Qaytarilgan",
-      review: "Tasdiqlash kutilmoqda",
-      verified: "Tasdiqlangan"
-    };
-    LEGACY_VERIFIER = "Tasdiqlash joriy etilishidan oldingi natija";
   }
 });
 
@@ -2714,6 +2768,7 @@ var init_storage_pg = __esm({
     init_sample();
     init_referral();
     init_lab_catalogue();
+    init_lab_board();
     init_icd10();
     init_lab_rules();
     init_patient_links();
@@ -4099,17 +4154,21 @@ var init_storage_pg = __esm({
         const orderIds = rows.map((o) => o.id);
         const patientIds = Array.from(new Set(rows.map((o) => o.patientId)));
         const [items, people, tubes] = await Promise.all([
-          db.select().from(orderTests).where(inArray(orderTests.orderId, orderIds)),
+          db.select({ line: orderTests, group: tests.group }).from(orderTests).leftJoin(tests, eq(tests.id, orderTests.testId)).where(inArray(orderTests.orderId, orderIds)),
           db.select().from(patients).where(inArray(patients.id, patientIds)),
           db.select().from(samples).where(inArray(samples.orderId, orderIds))
         ]);
         const byPatient = new Map(people.map((p) => [p.id, mapPatient(p)]));
         const bySample = new Map(tubes.map((s) => [s.orderId, mapSample(s)]));
         const byOrder = /* @__PURE__ */ new Map();
-        for (const item of items) {
-          const list = byOrder.get(item.orderId) ?? [];
-          list.push(mapItem(item));
-          byOrder.set(item.orderId, list);
+        const groupsOf = /* @__PURE__ */ new Map();
+        for (const { line, group } of items) {
+          const list = byOrder.get(line.orderId) ?? [];
+          list.push(mapItem(line));
+          byOrder.set(line.orderId, list);
+          const groups = groupsOf.get(line.orderId) ?? [];
+          groups.push(group);
+          groupsOf.set(line.orderId, groups);
         }
         const referralIds = Array.from(new Set(rows.map((o) => o.referralId).filter((id) => Boolean(id))));
         const numbers = referralIds.length ? await db.select({ id: referrals.id, n: referrals.referralNumber }).from(referrals).where(inArray(referrals.id, referralIds)) : [];
@@ -4120,7 +4179,8 @@ var init_storage_pg = __esm({
           items: byOrder.get(row.id) ?? [],
           // Null for orders created before sample tracking existed.
           sample: bySample.get(row.id) ?? null,
-          referralNumber: row.referralId ? byReferral.get(row.referralId) ?? null : null
+          referralNumber: row.referralId ? byReferral.get(row.referralId) ?? null : null,
+          groups: orderGroups(groupsOf.get(row.id) ?? [])
         }));
       }
       async listOrders(query = {}) {
@@ -4141,6 +4201,12 @@ var init_storage_pg = __esm({
         OR EXISTS (SELECT 1 FROM ${orderTests} ot
                    WHERE ot.order_id = "orders"."id" AND ot.test_name ILIKE ${like})
       )`);
+        }
+        const scopeWhere = base.length ? and(...base) : void 0;
+        const groupKey = query.group;
+        if (groupKey) {
+          base.push(sql2`EXISTS (SELECT 1 FROM ${orderTests} ot JOIN ${tests} t ON t.id = ot.test_id
+                            WHERE ot.order_id = "orders"."id" AND t."group" = ${groupKey})`);
         }
         const baseWhere = base.length ? and(...base) : void 0;
         const notCancelled = sql2`${orders.status} <> 'cancelled'`;
@@ -4166,7 +4232,7 @@ var init_storage_pg = __esm({
         if (query.offset) q = q.offset(query.offset);
         const liveBase = baseWhere ? and(baseWhere, notCancelled) : notCancelled;
         const billable = where ? and(where, notCancelled) : notCancelled;
-        const [rows, statusRows, [queueRow], [totalsRow], [{ count }]] = await Promise.all([
+        const [rows, statusRows, [queueRow], [totalsRow], [{ count }], groupRows] = await Promise.all([
           q,
           db.select({ status: orders.status, count: sql2`count(*)::int` }).from(orders).where(baseWhere).groupBy(orders.status),
           db.select({
@@ -4178,8 +4244,11 @@ var init_storage_pg = __esm({
             sum: sql2`coalesce(sum(${orders.totalAmount}), 0)::int`,
             paid: sql2`coalesce(sum(${orders.paidAmount}), 0)::int`
           }).from(orders).where(billable),
-          db.select({ count: sql2`count(*)::int` }).from(orders).where(where)
+          db.select({ count: sql2`count(*)::int` }).from(orders).where(where),
+          db.select({ group: tests.group, count: sql2`count(DISTINCT ${orderTests.orderId})::int` }).from(orderTests).innerJoin(tests, eq(tests.id, orderTests.testId)).innerJoin(orders, eq(orders.id, orderTests.orderId)).where(scopeWhere).groupBy(tests.group)
         ]);
+        const groups = {};
+        for (const row of groupRows) if (isTestGroup(row.group)) groups[row.group] = row.count;
         const counts = { all: 0, pending: 0, in_progress: 0, completed: 0, cancelled: 0 };
         for (const row of statusRows) {
           counts.all += row.count;
@@ -4193,7 +4262,8 @@ var init_storage_pg = __esm({
           summary: {
             counts,
             results: { waiting: queueRow?.waiting ?? 0, review: queueRow?.review ?? 0, ready: queueRow?.ready ?? 0 },
-            totals: { sum, paid, debt: Math.max(0, sum - paid) }
+            totals: { sum, paid, debt: Math.max(0, sum - paid) },
+            groups
           }
         };
       }
@@ -4797,6 +4867,70 @@ var init_storage_pg = __esm({
           unpaidAmount: r?.unpaid ?? 0
         };
       }
+      async getLabBoard(day) {
+        const local = (col) => sql2.raw(`(${col} AT TIME ZONE current_setting('TIMEZONE'))::date`);
+        const countsQuery = db.execute(sql2`
+      WITH o AS (
+        SELECT
+          ord.id, ord.status,
+          ${local("ord.created_at")} AS created_day,
+          ${local("coalesce(ord.updated_at, ord.created_at)")} AS changed_day,
+          s.status AS sample_status,
+          EXISTS (SELECT 1 FROM order_tests ot WHERE ot.order_id = ord.id AND ot.verified_at IS NULL
+                    AND (ot.result IS NULL OR btrim(ot.result) = '' OR ot.returned_at IS NOT NULL)) AS has_blank,
+          EXISTS (SELECT 1 FROM order_tests ot WHERE ot.order_id = ord.id AND ot.verified_at IS NULL
+                    AND ot.result IS NOT NULL AND btrim(ot.result) <> '' AND ot.returned_at IS NULL) AS has_review,
+          (EXISTS (SELECT 1 FROM order_tests ot WHERE ot.order_id = ord.id)
+            AND NOT EXISTS (SELECT 1 FROM order_tests ot WHERE ot.order_id = ord.id AND ot.verified_at IS NULL)) AS released,
+          (SELECT ${local("max(ot.verified_at)")} FROM order_tests ot WHERE ot.order_id = ord.id) AS verified_day
+        FROM orders ord
+        LEFT JOIN samples s ON s.order_id = ord.id
+        WHERE ord.status <> 'cancelled' OR coalesce(ord.updated_at, ord.created_at) > now() - interval '2 days'
+      )
+      SELECT
+        count(*) FILTER (WHERE status <> 'cancelled' AND created_day = ${day}::date)::int AS "today",
+        count(*) FILTER (WHERE status <> 'cancelled' AND sample_status IS NOT NULL
+                           AND sample_status <> 'qabul_qilindi')::int AS "awaitingSample",
+        count(*) FILTER (WHERE status <> 'cancelled' AND sample_status = 'rad_etildi')::int AS "rejected",
+        count(*) FILTER (WHERE status <> 'cancelled' AND (sample_status IS NULL OR sample_status = 'qabul_qilindi')
+                           AND has_blank)::int AS "inProgress",
+        count(*) FILTER (WHERE status <> 'cancelled' AND has_review)::int AS "review",
+        count(*) FILTER (WHERE status <> 'cancelled' AND released AND verified_day = ${day}::date)::int AS "readyToday",
+        count(*) FILTER (WHERE status = 'cancelled' AND changed_day = ${day}::date)::int AS "cancelledToday",
+        (SELECT json_object_agg(g.grp, g.n) FROM (
+           SELECT t."group" AS grp, count(DISTINCT ot.order_id)::int AS n
+           FROM order_tests ot
+           JOIN tests t ON t.id = ot.test_id
+           JOIN o ON o.id = ot.order_id
+           WHERE o.status <> 'cancelled' AND o.created_day = ${day}::date
+           GROUP BY t."group") g) AS "groups"
+      FROM o
+    `);
+        const awaitingQuery = db.select().from(orders).where(
+          and(
+            sql2`${orders.status} <> 'cancelled'`,
+            sql2`EXISTS (SELECT 1 FROM samples s WHERE s.order_id = "orders"."id" AND s.status <> 'qabul_qilindi')`
+          )
+        ).orderBy(asc(orders.createdAt)).limit(LAB_BOARD_AWAITING_LIMIT);
+        const [{ rows }, waitingRows] = await Promise.all([countsQuery, awaitingQuery]);
+        const r = rows[0];
+        const groupsToday = {};
+        for (const [g, n] of Object.entries(r?.groups ?? {})) if (isTestGroup(g)) groupsToday[g] = Number(n);
+        return {
+          date: day,
+          counts: {
+            today: r?.today ?? 0,
+            awaitingSample: r?.awaitingSample ?? 0,
+            rejected: r?.rejected ?? 0,
+            inProgress: r?.inProgress ?? 0,
+            review: r?.review ?? 0,
+            readyToday: r?.readyToday ?? 0,
+            cancelledToday: r?.cancelledToday ?? 0
+          },
+          groupsToday,
+          awaiting: await this.hydrate(waitingRows)
+        };
+      }
       async getReceptionDay(day) {
         const { rows } = await db.execute(sql2`
       WITH today_orders AS (
@@ -5055,6 +5189,7 @@ var init_storage_file = __esm({
     init_patient_links();
     init_referral();
     init_lab_catalogue();
+    init_lab_board();
     init_icd10();
     init_lab_verification();
     init_lab_rules();
@@ -6348,6 +6483,9 @@ var init_storage_file = __esm({
           referralNumber: order.referralId ? this.db.referrals.find((r) => r.id === order.referralId)?.referralNumber ?? null : null,
           patient: this.db.patients.find((p) => p.id === order.patientId) ?? null,
           items: this.db.orderTests.filter((ot) => ot.orderId === order.id),
+          groups: orderGroups(
+            this.db.orderTests.filter((ot) => ot.orderId === order.id).map((ot) => this.db.tests.find((t) => t.id === ot.testId)?.group)
+          ),
           // Null for orders created before sample tracking existed.
           sample: this.db.samples.find((s) => s.orderId === order.id) ?? null
         };
@@ -6378,6 +6516,9 @@ var init_storage_file = __esm({
             (o) => contains(o.patient?.fullName, search) || contains(o.patient?.phone, search) || phoneContains(o.patient?.phone, search) || String(o.orderNumber).includes(search) || o.items.some((i) => contains(i.testName, search))
           );
         }
+        const groups = {};
+        for (const o of base) for (const g of o.groups ?? []) if (isTestGroup(g)) groups[g] = (groups[g] ?? 0) + 1;
+        if (query.group) base = base.filter((o) => o.groups?.includes(query.group));
         const counts = { all: base.length, pending: 0, in_progress: 0, completed: 0, cancelled: 0 };
         for (const o of base) counts[o.status] += 1;
         const live = base.filter((o) => o.status !== "cancelled");
@@ -6402,7 +6543,7 @@ var init_storage_file = __esm({
         return {
           items: rows.slice(offset, offset + limit),
           total,
-          summary: { counts, results, totals: { sum, paid, debt: Math.max(0, sum - paid) } }
+          summary: { counts, results, totals: { sum, paid, debt: Math.max(0, sum - paid) }, groups }
         };
       }
       async getOrder(id) {
@@ -7008,6 +7149,12 @@ var init_storage_file = __esm({
           totalPatients: this.db.patients.length,
           unpaidAmount: this.db.orders.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + Math.max(0, o.totalAmount - o.paidAmount), 0)
         };
+      }
+      async getLabBoard(day) {
+        const all = this.db.orders.map((o) => this.hydrate(o));
+        const { counts, groupsToday } = summarizeLabBoard(all, day, localDay);
+        const awaiting = all.filter(awaitsSample).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, LAB_BOARD_AWAITING_LIMIT);
+        return { date: day, counts, groupsToday, awaiting };
       }
       async getReceptionDay(day) {
         const orders2 = this.db.orders.filter((o) => o.status !== "cancelled" && localDay(o.createdAt) === day);
@@ -8508,6 +8655,15 @@ function registerClinicRoutes(app) {
     })
   );
   app.get(
+    "/api/lab-board",
+    requirePermission("orders.read"),
+    handle(async (req, res) => {
+      const date = stringParam(req.query.date) ?? clockNow().date;
+      if (!isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
+      res.json(await storage.getLabBoard(date));
+    })
+  );
+  app.get(
     "/api/reception",
     requirePermission("appointments.read", "orders.read"),
     handle(async (req, res) => {
@@ -9713,6 +9869,7 @@ async function registerRoutes(app) {
         search: typeof req.query.search === "string" ? req.query.search : void 0,
         status,
         queue: queue2,
+        group: isTestGroup(req.query.group) ? req.query.group : void 0,
         patientId: typeof req.query.patientId === "string" ? req.query.patientId : void 0,
         from: typeof req.query.from === "string" ? req.query.from : void 0,
         to: typeof req.query.to === "string" ? req.query.to : void 0,

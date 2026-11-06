@@ -47,6 +47,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
 - `shared/icd10.ts` + `data/icd10/`: MKB-10 katalogini o'qish, kod normallash, o'zbekcha nomlar importi (B3.4).
 - `server/result-delivery.ts`: tasdiqlangan natijani yo'llagan shifokorga yetkazish (B3.9).
+- `shared/lab-board.ts`: lab bosh sahifasi ko'rsatkichlarining ta'riflari (B4.1).
 - `shared/lab-catalogue.ts`: TZ §6.2 guruhlari, namuna turlari va probirkalar, sifat, `classifyTest`, `tubesFor`. `shared/code128.ts`: Code 128 kodlovchi (`client/src/components/barcode.tsx` SVG).
 - `shared/lab-verification.ts`: natija qatorining holati va qachon tashqariga chiqishi (B4.5). `server/lab-rules.ts`: tasdiqlash va tuzatishning yozish qoidalari.
 - `shared/patient-links.ts`: bemorga bog'langan jadvallar reyestri (birlashtirish va o'chirish qoidalari). `shared/ledger.ts`: nima o'chirilmaydi (to'lov, natijali buyurtma, ishlatilgan tahlil). `shared/reception.ts`: registratura panelining hisob-kitobi. `shared/referral.ts`: yo'llanma holati va qabulga mosligi.
@@ -99,7 +100,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 40 → ≈53%**.
+> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 41 → ≈54%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -235,10 +236,13 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Migratsiya: `npm run db:notifications` (`db:upgrade` ichida). Jadvalsiz bazada qo'ng'iroqcha bo'sh, boshqa hech narsa buzilmaydi. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06).
   - Testlar: `storage-file.test.ts` (3 ta), TZ §2 asosiy oqimi bo'yicha 18 ta API E2E (registratura → shifokor → yo'llanma → kassa → laborant → mudiri → shifokor), brauzerda shifokor tomoni.
 
-### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 59%
+### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 68%
 
-- [~] **B4.1** Lab bosh sahifasi (`§6.1.1`): statistikalar bor; "Tayyor tahlillar" endi faqat tasdiqlanganlar, "tasdiqlashni kutmoqda" soni ko'rsatiladi (B4.5). **Qoldi:** alohida "tasdiqlanishi kerak" va "bekor qilingan" kartalari, holatlarni TZ bo‘yicha aniq ajratish.
-- [~] **B4.2** Buyurtmalar ro‘yxati (`§6.1.2`): "yo‘llanma raqami" bor (B3.5). **Qoldi:** tahlil turi ustuni.
+- [x] **B4.1** Lab bosh sahifasi (`§6.1.1`): TZ'dagi oltita ko'rsatkich.
+  - `GET /api/lab-board` (`orders.read`): bugungi buyurtmalar, namuna kutilmoqda (rad etilganlar alohida), tahlil jarayonida, tasdiqlanishi kerak, bugun tayyor bo'lganlar, bugun bekor qilinganlar; bugungi buyurtmalar guruhlar bo'yicha; namuna kutayotgan eng eski 6 ta buyurtma. Postgres'da bitta CTE + ro'yxat parallel.
+  - Qoidalar `shared/lab-board.ts` da (`summarizeLabBoard`, testlar bilan). Ish navbatlari kun bilan cheklanmaydi (kechagi tugallanmagan probirka bugungi ish). Namuna qabul qilinmagan buyurtma "jarayonda"ga kirmaydi. "Tayyor": hamma qatori tasdiqlangan, oxirgisi bugun. "Bekor qilingan": oxirgi o'zgarishi bugun. SQL va qoida real Neon ma'lumotida solishtirildi.
+  - UI: bosh sahifada lab rollari uchun (`samples.manage`, `results.enter` yoki `results.verify`) "Laboratoriya · Bugungi kun" paneli. Har bir karta kerakli navbatni ochadi (`/results?queue=review`, `/orders?status=cancelled`). Ro'yxatdagi qator buyurtma oynasini ochadi. Eski "kutilayotgan/tayyor tahlillar" kartalari panel bor joyda ko'rsatilmaydi. 20 s da yangilanadi.
+- [x] **B4.2** Buyurtmalar ro‘yxati (`§6.1.2`): bemor ID, F.I.Sh., yo'llanma raqami, **tahlil turi** (B4.6 guruhlari), buyurtma vaqti, holat. Guruh har o'qishda katalogdan JOIN bilan olinadi (`groups`), shuning uchun tahlil qayta tasniflansa ro'yxat ham o'zgaradi; migratsiya kerak emas. `?group=` filtri va guruh chiplari (sonlar boshqa filtrlar bilan, guruh filtrisiz). Eksportda ham. Chiplar katalog bilan umumiy (`GroupFilter`).
 - [x] **B4.3** Namuna qabul qilish (`§6.1.3`, `§2`): namuna turi, probirka, sifat, Code 128.
   - Namuna turi va idish katalogi `shared/lab-catalogue.ts` (`SAMPLE_TYPES`, `TUBES`: qon EDTA / zardob / sitrat, siydik, najas, surtma, boshqa — idish nomi va qopqoq rangi). Buyurtma qatori tahlilning namuna turini **muzlatib** oladi (`order_tests.sample_type`): katalog keyin o'zgarsa ham olingan probirka o'zgarmaydi.
   - Buyurtma oynasida qaysi idishlar kerakligi (`tubesFor`): har biri o'z kodi va tahlillari bilan. Yorliq har bir idish uchun alohida, 58×30 mm, **Code 128** (`shared/code128.ts`, python-barcode bilan 95 belgida solishtirilgan), chetida qopqoq rangi. Kod: `LAB-1042-E` (buyurtma + namuna harfi); skanerlansa buyurtma ochiladi, eski `LAB-1042` ham ishlaydi.
@@ -356,6 +360,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-07 · B4.2, B4.1 · Buyurtmalarda tahlil turi (ustun, filtr, chiplar) va bemor ID; laboratoriya bosh sahifasi: TZ'dagi oltita ko'rsatkich, namuna kutayotganlar ro'yxati, bugungi buyurtmalar guruhlar bo'yicha, kartalardan to'g'ri navbatga o'tish.
 - 2026-11-06 · B4.6, B4.3 · Tahlillar TZ'dagi 8 guruh va namuna turi bo'yicha; buyurtma qatori namuna turini muzlatadi; har bir probirka uchun Code 128 yorlig'i (qopqoq rangi bilan) va o'z kodi bo'yicha skan; qabulda namuna sifati. Sarf normasi B5.6 ga ko'chirildi.
 - 2026-11-05 · fix · Postgres'dagi ichki so'rovlar: natijalar navbati (kutilmoqda/tayyor), tahlil nomi bo'yicha qidiruv, bemorlarning oxirgi tashrifi, bo'limlardagi shifokorlar soni noto'g'ri edi; tuzatildi va himoya testi qo'shildi.
 - 2026-11-05 · fix · Telegram polling 409 xatosi butun serverni o'chirardi; endi xato yoziladi va bot o'zi qayta ulanadi (409 da 35 s, boshqa xatolarda 5 s → 5 daq).

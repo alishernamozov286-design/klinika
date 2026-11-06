@@ -1,6 +1,8 @@
 import { computeFlag } from "@shared/reference-range";
 import type { LockState } from "@shared/lockout";
 import { SUPER_ADMIN, SYSTEM_ROLE_KEYS } from "@shared/permissions";
+import type { TestGroup } from "@shared/lab-catalogue";
+import type { LabBoard } from "@shared/lab-board";
 import type {
   AuditEntry,
   CreatePaymentInput,
@@ -105,6 +107,8 @@ export type OrderQuery = {
    * "review" has a value for the lab head to check, "ready" is fully verified.
    */
   queue?: "waiting" | "review" | "ready";
+  /** TZ §6.1.2: orders with at least one test of this catalogue group. */
+  group?: TestGroup;
   limit?: number;
   offset?: number;
 };
@@ -730,6 +734,8 @@ export interface IStorage {
   getDashboardStats(): Promise<DashboardStatsData>;
   /** Registratura bosh sahifasi (TZ §4.1.1): one day's counts, in one round trip. */
   getReceptionDay(day: string): Promise<ReceptionDay>;
+  /** Laboratoriya bosh sahifasi (TZ §6.1.1); the rules are in shared/lab-board.ts. */
+  getLabBoard(day: string): Promise<LabBoard>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

@@ -73,7 +73,8 @@ import { nextQueueNumber } from "@shared/appointment";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { patientHistoryProblem } from "@shared/patient-links";
 import { referralStage } from "@shared/referral";
-import { classifyTest } from "@shared/lab-catalogue";
+import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
+import { LAB_BOARD_AWAITING_LIMIT, awaitsSample, summarizeLabBoard, type LabBoard } from "@shared/lab-board";
 import { ICD_SOURCE, normalizeIcdCode, parseNsiIcd10, type IcdRow } from "@shared/icd10";
 import { readFileSync } from "fs";
 import path from "path";
@@ -1667,6 +1668,11 @@ export class FileStorage implements IStorage {
         : null,
       patient: this.db.patients.find((p) => p.id === order.patientId) ?? null,
       items: this.db.orderTests.filter((ot) => ot.orderId === order.id),
+      groups: orderGroups(
+        this.db.orderTests
+          .filter((ot) => ot.orderId === order.id)
+          .map((ot) => this.db.tests.find((t) => t.id === ot.testId)?.group),
+      ),
       // Null for orders created before sample tracking existed.
       sample: this.db.samples.find((s) => s.orderId === order.id) ?? null,
     };
@@ -1710,6 +1716,11 @@ export class FileStorage implements IStorage {
       );
     }
 
+    // Group chips count with the group filter lifted, as the status tabs do.
+    const groups: OrderListResponse["summary"]["groups"] = {};
+    for (const o of base) for (const g of o.groups ?? []) if (isTestGroup(g)) groups[g] = (groups[g] ?? 0) + 1;
+    if (query.group) base = base.filter((o) => o.groups?.includes(query.group!));
+
     const counts = { all: base.length, pending: 0, in_progress: 0, completed: 0, cancelled: 0 };
     for (const o of base) counts[o.status] += 1;
 
@@ -1739,7 +1750,7 @@ export class FileStorage implements IStorage {
     return {
       items: rows.slice(offset, offset + limit),
       total,
-      summary: { counts, results, totals: { sum, paid, debt: Math.max(0, sum - paid) } },
+      summary: { counts, results, totals: { sum, paid, debt: Math.max(0, sum - paid) }, groups },
     };
   }
 
@@ -2485,6 +2496,16 @@ export class FileStorage implements IStorage {
         .filter((o) => o.status !== "cancelled")
         .reduce((sum, o) => sum + Math.max(0, o.totalAmount - o.paidAmount), 0),
     };
+  }
+
+  async getLabBoard(day: string): Promise<LabBoard> {
+    const all = this.db.orders.map((o) => this.hydrate(o));
+    const { counts, groupsToday } = summarizeLabBoard(all, day, localDay);
+    const awaiting = all
+      .filter(awaitsSample)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, LAB_BOARD_AWAITING_LIMIT);
+    return { date: day, counts, groupsToday, awaiting };
   }
 
   async getReceptionDay(day: string): Promise<ReceptionDay> {

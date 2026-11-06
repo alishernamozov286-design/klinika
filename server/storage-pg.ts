@@ -110,7 +110,8 @@ import {
 } from "@shared/schema";
 import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@shared/sample";
 import { referralStage } from "@shared/referral";
-import { classifyTest } from "@shared/lab-catalogue";
+import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
+import { LAB_BOARD_AWAITING_LIMIT, type LabBoard, type LabBoardCounts } from "@shared/lab-board";
 import { ICD_SOURCE, normalizeIcdCode } from "@shared/icd10";
 import { amendProblem, pickForVerification } from "./lab-rules";
 import { BLOCKING_TABLES, patientHistoryProblem, type BlockingTable } from "@shared/patient-links";
@@ -2108,8 +2109,13 @@ export class PgStorage implements IStorage {
     // The sample is fetched for the whole page in one query rather than per
     // row: the results queue renders 24 cards and each needs its tube's status
     // to decide whether to warn, which row-by-row would be 24 round trips.
+    // Each line's catalogue group comes along in the same query (TZ §6.1.2).
     const [items, people, tubes] = await Promise.all([
-      db.select().from(orderTests).where(inArray(orderTests.orderId, orderIds)),
+      db
+        .select({ line: orderTests, group: tests.group })
+        .from(orderTests)
+        .leftJoin(tests, eq(tests.id, orderTests.testId))
+        .where(inArray(orderTests.orderId, orderIds)),
       db.select().from(patients).where(inArray(patients.id, patientIds)),
       db.select().from(samples).where(inArray(samples.orderId, orderIds)),
     ]);
@@ -2117,10 +2123,14 @@ export class PgStorage implements IStorage {
     const byPatient = new Map(people.map((p) => [p.id, mapPatient(p)]));
     const bySample = new Map(tubes.map((s) => [s.orderId, mapSample(s)]));
     const byOrder = new Map<string, OrderTest[]>();
-    for (const item of items) {
-      const list = byOrder.get(item.orderId) ?? [];
-      list.push(mapItem(item));
-      byOrder.set(item.orderId, list);
+    const groupsOf = new Map<string, (string | null)[]>();
+    for (const { line, group } of items) {
+      const list = byOrder.get(line.orderId) ?? [];
+      list.push(mapItem(line));
+      byOrder.set(line.orderId, list);
+      const groups = groupsOf.get(line.orderId) ?? [];
+      groups.push(group);
+      groupsOf.set(line.orderId, groups);
     }
 
     // Referral numbers only for the orders that came from a doctor.
@@ -2140,6 +2150,7 @@ export class PgStorage implements IStorage {
       // Null for orders created before sample tracking existed.
       sample: bySample.get(row.id) ?? null,
       referralNumber: row.referralId ? (byReferral.get(row.referralId) ?? null) : null,
+      groups: orderGroups(groupsOf.get(row.id) ?? []),
     }));
   }
 
@@ -2169,6 +2180,13 @@ export class PgStorage implements IStorage {
         OR EXISTS (SELECT 1 FROM ${orderTests} ot
                    WHERE ot.order_id = "orders"."id" AND ot.test_name ILIKE ${like})
       )`);
+    }
+    // The group chips count with the group filter lifted, as the status tabs do.
+    const scopeWhere = base.length ? and(...base) : undefined;
+    const groupKey = query.group;
+    if (groupKey) {
+      base.push(sql`EXISTS (SELECT 1 FROM ${orderTests} ot JOIN ${tests} t ON t.id = ot.test_id
+                            WHERE ot.order_id = "orders"."id" AND t."group" = ${groupKey})`);
     }
     const baseWhere = base.length ? and(...base) : undefined;
 
@@ -2201,7 +2219,7 @@ export class PgStorage implements IStorage {
     const liveBase = baseWhere ? and(baseWhere, notCancelled) : notCancelled;
     const billable = where ? and(where, notCancelled) : notCancelled;
 
-    const [rows, statusRows, [queueRow], [totalsRow], [{ count }]] = await Promise.all([
+    const [rows, statusRows, [queueRow], [totalsRow], [{ count }], groupRows] = await Promise.all([
       q,
       db
         .select({ status: orders.status, count: sql<number>`count(*)::int` })
@@ -2224,7 +2242,17 @@ export class PgStorage implements IStorage {
         .from(orders)
         .where(billable),
       db.select({ count: sql<number>`count(*)::int` }).from(orders).where(where),
+      db
+        .select({ group: tests.group, count: sql<number>`count(DISTINCT ${orderTests.orderId})::int` })
+        .from(orderTests)
+        .innerJoin(tests, eq(tests.id, orderTests.testId))
+        .innerJoin(orders, eq(orders.id, orderTests.orderId))
+        .where(scopeWhere)
+        .groupBy(tests.group),
     ]);
+
+    const groups: OrderListResponse["summary"]["groups"] = {};
+    for (const row of groupRows) if (isTestGroup(row.group)) groups[row.group] = row.count;
 
     const counts = { all: 0, pending: 0, in_progress: 0, completed: 0, cancelled: 0 };
     for (const row of statusRows) {
@@ -2242,6 +2270,7 @@ export class PgStorage implements IStorage {
         counts,
         results: { waiting: queueRow?.waiting ?? 0, review: queueRow?.review ?? 0, ready: queueRow?.ready ?? 0 },
         totals: { sum, paid, debt: Math.max(0, sum - paid) },
+        groups,
       },
     };
   }
@@ -3125,6 +3154,80 @@ export class PgStorage implements IStorage {
       todayRevenue: r?.today_revenue ?? 0,
       totalPatients: r?.total_patients ?? 0,
       unpaidAmount: r?.unpaid ?? 0,
+    };
+  }
+
+  async getLabBoard(day: string): Promise<LabBoard> {
+    // The same rules as summarizeLabBoard (shared/lab-board.ts), in one
+    // statement. Only live orders and those cancelled in the last two days are
+    // read; the per-order facts are computed once in "o" and counted below.
+    const local = (col: string) => sql.raw(`(${col} AT TIME ZONE current_setting('TIMEZONE'))::date`);
+    const countsQuery = db.execute<LabBoardCounts & { groups: Record<string, number> | null }>(sql`
+      WITH o AS (
+        SELECT
+          ord.id, ord.status,
+          ${local("ord.created_at")} AS created_day,
+          ${local("coalesce(ord.updated_at, ord.created_at)")} AS changed_day,
+          s.status AS sample_status,
+          EXISTS (SELECT 1 FROM order_tests ot WHERE ot.order_id = ord.id AND ot.verified_at IS NULL
+                    AND (ot.result IS NULL OR btrim(ot.result) = '' OR ot.returned_at IS NOT NULL)) AS has_blank,
+          EXISTS (SELECT 1 FROM order_tests ot WHERE ot.order_id = ord.id AND ot.verified_at IS NULL
+                    AND ot.result IS NOT NULL AND btrim(ot.result) <> '' AND ot.returned_at IS NULL) AS has_review,
+          (EXISTS (SELECT 1 FROM order_tests ot WHERE ot.order_id = ord.id)
+            AND NOT EXISTS (SELECT 1 FROM order_tests ot WHERE ot.order_id = ord.id AND ot.verified_at IS NULL)) AS released,
+          (SELECT ${local("max(ot.verified_at)")} FROM order_tests ot WHERE ot.order_id = ord.id) AS verified_day
+        FROM orders ord
+        LEFT JOIN samples s ON s.order_id = ord.id
+        WHERE ord.status <> 'cancelled' OR coalesce(ord.updated_at, ord.created_at) > now() - interval '2 days'
+      )
+      SELECT
+        count(*) FILTER (WHERE status <> 'cancelled' AND created_day = ${day}::date)::int AS "today",
+        count(*) FILTER (WHERE status <> 'cancelled' AND sample_status IS NOT NULL
+                           AND sample_status <> 'qabul_qilindi')::int AS "awaitingSample",
+        count(*) FILTER (WHERE status <> 'cancelled' AND sample_status = 'rad_etildi')::int AS "rejected",
+        count(*) FILTER (WHERE status <> 'cancelled' AND (sample_status IS NULL OR sample_status = 'qabul_qilindi')
+                           AND has_blank)::int AS "inProgress",
+        count(*) FILTER (WHERE status <> 'cancelled' AND has_review)::int AS "review",
+        count(*) FILTER (WHERE status <> 'cancelled' AND released AND verified_day = ${day}::date)::int AS "readyToday",
+        count(*) FILTER (WHERE status = 'cancelled' AND changed_day = ${day}::date)::int AS "cancelledToday",
+        (SELECT json_object_agg(g.grp, g.n) FROM (
+           SELECT t."group" AS grp, count(DISTINCT ot.order_id)::int AS n
+           FROM order_tests ot
+           JOIN tests t ON t.id = ot.test_id
+           JOIN o ON o.id = ot.order_id
+           WHERE o.status <> 'cancelled' AND o.created_day = ${day}::date
+           GROUP BY t."group") g) AS "groups"
+      FROM o
+    `);
+    const awaitingQuery = db
+      .select()
+      .from(orders)
+      .where(
+        and(
+          sql`${orders.status} <> 'cancelled'`,
+          sql`EXISTS (SELECT 1 FROM samples s WHERE s.order_id = "orders"."id" AND s.status <> 'qabul_qilindi')`,
+        ),
+      )
+      .orderBy(asc(orders.createdAt))
+      .limit(LAB_BOARD_AWAITING_LIMIT);
+
+    const [{ rows }, waitingRows] = await Promise.all([countsQuery, awaitingQuery]);
+    const r = rows[0];
+    const groupsToday: LabBoard["groupsToday"] = {};
+    for (const [g, n] of Object.entries(r?.groups ?? {})) if (isTestGroup(g)) groupsToday[g] = Number(n);
+    return {
+      date: day,
+      counts: {
+        today: r?.today ?? 0,
+        awaitingSample: r?.awaitingSample ?? 0,
+        rejected: r?.rejected ?? 0,
+        inProgress: r?.inProgress ?? 0,
+        review: r?.review ?? 0,
+        readyToday: r?.readyToday ?? 0,
+        cancelledToday: r?.cancelledToday ?? 0,
+      },
+      groupsToday,
+      awaiting: await this.hydrate(waitingRows),
     };
   }
 

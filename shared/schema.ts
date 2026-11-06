@@ -1412,6 +1412,12 @@ export type OrderWithDetails = Order & {
   sample?: Sample | null;
   /** "Yo'llanma №12" when the order came from a doctor's referral (TZ §6.1.2). */
   referralNumber?: number | null;
+  /**
+   * TZ §6.1.2 "tahlil turi": the catalogue groups of the order's tests, in
+   * TEST_GROUPS order. Read through the catalogue rather than snapshotted, so
+   * a reclassified test reclassifies the lists and reports with it.
+   */
+  groups?: TestGroup[];
 };
 
 /** A page of rows plus the row count of the whole (unpaginated) match. */
@@ -1433,6 +1439,8 @@ export type OrderSummary = {
   results: { waiting: number; review: number; ready: number };
   /** Money for the current filter; cancelled orders never count. */
   totals: { sum: number; paid: number; debt: number };
+  /** Orders holding at least one test of each group, with the group filter lifted. */
+  groups: Partial<Record<TestGroup, number>>;
 };
 
 export type OrderListResponse = Paged<OrderWithDetails> & { summary: OrderSummary };

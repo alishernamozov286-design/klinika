@@ -86,7 +86,7 @@ import {
 import { MfaPanel, MfaPolicyPanel } from "@/components/mfa-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { IcdPanel } from "@/components/icd-panel";
-import { TubeDot } from "@/components/lab-ui";
+import { GroupFilter, TubeDot } from "@/components/lab-ui";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SAMPLE_TYPES, TEST_GROUPS, TEST_GROUP_LABELS, TUBES, classifyTest, type TestGroup } from "@shared/lab-catalogue";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
@@ -428,8 +428,8 @@ function TestsPanel() {
   const { data: tests = [], isLoading } = useQuery<Test[]>({ queryKey: ["/api/tests?all=1"] });
 
   const groupCounts = useMemo(() => {
-    const counts = new Map<TestGroup, number>();
-    for (const t of tests) counts.set(t.group, (counts.get(t.group) ?? 0) + 1);
+    const counts: Partial<Record<TestGroup, number>> = {};
+    for (const t of tests) counts[t.group] = (counts[t.group] ?? 0) + 1;
     return counts;
   }, [tests]);
 
@@ -553,26 +553,7 @@ function TestsPanel() {
       </div>
 
       {/* TZ §6.2: the eight groups, plus what none of them covers. */}
-      <div className="flex flex-wrap gap-1.5" data-testid="test-group-filter">
-        {(["all", ...TEST_GROUPS] as const).map((g) => {
-          const count = g === "all" ? tests.length : (groupCounts.get(g) ?? 0);
-          if (g !== "all" && count === 0) return null;
-          return (
-            <button
-              key={g}
-              type="button"
-              onClick={() => setGroup(g)}
-              className={cn(
-                "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                group === g ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:border-primary/40",
-              )}
-              data-testid={`filter-group-${g}`}
-            >
-              {g === "all" ? "Hammasi" : TEST_GROUP_LABELS[g]} <span className="tabular opacity-70">{count}</span>
-            </button>
-          );
-        })}
-      </div>
+      <GroupFilter value={group} onChange={setGroup} counts={groupCounts} total={tests.length} />
 
       <div className="card-premium overflow-hidden">
         {isLoading ? (

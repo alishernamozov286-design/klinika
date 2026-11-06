@@ -498,6 +498,18 @@ export function registerClinicRoutes(app: Express) {
    * needs appointments.read, the bills orders.read (money finance.view), new
    * registrations patients.read — and comes back null without it.
    */
+  // Laboratoriya bosh sahifasi (TZ §6.1.1). Counts only, no money, so
+  // orders.read is enough; the rules are in shared/lab-board.ts.
+  app.get(
+    "/api/lab-board",
+    requirePermission("orders.read"),
+    handle(async (req, res) => {
+      const date = stringParam(req.query.date) ?? clockNow().date;
+      if (!isValidDay(date)) return res.status(400).json({ message: "Sana noto'g'ri" });
+      res.json(await storage.getLabBoard(date));
+    }),
+  );
+
   app.get(
     "/api/reception",
     requirePermission("appointments.read", "orders.read"),

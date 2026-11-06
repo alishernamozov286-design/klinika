@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { IStorage } from "./storage-types";
+import { todayKey, type IStorage } from "./storage-types";
 
 let dir: string;
 let storage: IStorage;
@@ -1751,5 +1751,60 @@ describe("lab catalogue groups and specimens (B4.6, B4.3)", () => {
   it("a tube's own code finds its order", async () => {
     const { order } = await makeOrder(["1"]);
     expect((await storage.getOrderByBarcode(`LAB-${order.orderNumber}-E`))?.id).toBe(order.id);
+  });
+});
+
+describe("lab board (B4.1)", () => {
+  it("follows an order from the draw to release and counts cancellations", async () => {
+    const day = todayKey();
+    const empty = await storage.getLabBoard(day);
+
+    const { order } = await makeOrder(["1", "22"]);
+    let board = await storage.getLabBoard(day);
+    expect(board.counts.today).toBe(empty.counts.today + 1);
+    expect(board.counts.awaitingSample).toBe(empty.counts.awaitingSample + 1);
+    expect(board.awaiting.some((o) => o.id === order.id)).toBe(true);
+    expect(board.groupsToday.gematologiya).toBe((empty.groupsToday.gematologiya ?? 0) + 1);
+
+    await storage.updateSampleStatus(order.id, { status: "olindi" }, ACTOR);
+    await storage.updateSampleStatus(order.id, { status: "qabul_qilindi" }, ACTOR);
+    board = await storage.getLabBoard(day);
+    expect(board.counts.awaitingSample).toBe(empty.counts.awaitingSample);
+    expect(board.counts.inProgress).toBe(empty.counts.inProgress + 1);
+    expect(board.awaiting.some((o) => o.id === order.id)).toBe(false);
+
+    const { order: cancelled } = await makeOrder(["6"]);
+    await storage.updateOrder(cancelled.id, { status: "cancelled" }, ACTOR);
+    board = await storage.getLabBoard(day);
+    expect(board.counts.cancelledToday).toBe(empty.counts.cancelledToday + 1);
+    expect(board.counts.today).toBe(empty.counts.today + 1);
+  });
+});
+
+describe("orders by test group (B4.2)", () => {
+  it("each order lists its groups in catalogue order, from the catalogue", async () => {
+    const { order } = await makeOrder(["6", "1", "22"]);
+    expect(order.groups).toEqual(["gematologiya", "biokimyo", "siydik"]);
+    // Reclassifying a test reclassifies the orders that hold it.
+    await storage.updateTest("6", { group: "boshqa" }, ACTOR);
+    expect((await storage.getOrder(order.id))!.groups).toEqual(["gematologiya", "biokimyo", "boshqa"]);
+  });
+
+  it("filters by group and counts the chips with the group filter lifted", async () => {
+    const { order: blood } = await makeOrder(["1"]);
+    const { order: mixed } = await makeOrder(["1", "45"]);
+    const { order: urine } = await makeOrder(["6"]);
+    const all = await storage.listOrders();
+    expect(all.summary.groups).toMatchObject({ gematologiya: 2, koagulologiya: 1, siydik: 1 });
+
+    const coag = await storage.listOrders({ group: "koagulologiya" });
+    expect(coag.items.map((o) => o.id)).toEqual([mixed.id]);
+    expect(coag.summary.counts.all).toBe(1);
+    // The chips still describe everything, so the user can switch group.
+    expect(coag.summary.groups).toMatchObject({ gematologiya: 2, koagulologiya: 1, siydik: 1 });
+
+    const hema = await storage.listOrders({ group: "gematologiya" });
+    expect(hema.items.map((o) => o.id).sort()).toEqual([blood.id, mixed.id].sort());
+    expect(hema.items.some((o) => o.id === urine.id)).toBe(false);
   });
 });

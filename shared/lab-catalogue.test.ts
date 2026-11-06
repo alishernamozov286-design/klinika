@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultTests } from "./tests-data";
-import { classifyTest, tubesFor, TEST_GROUPS } from "./lab-catalogue";
+import { classifyTest, isTestGroup, orderGroups, tubesFor, TEST_GROUPS } from "./lab-catalogue";
 
 const by = new Map(defaultTests.map((t) => [t.id, classifyTest(t)]));
 const groupOf = (id: string) => by.get(id)!.group;
@@ -52,5 +52,18 @@ describe("lab catalogue classification (B4.6, TZ §6.2)", () => {
       { sampleType: "siydik", tests: ["Siydik"] },
       { sampleType: "boshqa", tests: ["Eski"] },
     ]);
+  });
+});
+
+describe("orderGroups", () => {
+  it("dedupes, keeps catalogue order and drops unknown values", () => {
+    expect(orderGroups(["siydik", "biokimyo", null, "biokimyo", "noma'lum", "gematologiya"])).toEqual([
+      "gematologiya",
+      "biokimyo",
+      "siydik",
+    ]);
+    expect(orderGroups([])).toEqual([]);
+    expect(isTestGroup("gormonlar")).toBe(true);
+    expect(isTestGroup("gormon")).toBe(false);
   });
 });

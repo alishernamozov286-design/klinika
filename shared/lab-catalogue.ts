@@ -125,3 +125,18 @@ export function tubesFor<T extends { testName: string; sampleType: string | null
   }
   return SAMPLE_TYPES.filter((t) => by.has(t)).map((t) => ({ sampleType: t, tests: by.get(t)! }));
 }
+
+export function isTestGroup(value: unknown): value is TestGroup {
+  return typeof value === "string" && (TEST_GROUPS as readonly string[]).includes(value);
+}
+
+/**
+ * The distinct groups an order touches, in catalogue order (TZ §6.1.2
+ * "tahlil turi"). Unknown values — a row the migration has not reached —
+ * are dropped rather than shown as a raw key.
+ */
+export function orderGroups(groups: Iterable<string | null | undefined>): TestGroup[] {
+  const seen = new Set<string>();
+  for (const g of Array.from(groups)) if (g) seen.add(g);
+  return TEST_GROUPS.filter((g) => seen.has(g));
+}
