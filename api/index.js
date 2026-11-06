@@ -496,6 +496,7 @@ __export(schema_exports, {
   DEPARTMENT_KIND_LABELS: () => DEPARTMENT_KIND_LABELS,
   EXPENSE_CATEGORIES: () => EXPENSE_CATEGORIES,
   EXPENSE_STATUSES: () => EXPENSE_STATUSES,
+  NOTIFICATION_KINDS: () => NOTIFICATION_KINDS,
   ORDER_STATUSES: () => ORDER_STATUSES,
   ORDER_STATUS_LABELS: () => ORDER_STATUS_LABELS,
   PAYMENT_METHODS: () => PAYMENT_METHODS,
@@ -558,6 +559,7 @@ __export(schema_exports, {
   mfaPasswordSchema: () => mfaPasswordSchema,
   nationalPhoneDigits: () => nationalPhoneDigits,
   normalizeUzPhone: () => normalizeUzPhone,
+  notifications: () => notifications,
   orderTestVersions: () => orderTestVersions,
   orderTests: () => orderTests,
   orders: () => orders,
@@ -635,7 +637,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -990,6 +992,26 @@ var init_schema = __esm({
         statusIdx: index("IDX_referrals_status_kind").on(t.status, t.kind)
       })
     );
+    notifications = pgTable(
+      "notifications",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        userId: varchar("user_id").notNull(),
+        kind: text("kind").notNull(),
+        title: text("title").notNull(),
+        body: text("body"),
+        /** Where clicking it takes the reader, an app path. */
+        link: text("link"),
+        /** The order (or other row) it is about. */
+        entityId: varchar("entity_id"),
+        /** Out-of-range values or a correction: drawn so it is not missed. */
+        important: boolean("important").notNull().default(false),
+        dedupeKey: text("dedupe_key").unique(),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        readAt: isoTimestamp("read_at")
+      },
+      (t) => ({ userIdx: index("IDX_notifications_user").on(t.userId, t.createdAt) })
+    );
     patientAllergies = pgTable(
       "patient_allergies",
       {
@@ -1276,6 +1298,7 @@ var init_schema = __esm({
       director: text("director"),
       licenseNumber: text("license_number")
     });
+    NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"];
     birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
     emergencyContactSchema = z.object({
       name: z.string().trim().min(2, "Aloqa uchun shaxs ismini kiriting").max(120),
@@ -3152,6 +3175,34 @@ var init_storage_pg = __esm({
         if (!rows.length) throw new StorageConflict("Bu yozuv allaqachon faol emas");
         return await this.getAllergy(id);
       }
+      // -------------------------------------------------------- notifications
+      async createNotification(input) {
+        const rows = await db.insert(notifications).values(input).onConflictDoNothing({ target: notifications.dedupeKey }).returning({ id: notifications.id });
+        return rows.length > 0;
+      }
+      async listNotifications(userId, limit) {
+        const [items, [{ unread }]] = await Promise.all([
+          db.select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt)).limit(limit),
+          db.select({ unread: sql2`count(*)::int` }).from(notifications).where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+        ]);
+        return {
+          unread,
+          items: items.map(({ dedupeKey: _key, ...n }) => ({
+            ...n,
+            kind: n.kind,
+            createdAt: iso(n.createdAt) ?? n.createdAt,
+            readAt: iso(n.readAt)
+          }))
+        };
+      }
+      async markNotificationRead(userId, id) {
+        const rows = await db.update(notifications).set({ readAt: (/* @__PURE__ */ new Date()).toISOString() }).where(and(eq(notifications.id, id), eq(notifications.userId, userId), isNull(notifications.readAt))).returning({ id: notifications.id });
+        return rows.length > 0;
+      }
+      async markAllNotificationsRead(userId) {
+        const rows = await db.update(notifications).set({ readAt: (/* @__PURE__ */ new Date()).toISOString() }).where(and(eq(notifications.userId, userId), isNull(notifications.readAt))).returning({ id: notifications.id });
+        return rows.length;
+      }
       // ------------------------------------------------------------ referrals
       async listReferrals(q) {
         if (q.ids && q.ids.length === 0) return [];
@@ -3188,6 +3239,10 @@ var init_storage_pg = __esm({
             tests: sql2`count(${orderTests.id})::int`,
             done: sql2`count(${orderTests.result})::int`,
             verified: sql2`count(${orderTests.verifiedAt})::int`,
+            results: sql2`coalesce(json_agg(json_build_object(
+                  'testName', ${orderTests.testName}, 'result', ${orderTests.result}, 'unit', ${orderTests.unit},
+                  'referenceRange', ${orderTests.referenceRange}, 'flag', ${orderTests.flag})
+                ORDER BY ${orderTests.testName}) FILTER (WHERE ${orderTests.verifiedAt} IS NOT NULL), '[]'::json)`,
             names: sql2`coalesce(array_agg(${orderTests.testName} ORDER BY ${orderTests.testName})
                 FILTER (WHERE ${orderTests.id} IS NOT NULL), '{}')`
           }).from(orders).leftJoin(orderTests, eq(orderTests.orderId, orders.id)).where(inArray(orders.referralId, labIds)).groupBy(orders.id) : Promise.resolve([]),
@@ -3207,6 +3262,7 @@ var init_storage_pg = __esm({
               tests: o.tests,
               done: o.done,
               verified: o.verified,
+              results: o.results ?? [],
               testNames: o.names ?? []
             }
           ])
@@ -4635,6 +4691,7 @@ var init_db = __esm({
       medicalRecordVersions: [],
       patientAllergies: [],
       referrals: [],
+      notifications: [],
       security: null,
       patients: [],
       patientContacts: [],
@@ -5335,6 +5392,39 @@ var init_storage_file = __esm({
         await this.persist();
         return this.allergyDetails(a);
       }
+      // -------------------------------------------------------- notifications
+      async createNotification(input) {
+        if (input.dedupeKey && this.db.notifications.some((n) => n.dedupeKey === input.dedupeKey)) return false;
+        this.db.notifications.push({ id: randomUUID(), ...input, createdAt: (/* @__PURE__ */ new Date()).toISOString(), readAt: null });
+        await this.persist();
+        return true;
+      }
+      async listNotifications(userId, limit) {
+        const mine = this.db.notifications.filter((n) => n.userId === userId);
+        return {
+          unread: mine.filter((n) => !n.readAt).length,
+          items: [...mine].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit).map(({ dedupeKey: _key, ...n }) => ({ ...n }))
+        };
+      }
+      async markNotificationRead(userId, id) {
+        const n = this.db.notifications.find((x) => x.id === id && x.userId === userId && !x.readAt);
+        if (!n) return false;
+        n.readAt = (/* @__PURE__ */ new Date()).toISOString();
+        await this.persist();
+        return true;
+      }
+      async markAllNotificationsRead(userId) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        let count = 0;
+        for (const n of this.db.notifications) {
+          if (n.userId === userId && !n.readAt) {
+            n.readAt = now;
+            count++;
+          }
+        }
+        if (count) await this.persist();
+        return count;
+      }
       // ------------------------------------------------------------ referrals
       /** The booking that still fulfils a referral: anything but cancelled or no-show. */
       liveBooking(referralId) {
@@ -5364,6 +5454,7 @@ var init_storage_file = __esm({
               tests: lines.length,
               done: lines.filter((i) => i.result).length,
               verified: lines.filter((i) => i.verifiedAt).length,
+              results: lines.filter((i) => i.verifiedAt && i.result).sort((a, b) => a.testName.localeCompare(b.testName)).map((i) => ({ testName: i.testName, result: i.result, unit: i.unit, referenceRange: i.referenceRange, flag: i.flag })),
               testNames: lines.map((i) => i.testName).sort((a, b) => a.localeCompare(b))
             };
           }
@@ -8102,6 +8193,45 @@ function registerClinicRoutes(app) {
 // server/routes.ts
 init_lab_verification();
 
+// server/result-delivery.ts
+init_lab_verification();
+async function notifyOrderingDoctor(order, event) {
+  try {
+    if (!order.referralId || !isOrderReleased(order)) return false;
+    const referral = await storage.getReferral(order.referralId);
+    if (!referral?.doctorUserId) return false;
+    const patient = `\u2116${referral.patientNumber} ${referral.patientName}`;
+    const abnormal = order.items.filter((i) => i.flag === "low" || i.flag === "high");
+    const link = referral.appointmentId ? `/cabinet/visit/${referral.appointmentId}` : `/patients/${referral.patientId}`;
+    const notice = event.kind === "released" ? {
+      kind: "lab_result",
+      title: `Tahlil natijalari tayyor: ${patient}`,
+      body: [
+        `Yo'llanma \u2116${referral.referralNumber} \xB7 buyurtma #${order.orderNumber}`,
+        order.items.map((i) => i.testName).join(", "),
+        abnormal.length ? `${abnormal.length} tasi me'yordan tashqarida: ${abnormal.map((i) => i.testName).join(", ")}` : "Hammasi me'yorda"
+      ].join("\n"),
+      important: abnormal.length > 0,
+      dedupeKey: `lab_result:${order.id}`
+    } : {
+      kind: "lab_result_amended",
+      title: `Natija tuzatildi: ${patient}`,
+      body: `Yo'llanma \u2116${referral.referralNumber} \xB7 ${event.testName}: ${event.from ?? "\u2014"} \u2192 ${event.to}`,
+      important: true,
+      dedupeKey: null
+    };
+    return await storage.createNotification({
+      userId: referral.doctorUserId,
+      link,
+      entityId: order.id,
+      ...notice
+    });
+  } catch (err) {
+    log(`[notify] #${order.orderNumber}: shifokorga xabar yuborilmadi \u2014 ${err instanceof Error ? err.message : err}`);
+    return false;
+  }
+}
+
 // server/routes-medical.ts
 init_schema();
 init_referral();
@@ -9168,6 +9298,29 @@ async function registerRoutes(app) {
       res.json({ ...order, telegram: delivery });
     })
   );
+  app.get(
+    "/api/notifications",
+    requireAuth,
+    handle(async (req, res) => {
+      const limit = Math.min(50, Math.max(1, numberParam(req.query.limit, 20) ?? 20));
+      res.json(await storage.listNotifications(req.user.id, limit).catch((e) => emptyIfMissing(e, { items: [], unread: 0 })));
+    })
+  );
+  app.post(
+    "/api/notifications/:id/read",
+    requireAuth,
+    handle(async (req, res) => {
+      const changed = await storage.markNotificationRead(req.user.id, req.params.id);
+      res.json({ ok: true, changed });
+    })
+  );
+  app.post(
+    "/api/notifications/read-all",
+    requireAuth,
+    handle(async (req, res) => {
+      res.json({ ok: true, changed: await storage.markAllNotificationsRead(req.user.id) });
+    })
+  );
   app.post(
     "/api/orders/:id/verify",
     requirePermission("results.verify"),
@@ -9184,8 +9337,8 @@ async function registerRoutes(app) {
         order.id,
         `#${order.orderNumber}: ${verified} ta natija tasdiqlandi${selfChecked ? ` (${selfChecked} tasini o'zi kiritgan)` : ""}${released ? " \u2014 buyurtma to'liq tasdiqlandi" : ""}`
       );
-      const delivery = released ? await notifyIfReady(order) : void 0;
-      res.json({ ...order, telegram: delivery });
+      const [delivery, doctorTold] = released ? await Promise.all([notifyIfReady(order), notifyOrderingDoctor(order, { kind: "released" })]) : [void 0, false];
+      res.json({ ...order, telegram: delivery, doctorNotified: doctorTold });
     })
   );
   app.post(
@@ -9208,6 +9361,7 @@ async function registerRoutes(app) {
       const outcome = await storage.amendResult(req.params.id, req.params.itemId, input, reason, actorOf(req));
       if (!outcome) return res.status(404).json({ message: "Natija topilmadi" });
       const line = outcome.order.items.find((i) => i.id === req.params.itemId);
+      await notifyOrderingDoctor(outcome.order, { kind: "amended", testName: line.testName, from: outcome.previous.result, to: line.result });
       await audit(
         req,
         "amend",

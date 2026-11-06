@@ -1584,3 +1584,60 @@ describe("result verification (B4.5, TZ §6.1.5)", () => {
     expect([after.enteredBy, after.completedAt]).toEqual([before.enteredBy, before.completedAt]);
   });
 });
+
+describe("notifications (B3.9)", () => {
+  const notice = (userId: string, dedupeKey: string | null = null) => ({
+    userId,
+    kind: "lab_result" as const,
+    title: "Tahlil natijalari tayyor",
+    body: null,
+    link: "/cabinet",
+    entityId: null,
+    important: false,
+    dedupeKey,
+  });
+
+  it("raises a deduplicated notice once, newest first, per user", async () => {
+    expect(await storage.createNotification(notice("dr1", "lab_result:o1"))).toBe(true);
+    expect(await storage.createNotification(notice("dr1", "lab_result:o1"))).toBe(false);
+    await storage.createNotification(notice("dr1"));
+    await storage.createNotification(notice("dr2"));
+    const feed = await storage.listNotifications("dr1", 20);
+    expect(feed.unread).toBe(2);
+    expect(feed.items).toHaveLength(2);
+    expect((feed.items[0] as Record<string, unknown>).dedupeKey).toBeUndefined();
+  });
+
+  it("marks one or all as read, only the reader's own", async () => {
+    await storage.createNotification(notice("dr1"));
+    await storage.createNotification(notice("dr1"));
+    const [first] = (await storage.listNotifications("dr1", 20)).items;
+    expect(await storage.markNotificationRead("someone-else", first.id)).toBe(false);
+    expect(await storage.markNotificationRead("dr1", first.id)).toBe(true);
+    expect(await storage.markNotificationRead("dr1", first.id)).toBe(false);
+    expect((await storage.listNotifications("dr1", 20)).unread).toBe(1);
+    expect(await storage.markAllNotificationsRead("dr1")).toBe(1);
+    expect((await storage.listNotifications("dr1", 20)).unread).toBe(0);
+  });
+
+  it("a lab referral carries its verified values for the doctor", async () => {
+    const user = await storage.createUser({ username: "drres", password: "parol123", fullName: "Natija Shifokor", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      { userId: user.id, departmentId: null, specialty: "Terapevt", consultationPrice: 1, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const patient = await storage.createPatient({ fullName: "Natija Bemor", phone: "+998906660099", gender: "erkak", age: 40, address: null });
+    const [r] = await storage.createReferrals(
+      { patientId: patient.id, visitId: null, appointmentId: null, doctorId: doctor.id, note: null, kind: "lab", testIds: ["3", "22"], referrer: "x" },
+      ACTOR,
+    );
+    const order = (await storage.getOrder(r.order!.id))!;
+    await storage.saveResults(order.id, [{ id: order.items[0].id, result: "5.5" }, { id: order.items[1].id, result: "7.0" }], ACTOR);
+    // Entered but unchecked values do not reach the doctor.
+    expect((await storage.getReferral(r.id))!.order!.results).toEqual([]);
+    await storage.verifyResults(order.id, [order.items[0].id], { id: "head", name: "Mudir" });
+    const partly = (await storage.getReferral(r.id))!.order!;
+    expect(partly.results.map((x) => x.result)).toEqual(["5.5"]);
+    expect([partly.verified, partly.tests]).toEqual([1, 2]);
+  });
+});

@@ -561,6 +561,33 @@ export const referrals = pgTable(
 );
 
 /**
+ * In-app notifications (TZ §11 "Laboratoriya → Shifokorlar: tasdiqlangan
+ * natija"; B3.9). One row per recipient. Read by polling for now; B8.1 will
+ * push the same rows over WebSocket. `dedupe_key` makes a notification that
+ * must happen once (an order released to its doctor) safe to raise twice.
+ */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull(),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    /** Where clicking it takes the reader, an app path. */
+    link: text("link"),
+    /** The order (or other row) it is about. */
+    entityId: varchar("entity_id"),
+    /** Out-of-range values or a correction: drawn so it is not missed. */
+    important: boolean("important").notNull().default(false),
+    dedupeKey: text("dedupe_key").unique(),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    readAt: isoTimestamp("read_at"),
+  },
+  (t) => ({ userIdx: index("IDX_notifications_user").on(t.userId, t.createdAt) }),
+);
+
+/**
  * Allergies (TZ §5.1.2). A row is never deleted: one entered by mistake, or
  * no longer true, is marked inactive with who did it and why.
  */
@@ -1149,6 +1176,11 @@ export type LabResultEntry = {
   flag: ResultFlag | null;
 };
 
+export const NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+export type AppNotification = Omit<typeof notifications.$inferSelect, "kind" | "dedupeKey"> & { kind: NotificationKind };
+export type NotificationFeed = { items: AppNotification[]; unread: number };
+
 export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
   kind: ReferralKind;
   status: ReferralStatus;
@@ -1166,6 +1198,8 @@ export type ReferralOrder = {
   /** Lines verified by the lab head: only these reach the doctor. */
   verified: number;
   testNames: string[];
+  /** The verified values themselves (B3.9), for the doctor's window. */
+  results: { testName: string; result: string; unit: string | null; referenceRange: string | null; flag: ResultFlag | null }[];
 };
 
 /** The live booking an examination or consultation referral has, in brief. */

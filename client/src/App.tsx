@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationBell } from "@/components/notification-bell";
 import { Avatar, RoleBadge } from "@/components/ui-kit";
 import { CommandPalette } from "@/components/command-palette";
 import { SessionGuard } from "@/components/session-guard";
@@ -260,6 +261,7 @@ function Shell() {
               </span>
             </div>
 
+            <NotificationBell />
             <ThemeToggle />
 
             <DropdownMenu>

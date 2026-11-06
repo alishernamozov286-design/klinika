@@ -115,6 +115,7 @@ import {
 import { actorOf, audit, emptyIfMissing, handle, logPatientView, numberParam, stringParam } from "./route-helpers";
 import { registerClinicRoutes } from "./routes-clinic";
 import { isOrderReleased } from "@shared/lab-verification";
+import { notifyOrderingDoctor } from "./result-delivery";
 import { registerMedicalRoutes } from "./routes-medical";
 
 export async function registerRoutes(app: Express): Promise<void> {
@@ -1069,6 +1070,35 @@ export async function registerRoutes(app: Express): Promise<void> {
     }),
   );
 
+  // ------------------------------------------------------ notifications (B3.9)
+
+  /** The signed-in user's own notices; nobody reads anyone else's. */
+  app.get(
+    "/api/notifications",
+    requireAuth,
+    handle(async (req, res) => {
+      const limit = Math.min(50, Math.max(1, numberParam(req.query.limit, 20) ?? 20));
+      res.json(await storage.listNotifications(req.user!.id, limit).catch((e) => emptyIfMissing(e, { items: [], unread: 0 })));
+    }),
+  );
+
+  app.post(
+    "/api/notifications/:id/read",
+    requireAuth,
+    handle(async (req, res) => {
+      const changed = await storage.markNotificationRead(req.user!.id, req.params.id);
+      res.json({ ok: true, changed });
+    }),
+  );
+
+  app.post(
+    "/api/notifications/read-all",
+    requireAuth,
+    handle(async (req, res) => {
+      res.json({ ok: true, changed: await storage.markAllNotificationsRead(req.user!.id) });
+    }),
+  );
+
   // ------------------------------------------------- verification (B4.5)
 
   /**
@@ -1093,8 +1123,11 @@ export async function registerRoutes(app: Express): Promise<void> {
           released ? " — buyurtma to'liq tasdiqlandi" : ""
         }`,
       );
-      const delivery = released ? await notifyIfReady(order) : undefined;
-      res.json({ ...order, telegram: delivery });
+      // Awaited: a serverless instance freezes once the response is sent.
+      const [delivery, doctorTold] = released
+        ? await Promise.all([notifyIfReady(order), notifyOrderingDoctor(order, { kind: "released" })])
+        : [undefined, false];
+      res.json({ ...order, telegram: delivery, doctorNotified: doctorTold });
     }),
   );
 
@@ -1121,6 +1154,7 @@ export async function registerRoutes(app: Express): Promise<void> {
       const outcome = await storage.amendResult(req.params.id, req.params.itemId, input, reason, actorOf(req));
       if (!outcome) return res.status(404).json({ message: "Natija topilmadi" });
       const line = outcome.order.items.find((i) => i.id === req.params.itemId)!;
+      await notifyOrderingDoctor(outcome.order, { kind: "amended", testName: line.testName, from: outcome.previous.result, to: line.result! });
       await audit(
         req,
         "amend",

@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   FilePenLine,
+  FlaskConical,
   ChevronRight,
   Clock,
   Hourglass,
@@ -38,6 +39,7 @@ import {
 } from "@/components/ui-kit";
 import { useAppointmentStatus } from "@/components/appointment-actions";
 import { RecordStatusBadge } from "@/components/medical-record";
+import { useMarkNotificationRead, useNotifications } from "@/components/notification-bell";
 import { ApiError, apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -249,6 +251,8 @@ export default function Cabinet() {
           </div>
         </SectionCard>
       )}
+
+      {isOwn && <NewLabResults />}
 
       {isOwn && drafts.length > 0 && (
         <SectionCard
@@ -510,5 +514,48 @@ function PatientRow({
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * "Yangi tahlil natijalari" (B3.9, TZ §11): results of this doctor's lab
+ * referrals that the lab head has verified and the doctor has not opened yet.
+ */
+function NewLabResults() {
+  const [, navigate] = useLocation();
+  const { data } = useNotifications();
+  const markRead = useMarkNotificationRead();
+  const fresh = (data?.items ?? []).filter((n) => !n.readAt && (n.kind === "lab_result" || n.kind === "lab_result_amended"));
+  if (fresh.length === 0) return null;
+  return (
+    <SectionCard
+      icon={FlaskConical}
+      title="Yangi tahlil natijalari"
+      description="Laboratoriya mudiri tasdiqlagan, siz yo'llagan tahlillar"
+      flush
+      action={<Badge className="bg-emerald-600 text-white hover:bg-emerald-600">{fresh.length}</Badge>}
+    >
+      <div className="divide-y" data-testid="list-new-lab-results">
+        {fresh.map((n) => (
+          <div key={n.id} className={cn("flex flex-wrap items-start gap-3 px-5 py-3", n.important && "bg-rose-500/[0.04]")}>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{n.title}</p>
+              {n.body && <p className="mt-0.5 whitespace-pre-line text-xs text-muted-foreground">{n.body}</p>}
+            </div>
+            <Button
+              size="sm"
+              variant={n.important ? "default" : "outline"}
+              onClick={() => {
+                markRead.mutate(n.id);
+                if (n.link) navigate(n.link);
+              }}
+              data-testid={`button-open-result-${n.id}`}
+            >
+              Ko'rish
+            </Button>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
   );
 }

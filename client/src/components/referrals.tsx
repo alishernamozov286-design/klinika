@@ -213,12 +213,35 @@ export function ReferralRow({
               #{r.order.orderNumber}
             </span>
             {" · "}
-            {r.order.done}/{r.order.tests} natija
+            {r.order.verified}/{r.order.tests} tasdiqlangan
             {" · "}
             <span className={paidLabel(r.order).tone}>
               {paidLabel(r.order).text}
             </span>
           </p>
+        )}
+        {r.order && !cancelled && r.order.results.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5" data-testid={`referral-results-${r.id}`}>
+            {r.order.results.map((x) => (
+              <span
+                key={x.testName}
+                className={cn(
+                  "inline-flex items-baseline gap-1 rounded-md border px-2 py-0.5 text-xs",
+                  x.flag === "high" && "border-rose-500/30 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300",
+                  x.flag === "low" && "border-sky-500/30 bg-sky-500/[0.06] text-sky-700 dark:text-sky-300",
+                )}
+                title={x.referenceRange ? `Me'yor: ${x.referenceRange}` : undefined}
+              >
+                <span className="text-muted-foreground">{x.testName}</span>
+                <span className="font-semibold tabular">{x.result}</span>
+                {x.unit && <span className="text-[10px] text-muted-foreground">{x.unit}</span>}
+                {x.flag === "high" ? "↑" : x.flag === "low" ? "↓" : null}
+              </span>
+            ))}
+            {r.order.verified < r.order.tests && (
+              <span className="text-[11px] italic text-muted-foreground">yana {r.order.tests - r.order.verified} tasi tasdiqlanmagan</span>
+            )}
+          </div>
         )}
         {r.booking && (
           <p className="mt-1 text-xs">

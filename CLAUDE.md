@@ -45,6 +45,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `server/routes.ts`: asosiy API. `server/routes-clinic.ts`: xizmatlar, qabullar, shifokor kabineti. `server/routes-medical.ts`: ko'rik yozuvlari, tibbiy karta, allergiyalar, yo'llanmalar. Umumiy yordamchilar (`handle`, `audit`, `actorOf`, `emptyIfMissing`, `logPatientView`) — `server/route-helpers.ts`. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali. Storage'ning `StorageConflict` xatosi avtomatik 409 bo‘ladi.
 - `shared/appointment.ts`: qabul qoidalari (bo‘sh vaqtlar to‘ri, ustma-ust tushish, holat mashinasi va kim qaysi o‘tishni qiladi). Server ham, UI ham shundan foydalanadi.
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
+- `server/result-delivery.ts`: tasdiqlangan natijani yo'llagan shifokorga yetkazish (B3.9).
 - `shared/lab-verification.ts`: natija qatorining holati va qachon tashqariga chiqishi (B4.5). `server/lab-rules.ts`: tasdiqlash va tuzatishning yozish qoidalari.
 - `shared/patient-links.ts`: bemorga bog'langan jadvallar reyestri (birlashtirish va o'chirish qoidalari). `shared/ledger.ts`: nima o'chirilmaydi (to'lov, natijali buyurtma, ishlatilgan tahlil). `shared/reception.ts`: registratura panelining hisob-kitobi. `shared/referral.ts`: yo'llanma holati va qabulga mosligi.
 - `server/auth.ts`: sessiya, Passport, login blokirovkasi, `forgetSessionUser`, `requireMfaEnrollment`.
@@ -96,7 +97,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 36 → ≈47%**.
+> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 37 → ≈49%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -174,7 +175,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Bosh sahifada (`appointments.read` egalari uchun) "Registratura · Bugungi kun" paneli: 5 ta ko'rsatkich, qabulga kelganlar (qabuldagi, so'ng kelish tartibida), navbatdagilar (vaqt bo'yicha, kechikayotganlar belgilanadi, to'g'ridan-to'g'ri "Keldi"), yangi bemorlar, to'lov holati (to'liq / qisman / to'lanmagan). Kechikish server soati bo'yicha. 20 s da yangilanadi va amallardan keyin darhol invalidatsiya qilinadi.
   - Hisoblash qoidalari `shared/reception.ts` da (test bilan). "To'lov holati" hozircha lab buyurtmalari bo'yicha. Qabul to'lovlari B7.1 (umumiy hisobvaraq) bilan qo'shiladi.
 
-### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 50%
+### Bosqich 3: Shifokorlar (`§5`, `§15.3`) 61%
 
 - [x] **B3.1** Shifokor kabineti (`§5.1.1`): bugungi qabul, kutayotganlar, qabul qilinganlar, tugallanmagan kartalar. Navbatdan bemorni "chaqirish".
   - `/cabinet` ("Mening kabinetim"): statistika, qabuldagi bemor kartasi (o'tgan vaqt, bemor kartasiga havola, yakunlash, navbatga qaytarish), "Keyingi bemorni chaqirish" (`POST /api/cabinet/call-next`: kelganlardan eng erta yozilgan), kutayotganlar (qancha kutayotgani bilan), yozilganlar, qabul qilinganlar, kun bo'yicha ko'rish.
@@ -212,7 +213,14 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - UI: "Tuzatish kiritish" (o'zgargan maydonlar belgilanadi), "Tarix" dialogi (joriy va barcha oldingi versiyalar).
   - "Imzolash" — tizim ichidagi tasdiqlash (kim, qachon). Elektron raqamli imzo (ERI) TZ'da talab qilinmagan.
 - [ ] **B3.8** Ko‘rik xulosasi PDF (`§5.2`).
-- [ ] **B3.9** Natija shifokorga (`§11`, qabul mezoni 16.4): lab natijasi tasdiqlangach buyurtma bergan shifokorga bildirishnoma va kartaga biriktirish.
+- [x] **B3.9** Natija shifokorga (`§11`, qabul mezoni 16.4): lab natijasi tasdiqlangach buyurtma bergan shifokorga bildirishnoma va kartaga biriktirish.
+  - Yo'llanma bo'yicha buyurtma to'liq tasdiqlanganda (B4.5) yo'llanma bergan shifokorga bildirishnoma (`server/result-delivery.ts`): bemor, yo'llanma va buyurtma raqami, tahlillar, me'yordan tashqaridagilar ("muhim" belgisi). Bir marta (`dedupe_key`), qayta tasdiqlash takrorlamaydi. Tasdiqdan keyingi tuzatish alohida "Natija tuzatildi: eski → yangi" xabari bilan.
+  - Bildirishnoma tasdiqlashni hech qachon buzmaydi (xatosi faqat logga yoziladi); serverless'da javobdan oldin kutiladi.
+  - Natija kartaga biriktirilgan: ko'rik oynasida yo'llanma qatorida tasdiqlangan qiymatlar (me'yordan tashqarisi rangli), tibbiy kartada lab natijalari. Tasdiqlanmagan qiymat shifokorga ko'rinmaydi.
+  - `notifications` jadvali — umumiy (B8.1 WebSocket shu qatorlarni yuboradi). API: `GET /api/notifications`, `POST /api/notifications/:id/read`, `POST /api/notifications/read-all` — faqat o'ziniki.
+  - UI: yuqori paneldagi qo'ng'iroqcha (o'qilmaganlar soni, 30 s polling), shifokor kabinetida "Yangi tahlil natijalari" (bosilsa ko'rik oynasi ochiladi va o'qilgan bo'ladi).
+  - Migratsiya: `npm run db:notifications` (`db:upgrade` ichida). Jadvalsiz bazada qo'ng'iroqcha bo'sh, boshqa hech narsa buzilmaydi. Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi, **hali bajarilmagan**.
+  - Testlar: `storage-file.test.ts` (3 ta), TZ §2 asosiy oqimi bo'yicha 18 ta API E2E (registratura → shifokor → yo'llanma → kassa → laborant → mudiri → shifokor), brauzerda shifokor tomoni.
 
 ### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 50%
 
@@ -297,7 +305,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 | 16.1 | Bitta bemor barcha modullarda yagona ID bilan | B1.9, B2.5 | ✅ (yangi modullar `PATIENT_LINKS` ga yoziladi) |
 | 16.2 | Registraturadan shifokorga buyurtma | B2.7, B2.8, B3.1 | ✅ |
 | 16.3 | Shifokordan laboratoriyaga yo‘llanma | B3.5 | ✅ |
-| 16.4 | Tasdiqlangan natija shifokorga yetadi | B4.5, B3.9 | ❌ |
+| 16.4 | Tasdiqlangan natija shifokorga yetadi | B4.5, B3.9 | ✅ |
 | 16.5 | Ombor kirim/chiqim to‘g‘ri hisoblanadi | B5.2–B5.6 | ❌ |
 | 16.6 | Statsionar bemorining elektron tarixi | B6.* | ❌ |
 | 16.7 | Barcha xizmatlar kassa bilan bog‘langan | B2.6, B7.1 | 🟡 |
@@ -323,6 +331,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-05 · B1.8 · Ikki bosqichli autentifikatsiya: TOTP, zaxira kodlar, rol bo'yicha majburiylik, admin reset, qulf bilan bog'langan kod xatolari.
 - 2026-11-05 · B2.6–B2.8, B3.1 · Xizmatlar katalogi va narxlar ro'yxati, qabulga yozish (bo'sh vaqtlar, navbat raqami, poyga himoyasi), navbat sahifasi, shifokor kabineti, qabullar bemor kartasi va tashriflarida. Yo'l-yo'lakay: route yordamchilari `route-helpers.ts` ga chiqarildi.
 - 2026-11-06 · B3.3, B3.7, B3.2 (qisman) · Ko'rik oynasi (avtosaqlash, revision to'qnashuvi himoyasi), tasdiqlash va versiyali tuzatish, elektron tibbiy karta (allergiyalar, tashxislar tarixi, lab natijalari), kabinetda tugallanmagan kartalar. Yo'l-yo'lakay: navbat va kabinet ekranlari eskirgan keshni ko'rsatardi (global `refetchOnMount: false`), tuzatildi.
+- 2026-11-06 · B3.9 · Natija shifokorga: to'liq tasdiqlangan yo'llanma buyurtmasi haqida shifokorga bir martalik bildirishnoma (me'yordan tashqarisi belgilangan), tuzatish haqida alohida xabar; qo'ng'iroqcha, kabinetdagi "Yangi tahlil natijalari", ko'rik oynasida qiymatlar. 16.4 yopildi.
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.

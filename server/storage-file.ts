@@ -62,6 +62,7 @@ import type {
   ReferralWithDetails,
   OrderTestVersion,
   ResultFlag,
+  NotificationFeed,
   Visit,
 } from "@shared/schema";
 import { DEFAULT_SECURITY_SETTINGS, daysBetween, nationalPhoneDigits, previousRange } from "@shared/schema";
@@ -88,6 +89,7 @@ import {
   todayKey,
   type Actor,
   type NewReferrals,
+  type NewNotification,
   type ReferralQuery,
   planResultSave,
   StorageConflict,
@@ -902,6 +904,47 @@ export class FileStorage implements IStorage {
     return this.allergyDetails(a);
   }
 
+  // -------------------------------------------------------- notifications
+
+  async createNotification(input: NewNotification): Promise<boolean> {
+    if (input.dedupeKey && this.db.notifications.some((n) => n.dedupeKey === input.dedupeKey)) return false;
+    this.db.notifications.push({ id: randomUUID(), ...input, createdAt: new Date().toISOString(), readAt: null });
+    await this.persist();
+    return true;
+  }
+
+  async listNotifications(userId: string, limit: number): Promise<NotificationFeed> {
+    const mine = this.db.notifications.filter((n) => n.userId === userId);
+    return {
+      unread: mine.filter((n) => !n.readAt).length,
+      items: [...mine]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, limit)
+        .map(({ dedupeKey: _key, ...n }) => ({ ...n })),
+    };
+  }
+
+  async markNotificationRead(userId: string, id: string): Promise<boolean> {
+    const n = this.db.notifications.find((x) => x.id === id && x.userId === userId && !x.readAt);
+    if (!n) return false;
+    n.readAt = new Date().toISOString();
+    await this.persist();
+    return true;
+  }
+
+  async markAllNotificationsRead(userId: string): Promise<number> {
+    const now = new Date().toISOString();
+    let count = 0;
+    for (const n of this.db.notifications) {
+      if (n.userId === userId && !n.readAt) {
+        n.readAt = now;
+        count++;
+      }
+    }
+    if (count) await this.persist();
+    return count;
+  }
+
   // ------------------------------------------------------------ referrals
 
   /** The booking that still fulfils a referral: anything but cancelled or no-show. */
@@ -934,6 +977,10 @@ export class FileStorage implements IStorage {
           tests: lines.length,
           done: lines.filter((i) => i.result).length,
           verified: lines.filter((i) => i.verifiedAt).length,
+          results: lines
+            .filter((i) => i.verifiedAt && i.result)
+            .sort((a, b) => a.testName.localeCompare(b.testName))
+            .map((i) => ({ testName: i.testName, result: i.result!, unit: i.unit, referenceRange: i.referenceRange, flag: i.flag })),
           testNames: lines.map((i) => i.testName).sort((a, b) => a.localeCompare(b)),
         };
       }

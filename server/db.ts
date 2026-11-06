@@ -27,6 +27,7 @@ import type {
   PatientAllergy,
   Referral,
   OrderTestVersion,
+  AppNotification,
 } from "@shared/schema";
 
 export type DbShape = {
@@ -41,6 +42,7 @@ export type DbShape = {
   medicalRecordVersions: Omit<MedicalRecordVersion, "replacedByName">[];
   patientAllergies: Omit<PatientAllergy, "createdByName">[];
   referrals: Referral[];
+  notifications: (AppNotification & { dedupeKey: string | null })[];
   security: SecuritySettings | null;
   patients: Patient[];
   patientContacts: PatientContact[];
@@ -82,6 +84,7 @@ export const emptyDb = (): DbShape => ({
   medicalRecordVersions: [],
   patientAllergies: [],
   referrals: [],
+  notifications: [],
   security: null,
   patients: [],
   patientContacts: [],

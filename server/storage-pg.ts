@@ -27,6 +27,9 @@ import {
   patientAllergies,
   referrals,
   orderTestVersions,
+  notifications,
+  type AppNotification,
+  type NotificationFeed,
   type OrderTestVersion,
   type Referral,
   type ReferralBooking,
@@ -124,6 +127,7 @@ import {
   StorageConflict,
   type AppointmentQuery,
   type NewReferrals,
+  type NewNotification,
   type ReferralQuery,
   planResultSave,
   type AppointmentStatusChange,
@@ -1143,6 +1147,55 @@ export class PgStorage implements IStorage {
     return (await this.getAllergy(id))!;
   }
 
+  // -------------------------------------------------------- notifications
+
+  async createNotification(input: NewNotification): Promise<boolean> {
+    const rows = await db
+      .insert(notifications)
+      .values(input)
+      .onConflictDoNothing({ target: notifications.dedupeKey })
+      .returning({ id: notifications.id });
+    return rows.length > 0;
+  }
+
+  async listNotifications(userId: string, limit: number): Promise<NotificationFeed> {
+    // One round trip: the page and the unread count together.
+    const [items, [{ unread }]] = await Promise.all([
+      db.select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt)).limit(limit),
+      db
+        .select({ unread: sql<number>`count(*)::int` })
+        .from(notifications)
+        .where(and(eq(notifications.userId, userId), isNull(notifications.readAt))),
+    ]);
+    return {
+      unread,
+      items: items.map(({ dedupeKey: _key, ...n }): AppNotification => ({
+        ...n,
+        kind: n.kind as AppNotification["kind"],
+        createdAt: iso(n.createdAt) ?? n.createdAt,
+        readAt: iso(n.readAt),
+      })),
+    };
+  }
+
+  async markNotificationRead(userId: string, id: string): Promise<boolean> {
+    const rows = await db
+      .update(notifications)
+      .set({ readAt: new Date().toISOString() })
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId), isNull(notifications.readAt)))
+      .returning({ id: notifications.id });
+    return rows.length > 0;
+  }
+
+  async markAllNotificationsRead(userId: string): Promise<number> {
+    const rows = await db
+      .update(notifications)
+      .set({ readAt: new Date().toISOString() })
+      .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+      .returning({ id: notifications.id });
+    return rows.length;
+  }
+
   // ------------------------------------------------------------ referrals
 
   async listReferrals(q: ReferralQuery): Promise<ReferralWithDetails[]> {
@@ -1188,6 +1241,10 @@ export class PgStorage implements IStorage {
               tests: sql<number>`count(${orderTests.id})::int`,
               done: sql<number>`count(${orderTests.result})::int`,
               verified: sql<number>`count(${orderTests.verifiedAt})::int`,
+              results: sql<ReferralOrder["results"]>`coalesce(json_agg(json_build_object(
+                  'testName', ${orderTests.testName}, 'result', ${orderTests.result}, 'unit', ${orderTests.unit},
+                  'referenceRange', ${orderTests.referenceRange}, 'flag', ${orderTests.flag})
+                ORDER BY ${orderTests.testName}) FILTER (WHERE ${orderTests.verifiedAt} IS NOT NULL), '[]'::json)`,
               names: sql<string[]>`coalesce(array_agg(${orderTests.testName} ORDER BY ${orderTests.testName})
                 FILTER (WHERE ${orderTests.id} IS NOT NULL), '{}')`,
             })
@@ -1215,6 +1272,7 @@ export class PgStorage implements IStorage {
           tests: o.tests,
           done: o.done,
           verified: o.verified,
+          results: o.results ?? [],
           testNames: o.names ?? [],
         },
       ]),

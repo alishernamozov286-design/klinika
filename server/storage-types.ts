@@ -7,6 +7,8 @@ import type {
   DashboardStatsData,
   ReferralWithDetails,
   OrderTestVersion,
+  NotificationFeed,
+  NotificationKind,
   ReceptionDay,
   Expense,
   ExpenseSummary,
@@ -233,6 +235,18 @@ export type NewReferrals = ReferralOrigin &
     | { kind: "exam"; serviceIds: string[] }
     | { kind: "consult"; targetSpecialty: string; targetDoctorId: string | null }
   );
+
+export type NewNotification = {
+  userId: string;
+  kind: NotificationKind;
+  title: string;
+  body: string | null;
+  link: string | null;
+  entityId: string | null;
+  important: boolean;
+  /** Raised at most once per key; a repeat is silently dropped. */
+  dedupeKey: string | null;
+};
 
 export type RecordQuery = {
   patientId?: string;
@@ -505,6 +519,13 @@ export interface IStorage {
    */
   amendRecord(id: string, revision: number, fields: RecordFields, reason: string, actor: Actor): Promise<MedicalRecordWithDetails>;
   /** Replaced versions, newest first. */
+  // ---- notifications (B3.9)
+  /** Returns false when the dedupe key was already used. */
+  createNotification(input: NewNotification): Promise<boolean>;
+  listNotifications(userId: string, limit: number): Promise<NotificationFeed>;
+  markNotificationRead(userId: string, id: string): Promise<boolean>;
+  markAllNotificationsRead(userId: string): Promise<number>;
+
   // ---- referrals (B3.5)
   listReferrals(query: ReferralQuery): Promise<ReferralWithDetails[]>;
   getReferral(id: string): Promise<ReferralWithDetails | undefined>;
