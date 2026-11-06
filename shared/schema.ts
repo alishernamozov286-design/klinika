@@ -1325,6 +1325,8 @@ export type VisitSummary = {
   allergies: PatientAllergy[];
   referrals: ReferralWithDetails[];
   clinic: LabSettings;
+  /** The clinic's logo as a data URL (B4.7), null when none is set. */
+  logo: string | null;
   generatedAt: string;
   generatedBy: string;
 };

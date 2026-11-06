@@ -112,6 +112,7 @@ import { canTransition, parseBarcode, sampleBarcode, transitionError } from "@sh
 import { referralStage } from "@shared/referral";
 import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, type LabBoard, type LabBoardCounts } from "@shared/lab-board";
+import { checkLogo, type ClinicLogo } from "@shared/branding";
 import { ICD_SOURCE, normalizeIcdCode } from "@shared/icd10";
 import { amendProblem, pickForVerification } from "./lab-rules";
 import { BLOCKING_TABLES, patientHistoryProblem, type BlockingTable } from "@shared/patient-links";
@@ -3434,6 +3435,31 @@ export class PgStorage implements IStorage {
       .values({ key: "security", value: input, updatedAt: now, updatedBy: actor.id })
       .onConflictDoUpdate({ target: appSettings.key, set: { value: input, updatedAt: now, updatedBy: actor.id } });
     return { ...input };
+  }
+
+  async getLogo(): Promise<ClinicLogo | null> {
+    try {
+      const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "logo")).limit(1);
+      const v = row?.value as ClinicLogo | null | undefined;
+      // Re-checked on the way out too: a hand-edited row must not put
+      // arbitrary content into a page's <img>.
+      return v && checkLogo(v.dataUrl).ok ? v : null;
+    } catch (err) {
+      if (isMissingTable(err)) return null;
+      throw err;
+    }
+  }
+
+  async setLogo(logo: ClinicLogo | null, actor: Actor): Promise<void> {
+    const now = new Date().toISOString();
+    if (!logo) {
+      await db.delete(appSettings).where(eq(appSettings.key, "logo"));
+      return;
+    }
+    await db
+      .insert(appSettings)
+      .values({ key: "logo", value: logo, updatedAt: now, updatedBy: actor.id })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: logo, updatedAt: now, updatedBy: actor.id } });
   }
 
   async getSettings(): Promise<LabSettings> {

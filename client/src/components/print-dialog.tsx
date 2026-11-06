@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
 import type { LabSettings, OrderWithDetails } from "@shared/schema";
+import type { ClinicLogo } from "@shared/branding";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,6 +24,8 @@ export function PrintDialog({
   order: OrderWithDetails | null;
 }) {
   const { data: settings } = useQuery<LabSettings>({ queryKey: ["/api/settings"], enabled: open });
+  // TZ §6.3: the clinic's logo heads the blank (B4.7).
+  const { data: logo } = useQuery<ClinicLogo | null>({ queryKey: ["/api/settings/logo"], enabled: open });
 
   if (!order) return null;
 
@@ -61,9 +64,19 @@ export function PrintDialog({
             <div className="print-surface mx-auto max-w-[210mm] bg-white text-black p-10 shadow-sm rounded">
               {/* letterhead */}
               <div className="flex items-start justify-between border-b-2 border-black/80 pb-4">
-                <div>
-                  <h1 className="text-3xl font-bold tracking-tight">{lab.labName}</h1>
-                  <p className="text-sm text-black/60 mt-0.5">{lab.tagline}</p>
+                <div className="flex min-w-0 items-center gap-4">
+                  {logo && (
+                    <img
+                      src={logo.dataUrl}
+                      alt=""
+                      className="h-16 w-auto max-w-[180px] shrink-0 object-contain"
+                      data-testid="img-blank-logo"
+                    />
+                  )}
+                  <div className="min-w-0">
+                    <h1 className="text-3xl font-bold tracking-tight">{lab.labName}</h1>
+                    <p className="text-sm text-black/60 mt-0.5">{lab.tagline}</p>
+                  </div>
                 </div>
                 <div className="text-right text-xs text-black/70 space-y-0.5">
                   {lab.address && <p>{lab.address}</p>}

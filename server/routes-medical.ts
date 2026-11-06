@@ -319,12 +319,13 @@ export function registerMedicalRoutes(app: Express) {
         return res.status(409).json({ message: "Xulosa faqat tasdiqlangan ko'rik yozuvidan chiqariladi" });
       }
       const codes = RECORD_CODE_FIELDS.map((f) => record[f]).filter((c): c is string => Boolean(c));
-      const [appointment, allergies, referrals, clinic, icd] = await Promise.all([
+      const [appointment, allergies, referrals, clinic, icd, logo] = await Promise.all([
         storage.getAppointment(record.appointmentId),
         storage.listAllergies(record.patientId).catch((e) => emptyIfMissing(e, [])),
         storage.listReferrals({ appointmentId: record.appointmentId }).catch((e) => emptyIfMissing(e, [] as ReferralWithDetails[])),
         storage.getSettings(),
         storage.getIcd(codes).catch((e) => emptyIfMissing(e, [])),
+        storage.getLogo(),
       ]);
       const summary: VisitSummary = {
         record,
@@ -334,6 +335,7 @@ export function registerMedicalRoutes(app: Express) {
         // A cancelled referral is not part of what the patient was told to do.
         referrals: referrals.filter((r) => r.status !== "cancelled"),
         clinic,
+        logo: logo?.dataUrl ?? null,
         generatedAt: new Date().toISOString(),
         generatedBy: req.user!.fullName,
       };

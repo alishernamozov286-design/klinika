@@ -11,7 +11,11 @@ import { log } from "./logger";
  */
 export async function createApp(): Promise<Express> {
   const app = express();
-  app.use(express.json());
+  // The default 100 KB body limit everywhere, except the logo upload (B4.7),
+  // which carries an image of up to 300 KB as base64.
+  const json = express.json();
+  const logoJson = express.json({ limit: "512kb" });
+  app.use((req, res, next) => (req.path === "/api/settings/logo" ? logoJson : json)(req, res, next));
   app.use(express.urlencoded({ extended: false }));
 
   app.use((req, res, next) => {

@@ -47,6 +47,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
 - `shared/icd10.ts` + `data/icd10/`: MKB-10 katalogini o'qish, kod normallash, o'zbekcha nomlar importi (B3.4).
 - `server/result-delivery.ts`: tasdiqlangan natijani yo'llagan shifokorga yetkazish (B3.9).
+- `shared/branding.ts`: klinika logotipini tekshirish qoidalari (B4.7).
 - `shared/lab-board.ts`: lab bosh sahifasi ko'rsatkichlarining ta'riflari (B4.1).
 - `shared/lab-catalogue.ts`: TZ §6.2 guruhlari, namuna turlari va probirkalar, sifat, `classifyTest`, `tubesFor`. `shared/code128.ts`: Code 128 kodlovchi (`client/src/components/barcode.tsx` SVG).
 - `shared/lab-verification.ts`: natija qatorining holati va qachon tashqariga chiqishi (B4.5). `server/lab-rules.ts`: tasdiqlash va tuzatishning yozish qoidalari.
@@ -100,7 +101,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 41 → ≈54%**.
+> Holat 2026-11-06. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 41.5 → ≈55%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -236,7 +237,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Migratsiya: `npm run db:notifications` (`db:upgrade` ichida). Jadvalsiz bazada qo'ng'iroqcha bo'sh, boshqa hech narsa buzilmaydi. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06).
   - Testlar: `storage-file.test.ts` (3 ta), TZ §2 asosiy oqimi bo'yicha 18 ta API E2E (registratura → shifokor → yo'llanma → kassa → laborant → mudiri → shifokor), brauzerda shifokor tomoni.
 
-### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 68%
+### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 73%
 
 - [x] **B4.1** Lab bosh sahifasi (`§6.1.1`): TZ'dagi oltita ko'rsatkich.
   - `GET /api/lab-board` (`orders.read`): bugungi buyurtmalar, namuna kutilmoqda (rad etilganlar alohida), tahlil jarayonida, tasdiqlanishi kerak, bugun tayyor bo'lganlar, bugun bekor qilinganlar; bugungi buyurtmalar guruhlar bo'yicha; namuna kutayotgan eng eski 6 ta buyurtma. Postgres'da bitta CTE + ro'yxat parallel.
@@ -263,7 +264,10 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Sarf normasi **B5.6 ga ko'chirildi**: u ombor mahsulotlariga (B5.1) havola qiladi, ular hali yo'q.
   - Migratsiya: `npm run db:lab-catalog` (`db:upgrade` ichida, `tsx`). Ustunlar; mavjud tahlillar faqat **birinchi** ishga tushishda tasniflanadi (keyin qo'lda o'zgartirilgani ustidan yozilmaydi); eski buyurtma qatorlariga namuna turi; `samples.quality`. **Yangi kod deploy qilinishidan OLDIN bajarilishi shart.** Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06): 119 tahlil tasniflandi, 9 qator to'ldirildi; qayta ishga tushirish hech narsani o'zgartirmadi.
   - Testlar: `shared/lab-catalogue.test.ts`, `shared/code128.test.ts`, `shared/sample.test.ts`, `storage-file.test.ts` (5 ta), API va brauzerda katalog → buyurtma → qabul → yorliqlar → skan.
-- [~] **B4.7** Natija blankasi (`§6.3`): bor; tug'ilgan sana, yosh, namuna raqami, tasdiqlovchi mutaxassis va elektron tasdiqlash belgisi (B4.5). **Qoldi:** klinika logotipi (yuklash), QR orqali tekshirish.
+- [x] **B4.7** Natija blankasi (`§6.3`): TZ ro'yxatidagi hamma maydon — **klinika logotipi**, bemor F.I.Sh. va ID, tug'ilgan sana, namuna raqami, tahlil, natija, birlik, referens, natija sanasi, laborant va tasdiqlovchi, elektron tasdiqlash belgisi.
+  - Logo: Sozlamalar → Klinika → "Klinika logotipi" (`settings.manage`). Brauzer rasmni 640×240 ichiga kichraytirib qayta kodlaydi (`client/src/lib/logo.ts`). Server faqat PNG/JPEG qabul qiladi, haqiqiy baytlar e'lon qilingan turga mos bo'lishi va hajm 300 KB dan oshmasligi kerak (`shared/branding.ts` `checkLogo`; SVG ataylab rad etiladi). `app_settings` jadvalidagi `logo` kalitida saqlanadi (D-3 fayl ombori kerak emas, migratsiya yo'q). `GET/PUT/DELETE /api/settings/logo`, audit bilan. JSON chegarasi faqat shu yo'l uchun 512 KB, qolganlari 100 KB; 413 xabari o'zbekcha.
+  - Natija blankasi shapkasida va ko'rik xulosasi PDF'ida (B3.8) chiqadi; chizib bo'lmaydigan logo hujjatni to'xtatmaydi.
+  - "QR orqali tekshirish" TZ §6.3 da yo'q, shuning uchun qilinmadi. U bemor natijasiga ochiq havola demak (xavfsizlik qarori), buyurtmachi so'rasa alohida vazifa bo'ladi.
 - [ ] **B4.8** Sifat nazorati (`§6.5`): nazorat materiallari, QC natijalari kiritish, Levey–Jennings grafigi, Westgard qoidalari (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x) bilan avtomatik ogohlantirish, kalibratsiya tarixi, analizator xizmat jurnali, laboratoriyalararo QC natijalari.
 - [ ] **B4.9** Analizatorlar ro‘yxati (`§6.4`, `lab_devices`): qurilmalar, xatolar jurnali.
 - [ ] **B4.10** Analizator integratsiyasi (`§6.4`): import API + lokal ko‘prik (D-4), namuna ID bo‘yicha moslashtirish, avtotekshiruv, takroriy natija nazorati, operator tasdig‘i. Protokol bo‘lmasa qo‘lda kiritish qoladi.
@@ -360,6 +364,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-07 · B4.7 · Klinika logotipi: yuklash (brauzerda kichraytirish, serverda tur va hajm tekshiruvi, audit), natija blankasi va ko'rik xulosasi PDF'ida. Yo'l-yo'lakay: body-parser xatolari (413, buzuq JSON) endi o'z statusi va o'zbekcha xabar bilan qaytadi.
 - 2026-11-07 · B4.2, B4.1 · Buyurtmalarda tahlil turi (ustun, filtr, chiplar) va bemor ID; laboratoriya bosh sahifasi: TZ'dagi oltita ko'rsatkich, namuna kutayotganlar ro'yxati, bugungi buyurtmalar guruhlar bo'yicha, kartalardan to'g'ri navbatga o'tish.
 - 2026-11-06 · B4.6, B4.3 · Tahlillar TZ'dagi 8 guruh va namuna turi bo'yicha; buyurtma qatori namuna turini muzlatadi; har bir probirka uchun Code 128 yorlig'i (qopqoq rangi bilan) va o'z kodi bo'yicha skan; qabulda namuna sifati. Sarf normasi B5.6 ga ko'chirildi.
 - 2026-11-05 · fix · Postgres'dagi ichki so'rovlar: natijalar navbati (kutilmoqda/tayyor), tahlil nomi bo'yicha qidiruv, bemorlarning oxirgi tashrifi, bo'limlardagi shifokorlar soni noto'g'ri edi; tuzatildi va himoya testi qo'shildi.

@@ -1,3 +1,4 @@
+import type { ClinicLogo } from "@shared/branding";
 import { promises as fs } from "fs";
 import fsSync from "fs";
 import path from "path";
@@ -46,6 +47,8 @@ export type DbShape = {
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
   security: SecuritySettings | null;
+  /** B4.7: the clinic's logo, as on Postgres's app_settings "logo". */
+  logo?: ClinicLogo | null;
   patients: Patient[];
   patientContacts: PatientContact[];
   visits: Visit[];

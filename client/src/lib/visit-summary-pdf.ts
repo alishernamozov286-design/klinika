@@ -100,8 +100,22 @@ export async function buildVisitSummaryPdf(s: VisitSummary): Promise<JsPdf> {
   // ------------------------------------------------------------- letterhead
   pdf.setFillColor(...BRAND);
   pdf.rect(0, 0, W, 5, "F");
-  text(s.clinic.labName, M, y + 16, { size: 19, bold: true });
-  text(s.clinic.tagline, M, y + 32, { size: 9.5, color: MUTED });
+  // B4.7: the clinic's logo, fitted into a 120×40 pt box beside the name.
+  let nameX = M;
+  if (s.logo) {
+    try {
+      const { width, height } = pdf.getImageProperties(s.logo);
+      const k = Math.min(120 / width, 40 / height);
+      const w = width * k;
+      const h = height * k;
+      pdf.addImage(s.logo, s.logo.startsWith("data:image/png") ? "PNG" : "JPEG", M, y + 20 - h / 2, w, h);
+      nameX = M + w + 12;
+    } catch {
+      // A logo that cannot be drawn leaves the name alone rather than the document unmade.
+    }
+  }
+  text(s.clinic.labName, nameX, y + 16, { size: 19, bold: true });
+  text(s.clinic.tagline, nameX, y + 32, { size: 9.5, color: MUTED });
   const contact = [s.clinic.address, s.clinic.phone ? `Tel: ${s.clinic.phone}` : null, s.clinic.licenseNumber ? `Litsenziya: ${s.clinic.licenseNumber}` : null].filter(
     (v): v is string => Boolean(v),
   );

@@ -74,6 +74,7 @@ function summary(overrides: Partial<VisitSummary["record"]> = {}): VisitSummary 
       } as unknown as VisitSummary["referrals"][number],
     ],
     clinic: { id: "default", labName: "NEOGEN CLINIC", tagline: "Klinika", address: "Toshkent", phone: "+998 71 200 00 00", director: null, licenseNumber: "L-1" },
+    logo: null,
     generatedAt: "2026-11-06T11:00:00.000Z",
     generatedBy: "Rasulov Jamshid",
   };
@@ -91,6 +92,18 @@ describe("visit summary PDF (B3.8)", () => {
     const long = "Bemorning shikoyatlari batafsil yozilgan matn. ".repeat(400);
     const pdf = await buildVisitSummaryPdf(summary({ anamnesis: long, version: 2, amendReason: "Tashxis aniqlashtirildi", amendedAt: "2026-11-06T12:00:00.000Z" }));
     expect(pdf.getNumberOfPages()).toBeGreaterThanOrEqual(3);
+  });
+
+  it("draws the clinic's logo in the letterhead when there is one (B4.7)", async () => {
+    const PNG_1PX = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const count = (pdf: Awaited<ReturnType<typeof buildVisitSummaryPdf>>) =>
+      (new TextDecoder("latin1").decode(pdf.output("arraybuffer")).match(/\/Subtype \/Image/g) ?? []).length;
+    expect(count(await buildVisitSummaryPdf(summary()))).toBe(0);
+    const s = summary();
+    expect(count(await buildVisitSummaryPdf({ ...s, logo: PNG_1PX }))).toBeGreaterThan(0);
+    // A broken logo does not stop the document.
+    const broken = await buildVisitSummaryPdf({ ...s, logo: "data:image/png;base64,AAAA" });
+    expect(broken.getNumberOfPages()).toBe(1);
   });
 
   it("names the file after the patient and the day", () => {

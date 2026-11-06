@@ -1754,6 +1754,27 @@ describe("lab catalogue groups and specimens (B4.6, B4.3)", () => {
   });
 });
 
+describe("clinic logo (B4.7)", () => {
+  it("is stored, replaced and removed, and survives a reload", async () => {
+    expect(await storage.getLogo()).toBeNull();
+    const logo = {
+      dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+      mime: "image/png" as const,
+      bytes: 16,
+      updatedAt: new Date().toISOString(),
+      updatedByName: "Admin",
+    };
+    await storage.setLogo(logo, ACTOR);
+    expect(await storage.getLogo()).toEqual(logo);
+    // The lab's own settings are untouched by the logo, and the reverse.
+    const settings = await storage.getSettings();
+    await storage.updateSettings({ ...settings, labName: "NEOGEN CLINIC" });
+    expect(await storage.getLogo()).toEqual(logo);
+    await storage.setLogo(null, ACTOR);
+    expect(await storage.getLogo()).toBeNull();
+  });
+});
+
 describe("lab board (B4.1)", () => {
   it("follows an order from the draw to release and counts cancellations", async () => {
     const day = todayKey();

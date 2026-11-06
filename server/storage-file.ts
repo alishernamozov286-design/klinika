@@ -75,6 +75,7 @@ import { patientHistoryProblem } from "@shared/patient-links";
 import { referralStage } from "@shared/referral";
 import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, awaitsSample, summarizeLabBoard, type LabBoard } from "@shared/lab-board";
+import type { ClinicLogo } from "@shared/branding";
 import { ICD_SOURCE, normalizeIcdCode, parseNsiIcd10, type IcdRow } from "@shared/icd10";
 import { readFileSync } from "fs";
 import path from "path";
@@ -2707,6 +2708,15 @@ export class FileStorage implements IStorage {
   }
 
   // ------------------------------------------------------------- settings
+
+  async getLogo(): Promise<ClinicLogo | null> {
+    return this.db.logo ?? null;
+  }
+
+  async setLogo(logo: ClinicLogo | null, _actor: Actor): Promise<void> {
+    this.db.logo = logo;
+    await this.persist();
+  }
 
   async getSettings(): Promise<LabSettings> {
     return this.db.settings;

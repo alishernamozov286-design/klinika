@@ -3,6 +3,7 @@ import type { LockState } from "@shared/lockout";
 import { SUPER_ADMIN, SYSTEM_ROLE_KEYS } from "@shared/permissions";
 import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
+import type { ClinicLogo } from "@shared/branding";
 import type {
   AuditEntry,
   CreatePaymentInput,
@@ -743,5 +744,9 @@ export interface IStorage {
   updateSecuritySettings(input: SecuritySettings, actor: Actor): Promise<SecuritySettings>;
 
   getSettings(): Promise<LabSettings>;
+  /** B4.7: the clinic's logo (shared/branding.ts); null when none is set. */
+  getLogo(): Promise<ClinicLogo | null>;
+  /** Replaces the logo, or removes it with null. The caller has checked it. */
+  setLogo(logo: ClinicLogo | null, actor: Actor): Promise<void>;
   updateSettings(input: LabSettingsInput): Promise<LabSettings>;
 }

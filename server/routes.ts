@@ -116,6 +116,7 @@ import { actorOf, audit, emptyIfMissing, handle, logPatientView, numberParam, st
 import { registerClinicRoutes } from "./routes-clinic";
 import { isOrderReleased } from "@shared/lab-verification";
 import { SAMPLE_QUALITY_LABELS, isTestGroup, type SampleQuality } from "@shared/lab-catalogue";
+import { checkLogo, type ClinicLogo } from "@shared/branding";
 import { notifyOrderingDoctor } from "./result-delivery";
 import { registerMedicalRoutes } from "./routes-medical";
 
@@ -1677,6 +1678,49 @@ export async function registerRoutes(app: Express): Promise<void> {
     }),
   );
 
+  // B4.7: the clinic's logo for blanks and documents (shared/branding.ts).
+  // Served apart from /api/settings so that small, often-read object does not
+  // carry an image.
+  app.get(
+    "/api/settings/logo",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.json(await storage.getLogo());
+    }),
+  );
+
+  app.put(
+    "/api/settings/logo",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const dataUrl = req.body?.dataUrl;
+      const checked = checkLogo(dataUrl);
+      if (!checked.ok) return res.status(400).json({ message: checked.message });
+      const logo: ClinicLogo = {
+        dataUrl,
+        mime: checked.mime,
+        bytes: checked.bytes,
+        updatedAt: new Date().toISOString(),
+        updatedByName: req.user!.fullName,
+      };
+      await storage.setLogo(logo, actorOf(req));
+      await audit(req, "update", "settings", "logo", `Klinika logotipi yangilandi (${checked.mime.replace("image/", "").toUpperCase()}, ${Math.max(1, Math.round(checked.bytes / 1024))} KB)`);
+      res.json(logo);
+    }),
+  );
+
+  app.delete(
+    "/api/settings/logo",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const had = await storage.getLogo();
+      if (!had) return res.status(404).json({ message: "Logotip o'rnatilmagan" });
+      await storage.setLogo(null, actorOf(req));
+      await audit(req, "delete", "settings", "logo", "Klinika logotipi olib tashlandi");
+      res.status(204).end();
+    }),
+  );
+
   app.put(
     "/api/settings",
     requirePermission("settings.manage"),
@@ -2395,6 +2439,10 @@ export async function registerRoutes(app: Express): Promise<void> {
         message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyalarni ishga tushirishi kerak (npm run db:upgrade).",
       });
     }
+    // The JSON body parser's own refusals keep their status, in Uzbek.
+    const bodyError = (err as { type?: string } | null)?.type;
+    if (bodyError === "entity.too.large") return res.status(413).json({ message: "So'rov hajmi juda katta" });
+    if (bodyError === "entity.parse.failed") return res.status(400).json({ message: "So'rov ma'lumoti noto'g'ri (JSON)" });
     if (err instanceof Error) {
       return res.status(400).json({ message: err.message });
     }

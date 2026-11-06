@@ -87,6 +87,7 @@ import { MfaPanel, MfaPolicyPanel } from "@/components/mfa-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { IcdPanel } from "@/components/icd-panel";
 import { GroupFilter, TubeDot } from "@/components/lab-ui";
+import { LogoPanel } from "@/components/logo-panel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SAMPLE_TYPES, TEST_GROUPS, TEST_GROUP_LABELS, TUBES, classifyTest, type TestGroup } from "@shared/lab-catalogue";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
@@ -113,6 +114,7 @@ const TABS: SettingsTab[] = [
     render: () => (
       <>
         <LabSettingsPanel />
+        <LogoPanel />
         <TelegramPanel />
       </>
     ),

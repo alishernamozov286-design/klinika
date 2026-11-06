@@ -2389,6 +2389,40 @@ var init_lab_board = __esm({
   }
 });
 
+// shared/branding.ts
+function decodedLength(b64) {
+  const pad = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return b64.length / 4 * 3 - pad;
+}
+function checkLogo(dataUrl) {
+  if (typeof dataUrl !== "string" || !dataUrl) return { ok: false, message: "Rasm yuborilmadi" };
+  const m = DATA_URL.exec(dataUrl);
+  if (!m || m[2].length % 4 !== 0) return { ok: false, message: "Faqat PNG yoki JPEG rasm yuklash mumkin" };
+  const mime = m[1];
+  const bytes = decodedLength(m[2]);
+  if (bytes > LOGO_MAX_BYTES) {
+    return { ok: false, message: `Rasm juda katta: ${Math.round(bytes / 1024)} KB (ko'pi bilan ${LOGO_MAX_BYTES / 1024} KB)` };
+  }
+  const head = atob(m[2].slice(0, 16));
+  const magic = MAGIC[mime];
+  if (head.length < magic.length || magic.some((b, i) => head.charCodeAt(i) !== b)) {
+    return { ok: false, message: "Fayl mazmuni rasm turiga mos emas" };
+  }
+  return { ok: true, mime, bytes };
+}
+var LOGO_MAX_BYTES, DATA_URL, MAGIC;
+var init_branding = __esm({
+  "shared/branding.ts"() {
+    "use strict";
+    LOGO_MAX_BYTES = 300 * 1024;
+    DATA_URL = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/]+={0,2})$/;
+    MAGIC = {
+      "image/png": [137, 80, 78, 71, 13, 10, 26, 10],
+      "image/jpeg": [255, 216, 255]
+    };
+  }
+});
+
 // shared/icd10.ts
 function normalizeIcdCode(input) {
   const map = { \u0410: "A", \u0412: "B", \u0415: "E", \u041A: "K", \u041C: "M", \u041D: "H", \u041E: "O", \u0420: "P", \u0421: "C", \u0422: "T", \u0425: "X" };
@@ -2769,6 +2803,7 @@ var init_storage_pg = __esm({
     init_referral();
     init_lab_catalogue();
     init_lab_board();
+    init_branding();
     init_icd10();
     init_lab_rules();
     init_patient_links();
@@ -5066,6 +5101,24 @@ var init_storage_pg = __esm({
         await db.insert(appSettings).values({ key: "security", value: input, updatedAt: now, updatedBy: actor.id }).onConflictDoUpdate({ target: appSettings.key, set: { value: input, updatedAt: now, updatedBy: actor.id } });
         return { ...input };
       }
+      async getLogo() {
+        try {
+          const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "logo")).limit(1);
+          const v = row?.value;
+          return v && checkLogo(v.dataUrl).ok ? v : null;
+        } catch (err) {
+          if (isMissingTable(err)) return null;
+          throw err;
+        }
+      }
+      async setLogo(logo, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        if (!logo) {
+          await db.delete(appSettings).where(eq(appSettings.key, "logo"));
+          return;
+        }
+        await db.insert(appSettings).values({ key: "logo", value: logo, updatedAt: now, updatedBy: actor.id }).onConflictDoUpdate({ target: appSettings.key, set: { value: logo, updatedAt: now, updatedBy: actor.id } });
+      }
       async getSettings() {
         const [row] = await db.select().from(labSettings).limit(1);
         return row ?? DEFAULT_SETTINGS;
@@ -7312,6 +7365,13 @@ var init_storage_file = __esm({
         return { ...input };
       }
       // ------------------------------------------------------------- settings
+      async getLogo() {
+        return this.db.logo ?? null;
+      }
+      async setLogo(logo, _actor) {
+        this.db.logo = logo;
+        await this.persist();
+      }
       async getSettings() {
         return this.db.settings;
       }
@@ -8745,6 +8805,7 @@ function registerClinicRoutes(app) {
 // server/routes.ts
 init_lab_verification();
 init_lab_catalogue();
+init_branding();
 
 // server/result-delivery.ts
 init_lab_verification();
@@ -9036,12 +9097,13 @@ function registerMedicalRoutes(app) {
         return res.status(409).json({ message: "Xulosa faqat tasdiqlangan ko'rik yozuvidan chiqariladi" });
       }
       const codes = RECORD_CODE_FIELDS.map((f) => record[f]).filter((c) => Boolean(c));
-      const [appointment, allergies, referrals2, clinic, icd] = await Promise.all([
+      const [appointment, allergies, referrals2, clinic, icd, logo] = await Promise.all([
         storage.getAppointment(record.appointmentId),
         storage.listAllergies(record.patientId).catch((e) => emptyIfMissing(e, [])),
         storage.listReferrals({ appointmentId: record.appointmentId }).catch((e) => emptyIfMissing(e, [])),
         storage.getSettings(),
-        storage.getIcd(codes).catch((e) => emptyIfMissing(e, []))
+        storage.getIcd(codes).catch((e) => emptyIfMissing(e, [])),
+        storage.getLogo()
       ]);
       const summary = {
         record,
@@ -9051,6 +9113,7 @@ function registerMedicalRoutes(app) {
         // A cancelled referral is not part of what the patient was told to do.
         referrals: referrals2.filter((r) => r.status !== "cancelled"),
         clinic,
+        logo: logo?.dataUrl ?? null,
         generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
         generatedBy: req.user.fullName
       };
@@ -10439,6 +10502,43 @@ async function registerRoutes(app) {
       res.json(await storage.getSettings());
     })
   );
+  app.get(
+    "/api/settings/logo",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.json(await storage.getLogo());
+    })
+  );
+  app.put(
+    "/api/settings/logo",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const dataUrl = req.body?.dataUrl;
+      const checked = checkLogo(dataUrl);
+      if (!checked.ok) return res.status(400).json({ message: checked.message });
+      const logo = {
+        dataUrl,
+        mime: checked.mime,
+        bytes: checked.bytes,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedByName: req.user.fullName
+      };
+      await storage.setLogo(logo, actorOf(req));
+      await audit(req, "update", "settings", "logo", `Klinika logotipi yangilandi (${checked.mime.replace("image/", "").toUpperCase()}, ${Math.max(1, Math.round(checked.bytes / 1024))} KB)`);
+      res.json(logo);
+    })
+  );
+  app.delete(
+    "/api/settings/logo",
+    requirePermission("settings.manage"),
+    handle(async (req, res) => {
+      const had = await storage.getLogo();
+      if (!had) return res.status(404).json({ message: "Logotip o'rnatilmagan" });
+      await storage.setLogo(null, actorOf(req));
+      await audit(req, "delete", "settings", "logo", "Klinika logotipi olib tashlandi");
+      res.status(204).end();
+    })
+  );
   app.put(
     "/api/settings",
     requirePermission("settings.manage"),
@@ -11006,6 +11106,9 @@ async function registerRoutes(app) {
         message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyalarni ishga tushirishi kerak (npm run db:upgrade)."
       });
     }
+    const bodyError = err?.type;
+    if (bodyError === "entity.too.large") return res.status(413).json({ message: "So'rov hajmi juda katta" });
+    if (bodyError === "entity.parse.failed") return res.status(400).json({ message: "So'rov ma'lumoti noto'g'ri (JSON)" });
     if (err instanceof Error) {
       return res.status(400).json({ message: err.message });
     }
@@ -11016,7 +11119,9 @@ async function registerRoutes(app) {
 // server/app.ts
 async function createApp() {
   const app = express();
-  app.use(express.json());
+  const json2 = express.json();
+  const logoJson = express.json({ limit: "512kb" });
+  app.use((req, res, next) => (req.path === "/api/settings/logo" ? logoJson : json2)(req, res, next));
   app.use(express.urlencoded({ extended: false }));
   app.use((req, res, next) => {
     const start = Date.now();
