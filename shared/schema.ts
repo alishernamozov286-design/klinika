@@ -24,6 +24,7 @@ import {
   type QcStatus,
   type WestgardRule,
 } from "./qc";
+import { INVENTORY_KINDS, type InventoryKind } from "./inventory";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -1219,6 +1220,30 @@ export const eqaResults = pgTable("eqa_results", {
   voidReason: text("void_reason"),
 });
 
+/**
+ * Ombor mahsulotlari katalogi (B5.1, TZ §7.2). Stock, batches and movements
+ * (B5.2+) refer to these rows.
+ */
+export const inventoryItems = pgTable("inventory_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  kind: text("kind").notNull(),
+  /** Artikul / internal code, optional and unique when given. */
+  code: text("code"),
+  manufacturer: text("manufacturer"),
+  unit: text("unit").notNull(),
+  /** Below this the item is "kam qoldi" (B5.4). Fractions allowed: ml, g. */
+  minStock: doublePrecision("min_stock").notNull().default(0),
+  /** TZ §7.3 "Sotuv yoki hisobdan chiqarish narxi", per unit, so'm. */
+  salePrice: money("sale_price"),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
+});
+
 // ---------------------------------------------------------------- types
 
 export type User = typeof users.$inferSelect;
@@ -1488,6 +1513,8 @@ export type DeviceMaintenanceEntry = Omit<typeof deviceMaintenance.$inferSelect,
 export type DeviceMaintenanceView = DeviceMaintenanceEntry & { deviceName: string };
 export type EqaResult = Omit<typeof eqaResults.$inferSelect, "evaluation"> & { evaluation: EqaEvaluation };
 export type EqaResultView = EqaResult & { testName: string; deviceName: string | null };
+
+export type InventoryItem = Omit<typeof inventoryItems.$inferSelect, "kind"> & { kind: InventoryKind };
 
 export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
   kind: ReferralKind;
@@ -2411,6 +2438,32 @@ export const insertDeviceErrorSchema = z.object({
   markOutOfService: z.boolean().default(false),
 });
 export type InsertDeviceErrorInput = z.infer<typeof insertDeviceErrorSchema>;
+
+// ------------------------------------------------------------- inventory
+
+export const insertInventoryItemSchema = z.object({
+  name: z.string().trim().min(2, "Mahsulot nomini kiriting").max(160, "Nom juda uzun"),
+  kind: z.enum(INVENTORY_KINDS, { errorMap: () => ({ message: "Mahsulot turini tanlang" }) }),
+  code: optionalText(40, "Artikul"),
+  manufacturer: optionalText(120, "Ishlab chiqaruvchi"),
+  unit: z.string().trim().min(1, "O'lchov birligini kiriting").max(20, "Birlik juda uzun"),
+  minStock: z
+    .number({ invalid_type_error: "Minimal qoldiq: raqam kiriting" })
+    .finite("Minimal qoldiq: raqam kiriting")
+    .min(0, "Minimal qoldiq manfiy bo'lmasligi kerak")
+    .default(0),
+  salePrice: z
+    .number({ invalid_type_error: "Narx: raqam kiriting" })
+    .int("Narx butun so'mda bo'lsin")
+    .min(0, "Narx manfiy bo'lmasligi kerak")
+    .nullish()
+    .transform((v) => v ?? null),
+  isActive: z.boolean().default(true),
+  notes: optionalText(500, "Izoh"),
+});
+export const updateInventoryItemSchema = insertInventoryItemSchema.partial();
+export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;
+export type UpdateInventoryItemInput = z.infer<typeof updateInventoryItemSchema>;
 
 // ------------------------------------------------------- quality control
 

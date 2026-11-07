@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  Warehouse,
   BarChart3,
   CalendarClock,
   ClipboardPlus,
@@ -49,6 +50,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
       { title: "Buyurtmalar", url: "/orders", icon: FlaskConical },
       { title: "Natijalar", url: "/results", icon: FileText },
       { title: "Sifat nazorati", url: "/qc", icon: ShieldCheck },
+      { title: "Ombor", url: "/inventory", icon: Warehouse },
     ],
   },
   {

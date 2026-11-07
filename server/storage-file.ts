@@ -87,6 +87,9 @@ import {
   zScore,
 } from "@shared/qc";
 import type {
+  InsertInventoryItem,
+  InventoryItem,
+  UpdateInventoryItemInput,
   Calibration,
   CalibrationView,
   DeviceMaintenanceEntry,
@@ -2924,6 +2927,58 @@ export class FileStorage implements IStorage {
     Object.assign(e, { voidedAt: new Date().toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
     await this.persist();
     return { ...e };
+  }
+
+  // ------------------------------------------------------------ inventory (B5)
+
+  async listInventoryItems(): Promise<InventoryItem[]> {
+    return [...this.db.inventoryItems]
+      .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name))
+      .map((i) => ({ ...i }));
+  }
+
+  async getInventoryItem(id: string): Promise<InventoryItem | undefined> {
+    const i = this.db.inventoryItems.find((x) => x.id === id);
+    return i && { ...i };
+  }
+
+  async createInventoryItem(input: InsertInventoryItem, actor: Actor): Promise<InventoryItem> {
+    const item: InventoryItem = {
+      id: randomUUID(),
+      name: input.name,
+      kind: input.kind,
+      code: input.code ?? null,
+      manufacturer: input.manufacturer ?? null,
+      unit: input.unit,
+      minStock: input.minStock ?? 0,
+      salePrice: input.salePrice ?? null,
+      isActive: input.isActive ?? true,
+      notes: input.notes ?? null,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      updatedAt: null,
+      updatedBy: actor.id,
+    };
+    this.db.inventoryItems.push(item);
+    await this.persist();
+    return { ...item };
+  }
+
+  async updateInventoryItem(id: string, input: UpdateInventoryItemInput, actor: Actor): Promise<InventoryItem | undefined> {
+    const i = this.db.inventoryItems.find((x) => x.id === id);
+    if (!i) return undefined;
+    for (const [k, v] of Object.entries(input)) if (v !== undefined) (i as Record<string, unknown>)[k] = v;
+    Object.assign(i, { updatedAt: new Date().toISOString(), updatedBy: actor.id });
+    await this.persist();
+    return { ...i };
+  }
+
+  async deleteInventoryItem(id: string): Promise<boolean> {
+    const n = this.db.inventoryItems.length;
+    this.db.inventoryItems = this.db.inventoryItems.filter((x) => x.id !== id);
+    if (this.db.inventoryItems.length === n) return false;
+    await this.persist();
+    return true;
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {

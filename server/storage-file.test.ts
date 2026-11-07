@@ -1754,6 +1754,29 @@ describe("lab catalogue groups and specimens (B4.6, B4.3)", () => {
   });
 });
 
+describe("inventory catalogue (B5.1)", () => {
+  it("creates, lists, edits only what was sent, deletes", async () => {
+    const a = await storage.createInventoryItem(
+      { name: "Glyukoza reagenti", kind: "reagent", code: "R-001", manufacturer: "Human", unit: "to'plam", minStock: 2, salePrice: null, isActive: true, notes: null },
+      ACTOR,
+    );
+    const b = await storage.createInventoryItem(
+      { name: "Antiseptik", kind: "disinfectant", code: null, manufacturer: null, unit: "l", minStock: 1.5, salePrice: 30000, isActive: true, notes: null },
+      ACTOR,
+    );
+    expect(a).toMatchObject({ kind: "reagent", unit: "to'plam", minStock: 2, createdBy: ACTOR.id });
+    expect((await storage.listInventoryItems()).map((i) => i.name)).toEqual(["Antiseptik", "Glyukoza reagenti"]);
+    const edited = await storage.updateInventoryItem(a.id, { minStock: 5, isActive: false }, ACTOR);
+    expect(edited).toMatchObject({ minStock: 5, isActive: false, code: "R-001", manufacturer: "Human" });
+    expect(edited!.updatedAt).toBeTruthy();
+    // Inactive items sort after active ones.
+    expect((await storage.listInventoryItems()).map((i) => i.id)).toEqual([b.id, a.id]);
+    expect(await storage.deleteInventoryItem(b.id)).toBe(true);
+    expect(await storage.deleteInventoryItem(b.id)).toBe(false);
+    expect(await storage.updateInventoryItem("missing", { minStock: 1 }, ACTOR)).toBeUndefined();
+  });
+});
+
 describe("quality control (B4.8)", () => {
   const setup = async () => {
     const material = await storage.createQcMaterial(

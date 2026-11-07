@@ -23,4 +23,5 @@ export const ROUTE_ACCESS: Record<string, Permission[]> = {
   "/departments": ["departments.manage"],
   "/devices": ["devices.read"],
   "/qc": ["qc.read"],
+  "/inventory": ["inventory.read"],
 };

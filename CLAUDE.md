@@ -47,6 +47,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
 - `shared/icd10.ts` + `data/icd10/`: MKB-10 katalogini o'qish, kod normallash, o'zbekcha nomlar importi (B3.4).
 - `server/result-delivery.ts`: tasdiqlangan natijani yo'llagan shifokorga yetkazish (B3.9).
+- `shared/inventory.ts`: ombor mahsulot turlari (TZ §7.2), birliklar, nom qoidalari (B5). `server/routes-inventory.ts`: ombor API.
 - `shared/qc.ts`: sifat nazorati qoidalari — Westgard, z-score, EQA bahosi, muddatlar (B4.8). `server/routes-qc.ts`: QC API. `client/src/components/qc/`: Levey–Jennings kartasi va QC panellari.
 - `shared/lab-devices.ts`: analizatorlar yorliqlari va qoidalari, TZ §6.4 ro'yxati (B4.9). `server/routes-lab.ts`: analizatorlar va xatolar jurnali API.
 - `shared/branding.ts`: klinika logotipini tekshirish qoidalari (B4.7).
@@ -59,7 +60,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/permissions.ts`: **ruxsatlar katalogi** (`PERMISSIONS`) va TZ §3 dagi 11 ta rolning boshlang‘ich ruxsatlari (`SYSTEM_ROLES`).
 - `server/rbac.ts`: `requirePermission`, `hasPermission`, `toSessionUser`, rollar keshi (60 s, `invalidateRoles()`).
 - `client/src/lib/access.ts`: qaysi sahifa qaysi ruxsat bilan ochiladi (router, sidebar, command palette uchun yagona jadval).
-- Menyu tuzilmasi: Ish maydoni (Bosh sahifa, Mening kabinetim, Bemorlar, Navbat, Buyurtmalar, Natijalar, Sifat nazorati) · Klinika (Shifokorlar, Bo'limlar, Xizmatlar, Analizatorlar, Xodimlar) · Boshqaruv (Hisobotlar, Xarajatlar, Sozlamalar). Yangi modul sahifasi shu bo'limlardan biriga qo'shiladi.
+- Menyu tuzilmasi: Ish maydoni (Bosh sahifa, Mening kabinetim, Bemorlar, Navbat, Buyurtmalar, Natijalar, Sifat nazorati, Ombor) · Klinika (Shifokorlar, Bo'limlar, Xizmatlar, Analizatorlar, Xodimlar) · Boshqaruv (Hisobotlar, Xarajatlar, Sozlamalar). Yangi modul sahifasi shu bo'limlardan biriga qo'shiladi.
 - Migratsiyalar: `npm run db:upgrade` hammasini ketma-ket bajaradi (har biri qayta ishga tushirsa xavfsiz).
 - `client/src/pages/*`: sahifalar. `client/src/App.tsx`: routing (og‘ir sahifalar `lazy`). `client/src/components/app-sidebar.tsx`: menyu.
 - `client/src/components/ui-kit.tsx`: `PageHeader`, `SectionCard`, `StatCard`, badge'lar, `EmptyState`, `TableSkeleton`, `Pagination`… **Yangi UI shulardan quriladi.**
@@ -103,7 +104,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-07. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 43.5 → ≈57%**.
+> Holat 2026-11-07. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 44.5 → ≈59%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -292,9 +293,15 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B4.10** Analizator integratsiyasi (`§6.4`): import API + lokal ko‘prik (D-4), namuna ID bo‘yicha moslashtirish, avtotekshiruv, takroriy natija nazorati, operator tasdig‘i. Protokol bo‘lmasa qo‘lda kiritish qoladi.
 - [x] **B4.11** Natijani bemorga elektron yetkazish (`§1`): Telegram bot.
 
-### Bosqich 5: Ombor (`§7`, `§15.5`) 0%
+### Bosqich 5: Ombor (`§7`, `§15.5`) 14%
 
-- [ ] **B5.1** Mahsulotlar katalogi (`§7.2`, `inventory_items`): 8 tur, o‘lchov birligi, minimal qoldiq.
+- [x] **B5.1** Mahsulotlar katalogi (`§7.2`, `inventory_items`): 8 tur, o‘lchov birligi, minimal qoldiq.
+  - `inventory_items`: nomi, turi (TZ §7.2 dagi 8 tur: reagentlar, kalibratorlar, nazorat materiallari, probirkalar, shpritslar, sarf materiallari, dori vositalari, dezinfeksiya vositalari), artikul (ixtiyoriy), ishlab chiqaruvchi, o'lchov birligi (erkin, takliflar bilan; turga qarab standart taklif), minimal qoldiq (kasr ham, manfiy emas), sotuv yoki hisobdan chiqarish narxi (TZ §7.3, butun so'm, ixtiyoriy), faol, izoh, §10 ustunlari. Nom va artikul katta-kichik harf va bo'shliqqa qaramay takrorlanmaydi: route tekshiradi, Postgres'da `UQ_inventory_items_name` / `_code` oxirgi himoya (poygada ham 409). Qoidalar `shared/inventory.ts`.
+  - Yangi ruxsat guruhi "Ombor": `inventory.read` (omborchi, lab mudiri, rahbar, buxgalter, auditor), `inventory.manage` (omborchi). Kirim/chiqim ruxsatlari o'z route'lari bilan (B5.2, B5.3). API `server/routes-inventory.ts`, audit (`inventory`).
+  - O'chirish hozircha ruxsat etilgan (hech narsa mahsulotga havola qilmaydi). **B5.2 da harakati bor mahsulot o'chirilmaydigan qilinadi**, faqat faolsizlantiriladi.
+  - UI: Ish maydoni → Ombor (`/inventory`): ko'rsatkichlar (faol, turlar 8 dan, narxi belgilanmagan, faolsiz), qidiruv (nom, artikul, ishlab chiqaruvchi), tur chiplari (ikonkalar bilan), faolsizlarni ko'rsatish, jadval, joyida faol/faolsiz, dialog, Excel/PDF eksport. Keyingi bosqichlar shu sahifaga tab bo'lib qo'shiladi.
+  - Migratsiya: `npm run db:inventory` (`db:upgrade` ichida): jadval, unique indekslar, CHECK'lar, tizim rollariga ruxsatlarni **faqat qo'shadi**. Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi.
+  - Testlar: `shared/inventory.test.ts`, `storage-file.test.ts`, brauzerda omborchi, lab mudiri (faqat ko'radi) va registrator (ruxsat yo'q) yo'li (29 tekshiruv, telefon o'lchami bilan).
 - [ ] **B5.2** Kirim hujjati (`§7.3`): yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (`inventory_batches`, `stock_movements`).
 - [ ] **B5.3** Chiqim va bo‘limlarga berish (`§7.1`): qaysi bo‘limga, kim oldi. FEFO (muddati yaqinini birinchi).
 - [ ] **B5.4** Qoldiq va yaroqlilik muddati (`§7.1`, `§7.3`): partiyalar bo‘yicha qoldiq, muddati yaqinlashganlar haqida ogohlantirish.
@@ -383,6 +390,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-07 · B5.1 · Ombor mahsulotlari katalogi: TZ'dagi 8 tur, o'lchov birligi, minimal qoldiq, sotuv/hisobdan chiqarish narxi, artikul; takrorlanmas nom va artikul (poygada ham), yangi "Ombor" ruxsat guruhi, Ombor sahifasi.
 - 2026-11-07 · B4.8 · Sifat nazorati: nazorat materiallari (LOT, muddat) va seriyalar, Westgard bahosi natija bilan saqlanadi, Levey–Jennings kartasi, chora va bekor qilish, kalibratsiya tarixi, texnik xizmat jurnali (navbatdagi xizmatlar), tashqi nazorat (z, ISO 13528); muddati o'tgan material/reagent/kalibrator rad etiladi.
 - 2026-11-07 · B4.9 · Analizatorlar: qurilmalar (yo'nalish, ulanish usuli, holat), o'chirilmaydigan xatolar jurnali (daraja, kod, chora, hal qilish), nosoz qurilmani bir qadamda ishdan chiqqan deb belgilash, TZ §6.4 dagi 6 ta analizator namuna sifatida, uchta yangi ruxsat.
 - 2026-11-07 · B4.7 · Klinika logotipi: yuklash (brauzerda kichraytirish, serverda tur va hajm tekshiruvi, audit), natija blankasi va ko'rik xulosasi PDF'ida. Yo'l-yo'lakay: body-parser xatolari (413, buzuq JSON) endi o'z statusi va o'zbekcha xabar bilan qaytadi.

@@ -17,6 +17,7 @@ export const PERMISSION_GROUPS = [
   { key: "medical", label: "Tibbiy karta", description: "Ko'rik yozuvlari, tashxislar, allergiyalar va yo'llanmalar (TZ §5)" },
   { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
   { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
+  { key: "warehouse", label: "Ombor", description: "Mahsulotlar katalogi, kirim, chiqim, qoldiq va inventarizatsiya (TZ §7)" },
   { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
   { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
   { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar, shifokorlar va xizmatlar" },
@@ -205,6 +206,17 @@ export const PERMISSIONS = {
     description: "Qurilma qo'shish, tahrirlash, holatini o'zgartirish va jurnali bo'lmagan qurilmani o'chirish",
   },
 
+  "inventory.read": {
+    group: "warehouse",
+    label: "Ombor katalogi",
+    description: "Ombor mahsulotlari katalogini ko'rish (TZ §7.2)",
+  },
+  "inventory.manage": {
+    group: "warehouse",
+    label: "Katalogni boshqarish",
+    description: "Mahsulot qo'shish, tahrirlash, faolsizlantirish; birlik, minimal qoldiq va narx",
+  },
+
   "finance.view": {
     group: "finance",
     label: "Moliyaviy ko'rsatkichlar",
@@ -366,6 +378,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "audit.read",
       "devices.read",
       "qc.read",
+      "inventory.read",
     ],
   },
   {
@@ -431,6 +444,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "qc.read",
       "qc.enter",
       "qc.manage",
+      "inventory.read",
       "reports.view",
     ],
   },
@@ -438,7 +452,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "omborchi",
     name: "Omborchi",
     description: "Ombor: kirim, chiqim va qoldiq",
-    permissions: [],
+    permissions: ["inventory.read", "inventory.manage"],
   },
   {
     key: "hamshira",
@@ -463,6 +477,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "expenses.manage",
       "reports.view",
       "data.export",
+      "inventory.read",
     ],
   },
   {
@@ -480,6 +495,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "audit.read",
       "devices.read",
       "qc.read",
+      "inventory.read",
     ],
   },
 ];

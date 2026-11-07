@@ -94,6 +94,7 @@ const ENTITIES = [
   { value: "service", label: "Xizmatlar" },
   { value: "device", label: "Analizatorlar" },
   { value: "qc", label: "Sifat nazorati" },
+  { value: "inventory", label: "Ombor" },
   { value: "session", label: "Seanslar" },
   { value: "settings", label: "Sozlamalar" },
   { value: "expense", label: "Xarajatlar" },

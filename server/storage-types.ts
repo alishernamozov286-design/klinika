@@ -5,6 +5,9 @@ import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type {
+  InsertInventoryItem,
+  InventoryItem,
+  UpdateInventoryItemInput,
   Calibration,
   CalibrationView,
   DeviceMaintenanceEntry,
@@ -805,6 +808,13 @@ export interface IStorage {
   listEqa(query?: { limit?: number }): Promise<EqaResultView[]>;
   addEqa(input: InsertEqaInput, actor: Actor): Promise<EqaResult>;
   voidEqa(id: string, reason: string, actor: Actor): Promise<EqaResult | undefined>;
+
+  // ------------------------------------------------------ inventory (B5)
+  listInventoryItems(): Promise<InventoryItem[]>;
+  getInventoryItem(id: string): Promise<InventoryItem | undefined>;
+  createInventoryItem(input: InsertInventoryItem, actor: Actor): Promise<InventoryItem>;
+  updateInventoryItem(id: string, input: UpdateInventoryItemInput, actor: Actor): Promise<InventoryItem | undefined>;
+  deleteInventoryItem(id: string): Promise<boolean>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

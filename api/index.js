@@ -30,6 +30,7 @@ var init_permissions = __esm({
       { key: "medical", label: "Tibbiy karta", description: "Ko'rik yozuvlari, tashxislar, allergiyalar va yo'llanmalar (TZ \xA75)" },
       { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
       { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
+      { key: "warehouse", label: "Ombor", description: "Mahsulotlar katalogi, kirim, chiqim, qoldiq va inventarizatsiya (TZ \xA77)" },
       { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
       { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
       { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar, shifokorlar va xizmatlar" },
@@ -198,6 +199,16 @@ var init_permissions = __esm({
         label: "Analizatorlarni boshqarish",
         description: "Qurilma qo'shish, tahrirlash, holatini o'zgartirish va jurnali bo'lmagan qurilmani o'chirish"
       },
+      "inventory.read": {
+        group: "warehouse",
+        label: "Ombor katalogi",
+        description: "Ombor mahsulotlari katalogini ko'rish (TZ \xA77.2)"
+      },
+      "inventory.manage": {
+        group: "warehouse",
+        label: "Katalogni boshqarish",
+        description: "Mahsulot qo'shish, tahrirlash, faolsizlantirish; birlik, minimal qoldiq va narx"
+      },
       "finance.view": {
         group: "finance",
         label: "Moliyaviy ko'rsatkichlar",
@@ -316,7 +327,8 @@ var init_permissions = __esm({
           "data.export",
           "audit.read",
           "devices.read",
-          "qc.read"
+          "qc.read",
+          "inventory.read"
         ]
       },
       {
@@ -382,6 +394,7 @@ var init_permissions = __esm({
           "qc.read",
           "qc.enter",
           "qc.manage",
+          "inventory.read",
           "reports.view"
         ]
       },
@@ -389,7 +402,7 @@ var init_permissions = __esm({
         key: "omborchi",
         name: "Omborchi",
         description: "Ombor: kirim, chiqim va qoldiq",
-        permissions: []
+        permissions: ["inventory.read", "inventory.manage"]
       },
       {
         key: "hamshira",
@@ -413,7 +426,8 @@ var init_permissions = __esm({
           "expenses.read",
           "expenses.manage",
           "reports.view",
-          "data.export"
+          "data.export",
+          "inventory.read"
         ]
       },
       {
@@ -430,7 +444,8 @@ var init_permissions = __esm({
           "reports.view",
           "audit.read",
           "devices.read",
-          "qc.read"
+          "qc.read",
+          "inventory.read"
         ]
       }
     ];
@@ -725,6 +740,37 @@ var init_qc = __esm({
   }
 });
 
+// shared/inventory.ts
+var INVENTORY_KINDS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN;
+var init_inventory = __esm({
+  "shared/inventory.ts"() {
+    "use strict";
+    INVENTORY_KINDS = [
+      "reagent",
+      "calibrator",
+      "control",
+      "tube",
+      "syringe",
+      "consumable",
+      "medicine",
+      "disinfectant"
+    ];
+    INVENTORY_KIND_SHORT = {
+      reagent: "Reagent",
+      calibrator: "Kalibrator",
+      control: "Nazorat materiali",
+      tube: "Probirka",
+      syringe: "Shprits",
+      consumable: "Sarf materiali",
+      medicine: "Dori vositasi",
+      disinfectant: "Dezinfeksiya"
+    };
+    inventoryKey = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    INVENTORY_NAME_TAKEN = "Bunday nomli mahsulot allaqachon bor";
+    INVENTORY_CODE_TAKEN = "Bu artikul boshqa mahsulotga berilgan";
+  }
+});
+
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
@@ -794,6 +840,7 @@ __export(schema_exports, {
   insertDoctorSchema: () => insertDoctorSchema,
   insertEqaSchema: () => insertEqaSchema,
   insertExpenseSchema: () => insertExpenseSchema,
+  insertInventoryItemSchema: () => insertInventoryItemSchema,
   insertMaintenanceSchema: () => insertMaintenanceSchema,
   insertPatientSchema: () => insertPatientSchema,
   insertQcMaterialSchema: () => insertQcMaterialSchema,
@@ -803,6 +850,7 @@ __export(schema_exports, {
   insertServiceSchema: () => insertServiceSchema,
   insertTestSchema: () => insertTestSchema,
   insertUserSchema: () => insertUserSchema,
+  inventoryItems: () => inventoryItems,
   labDeviceErrors: () => labDeviceErrors,
   labDevices: () => labDevices,
   labSettings: () => labSettings,
@@ -851,6 +899,7 @@ __export(schema_exports, {
   updateDoctorSchema: () => updateDoctorSchema,
   updateExpenseSchema: () => updateExpenseSchema,
   updateIcdUzSchema: () => updateIcdUzSchema,
+  updateInventoryItemSchema: () => updateInventoryItemSchema,
   updateOrderSchema: () => updateOrderSchema,
   updateQcMaterialSchema: () => updateQcMaterialSchema,
   updateQcTargetSchema: () => updateQcTargetSchema,
@@ -904,7 +953,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -913,6 +962,7 @@ var init_schema = __esm({
     init_lab_catalogue();
     init_lab_devices();
     init_qc();
+    init_inventory();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
     ORDER_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
@@ -1765,6 +1815,25 @@ var init_schema = __esm({
       voidedByName: text("voided_by_name"),
       voidReason: text("void_reason")
     });
+    inventoryItems = pgTable("inventory_items", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      name: text("name").notNull(),
+      kind: text("kind").notNull(),
+      /** Artikul / internal code, optional and unique when given. */
+      code: text("code"),
+      manufacturer: text("manufacturer"),
+      unit: text("unit").notNull(),
+      /** Below this the item is "kam qoldi" (B5.4). Fractions allowed: ml, g. */
+      minStock: doublePrecision("min_stock").notNull().default(0),
+      /** TZ §7.3 "Sotuv yoki hisobdan chiqarish narxi", per unit, so'm. */
+      salePrice: money("sale_price"),
+      isActive: boolean("is_active").notNull().default(true),
+      notes: text("notes"),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
+    });
     NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"];
     birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
     emergencyContactSchema = z.object({
@@ -2110,6 +2179,18 @@ var init_schema = __esm({
       /** Takes the device out of service in the same step (a broken analyzer must not keep being used). */
       markOutOfService: z.boolean().default(false)
     });
+    insertInventoryItemSchema = z.object({
+      name: z.string().trim().min(2, "Mahsulot nomini kiriting").max(160, "Nom juda uzun"),
+      kind: z.enum(INVENTORY_KINDS, { errorMap: () => ({ message: "Mahsulot turini tanlang" }) }),
+      code: optionalText(40, "Artikul"),
+      manufacturer: optionalText(120, "Ishlab chiqaruvchi"),
+      unit: z.string().trim().min(1, "O'lchov birligini kiriting").max(20, "Birlik juda uzun"),
+      minStock: z.number({ invalid_type_error: "Minimal qoldiq: raqam kiriting" }).finite("Minimal qoldiq: raqam kiriting").min(0, "Minimal qoldiq manfiy bo'lmasligi kerak").default(0),
+      salePrice: z.number({ invalid_type_error: "Narx: raqam kiriting" }).int("Narx butun so'mda bo'lsin").min(0, "Narx manfiy bo'lmasligi kerak").nullish().transform((v) => v ?? null),
+      isActive: z.boolean().default(true),
+      notes: optionalText(500, "Izoh")
+    });
+    updateInventoryItemSchema = insertInventoryItemSchema.partial();
     qcNumber = (label) => z.number({ invalid_type_error: `${label}: raqam kiriting`, required_error: `${label}ni kiriting` }).finite(`${label}: raqam kiriting`);
     optionalDay = dayString.nullish().or(z.literal("")).transform((v) => v ? v : null);
     pastTimestamp = z.string().datetime({ offset: true, message: "Vaqt noto'g'ri" }).nullish();
@@ -3243,10 +3324,21 @@ __export(storage_pg_exports, {
 });
 import { and, asc, desc, eq, gte, inArray, isNull, lte, notInArray, or, sql as sql2 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+async function uniqueAsConflict(run) {
+  try {
+    return await run();
+  } catch (err) {
+    const e = err;
+    if (e?.code === "23505" && e.constraint?.startsWith("UQ_inventory_items")) {
+      throw new StorageConflict(e.constraint.endsWith("_code") ? INVENTORY_CODE_TAKEN : INVENTORY_NAME_TAKEN);
+    }
+    throw err;
+  }
+}
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, mapQcResult, mapEqa, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
+var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, mapInventoryItem, mapQcResult, mapEqa, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -3257,6 +3349,7 @@ var init_storage_pg = __esm({
     init_lab_catalogue();
     init_lab_board();
     init_branding();
+    init_inventory();
     init_lab_devices();
     init_qc();
     init_icd10();
@@ -3343,6 +3436,10 @@ var init_storage_pg = __esm({
       createdAt: iso(row.createdAt) ?? row.createdAt,
       updatedAt: iso(row.updatedAt),
       cancelledAt: iso(row.cancelledAt)
+    });
+    mapInventoryItem = (row) => ({
+      ...row,
+      kind: row.kind
     });
     mapQcResult = (row) => ({
       ...row,
@@ -5685,6 +5782,43 @@ var init_storage_pg = __esm({
         if (exists) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
         return void 0;
       }
+      // ------------------------------------------------------------ inventory (B5)
+      async listInventoryItems() {
+        const rows = await db.select().from(inventoryItems).orderBy(desc(inventoryItems.isActive), asc(inventoryItems.name));
+        return rows.map(mapInventoryItem);
+      }
+      async getInventoryItem(id) {
+        const [row] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id)).limit(1);
+        return row && mapInventoryItem(row);
+      }
+      async createInventoryItem(input, actor) {
+        const [row] = await uniqueAsConflict(
+          () => db.insert(inventoryItems).values({
+            name: input.name,
+            kind: input.kind,
+            code: input.code ?? null,
+            manufacturer: input.manufacturer ?? null,
+            unit: input.unit,
+            minStock: input.minStock ?? 0,
+            salePrice: input.salePrice ?? null,
+            isActive: input.isActive ?? true,
+            notes: input.notes ?? null,
+            createdBy: actor.id,
+            updatedBy: actor.id
+          }).returning()
+        );
+        return mapInventoryItem(row);
+      }
+      async updateInventoryItem(id, input, actor) {
+        const patch = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id };
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) patch[k] = v;
+        const [row] = await uniqueAsConflict(() => db.update(inventoryItems).set(patch).where(eq(inventoryItems.id, id)).returning());
+        return row && mapInventoryItem(row);
+      }
+      async deleteInventoryItem(id) {
+        const rows = await db.delete(inventoryItems).where(eq(inventoryItems.id, id)).returning({ id: inventoryItems.id });
+        return rows.length > 0;
+      }
       async getLabBoard(day) {
         const local = (col) => sql2.raw(`(${col} AT TIME ZONE current_setting('TIMEZONE'))::date`);
         const countsQuery = db.execute(sql2`
@@ -5973,6 +6107,7 @@ var init_db = __esm({
       calibrations: [],
       deviceMaintenance: [],
       eqaResults: [],
+      inventoryItems: [],
       icdUzNames: {},
       security: null,
       patients: [],
@@ -8329,6 +8464,50 @@ var init_storage_file = __esm({
         Object.assign(e, { voidedAt: (/* @__PURE__ */ new Date()).toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
         await this.persist();
         return { ...e };
+      }
+      // ------------------------------------------------------------ inventory (B5)
+      async listInventoryItems() {
+        return [...this.db.inventoryItems].sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name)).map((i) => ({ ...i }));
+      }
+      async getInventoryItem(id) {
+        const i = this.db.inventoryItems.find((x) => x.id === id);
+        return i && { ...i };
+      }
+      async createInventoryItem(input, actor) {
+        const item = {
+          id: randomUUID(),
+          name: input.name,
+          kind: input.kind,
+          code: input.code ?? null,
+          manufacturer: input.manufacturer ?? null,
+          unit: input.unit,
+          minStock: input.minStock ?? 0,
+          salePrice: input.salePrice ?? null,
+          isActive: input.isActive ?? true,
+          notes: input.notes ?? null,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: actor.id
+        };
+        this.db.inventoryItems.push(item);
+        await this.persist();
+        return { ...item };
+      }
+      async updateInventoryItem(id, input, actor) {
+        const i = this.db.inventoryItems.find((x) => x.id === id);
+        if (!i) return void 0;
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) i[k] = v;
+        Object.assign(i, { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id });
+        await this.persist();
+        return { ...i };
+      }
+      async deleteInventoryItem(id) {
+        const n = this.db.inventoryItems.length;
+        this.db.inventoryItems = this.db.inventoryItems.filter((x) => x.id !== id);
+        if (this.db.inventoryItems.length === n) return false;
+        await this.persist();
+        return true;
       }
       async getLabBoard(day) {
         const all = this.db.orders.map((o) => this.hydrate(o));
@@ -10848,6 +11027,81 @@ function registerQcRoutes(app) {
   );
 }
 
+// server/routes-inventory.ts
+init_schema();
+init_inventory();
+var fmtQty = (n) => String(Math.round(n * 1e3) / 1e3);
+function registerInventoryRoutes(app) {
+  async function clash(input, exceptId) {
+    const items = await storage.listInventoryItems();
+    const others = items.filter((i) => i.id !== exceptId);
+    if (input.name && others.some((i) => inventoryKey(i.name) === inventoryKey(input.name))) return INVENTORY_NAME_TAKEN;
+    if (input.code && others.some((i) => i.code && inventoryKey(i.code) === inventoryKey(input.code))) return INVENTORY_CODE_TAKEN;
+    return null;
+  }
+  app.get(
+    "/api/inventory/items",
+    requirePermission("inventory.read"),
+    handle(async (_req, res) => {
+      res.json(await storage.listInventoryItems().catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.post(
+    "/api/inventory/items",
+    requirePermission("inventory.manage"),
+    handle(async (req, res) => {
+      const input = insertInventoryItemSchema.parse(req.body);
+      const problem = await clash(input);
+      if (problem) return res.status(409).json({ message: problem });
+      const item = await storage.createInventoryItem(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "inventory",
+        item.id,
+        `"${item.name}" katalogga qo'shildi (${INVENTORY_KIND_SHORT[item.kind]}, ${item.unit}, minimal qoldiq ${fmtQty(item.minStock)})`
+      );
+      res.status(201).json(item);
+    })
+  );
+  app.patch(
+    "/api/inventory/items/:id",
+    requirePermission("inventory.manage"),
+    handle(async (req, res) => {
+      const input = updateInventoryItemSchema.parse(req.body);
+      const before = await storage.getInventoryItem(req.params.id);
+      if (!before) return res.status(404).json({ message: "Mahsulot topilmadi" });
+      const problem = await clash(input, before.id);
+      if (problem) return res.status(409).json({ message: problem });
+      const item = await storage.updateInventoryItem(before.id, input, actorOf(req));
+      if (!item) return res.status(404).json({ message: "Mahsulot topilmadi" });
+      const changes = [];
+      if (item.name !== before.name) changes.push(`nomi: ${before.name} \u2192 ${item.name}`);
+      if (item.kind !== before.kind) changes.push(`turi: ${INVENTORY_KIND_SHORT[item.kind]}`);
+      if (item.unit !== before.unit) changes.push(`birlik: ${before.unit} \u2192 ${item.unit}`);
+      if (item.minStock !== before.minStock) changes.push(`minimal qoldiq: ${fmtQty(before.minStock)} \u2192 ${fmtQty(item.minStock)}`);
+      if (item.salePrice !== before.salePrice) changes.push(`narx: ${before.salePrice ?? "\u2014"} \u2192 ${item.salePrice ?? "\u2014"}`);
+      if (item.isActive !== before.isActive) changes.push(item.isActive ? "qayta faollashtirildi" : "faolsizlantirildi");
+      if (item.code !== before.code) changes.push(`artikul: ${item.code ?? "\u2014"}`);
+      if (item.manufacturer !== before.manufacturer) changes.push("ishlab chiqaruvchi");
+      if (item.notes !== before.notes) changes.push("izoh");
+      await audit(req, "update", "inventory", item.id, `"${item.name}" \u2014 ${changes.join(", ") || "o'zgarishsiz saqlandi"}`);
+      res.json(item);
+    })
+  );
+  app.delete(
+    "/api/inventory/items/:id",
+    requirePermission("inventory.manage"),
+    handle(async (req, res) => {
+      const item = await storage.getInventoryItem(req.params.id);
+      if (!item) return res.status(404).json({ message: "Mahsulot topilmadi" });
+      await storage.deleteInventoryItem(item.id);
+      await audit(req, "delete", "inventory", item.id, `"${item.name}" katalogdan o'chirildi`);
+      res.sendStatus(204);
+    })
+  );
+}
+
 // server/routes.ts
 async function registerRoutes(app) {
   setupAuth(app);
@@ -12626,6 +12880,7 @@ async function registerRoutes(app) {
   registerMedicalRoutes(app);
   registerLabRoutes(app);
   registerQcRoutes(app);
+  registerInventoryRoutes(app);
   app.use("/api", (req, res, next) => {
     if (res.headersSent) return next();
     res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });

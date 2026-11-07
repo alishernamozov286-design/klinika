@@ -1,5 +1,6 @@
 import type { ClinicLogo } from "@shared/branding";
 import type {
+  InventoryItem,
   Calibration,
   DeviceMaintenanceEntry,
   EqaResult,
@@ -62,6 +63,7 @@ export type DbShape = {
   calibrations: Calibration[];
   deviceMaintenance: DeviceMaintenanceEntry[];
   eqaResults: EqaResult[];
+  inventoryItems: InventoryItem[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
   security: SecuritySettings | null;
@@ -116,6 +118,7 @@ export const emptyDb = (): DbShape => ({
   calibrations: [],
   deviceMaintenance: [],
   eqaResults: [],
+  inventoryItems: [],
   icdUzNames: {},
   security: null,
   patients: [],

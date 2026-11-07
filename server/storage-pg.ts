@@ -11,6 +11,7 @@ import {
   calibrations,
   deviceMaintenance,
   eqaResults,
+  inventoryItems,
   auditLog,
   departments,
   doctors,
@@ -121,6 +122,7 @@ import { referralStage } from "@shared/referral";
 import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, type LabBoard, type LabBoardCounts } from "@shared/lab-board";
 import { checkLogo, type ClinicLogo } from "@shared/branding";
+import { INVENTORY_CODE_TAKEN, INVENTORY_NAME_TAKEN } from "@shared/inventory";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
   QC_LOOKBACK,
@@ -133,6 +135,9 @@ import {
   zScore,
 } from "@shared/qc";
 import type {
+  InsertInventoryItem,
+  InventoryItem,
+  UpdateInventoryItemInput,
   Calibration,
   CalibrationView,
   DeviceMaintenanceEntry,
@@ -304,6 +309,23 @@ const mapExpense = (row: typeof expenses.$inferSelect): Expense => ({
   cancelledAt: iso(row.cancelledAt),
 });
 
+/** UQ_inventory_items_name / _code, raced past the route's check: the same 409 it gives. */
+async function uniqueAsConflict<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    const e = err as { code?: string; constraint?: string };
+    if (e?.code === "23505" && e.constraint?.startsWith("UQ_inventory_items")) {
+      throw new StorageConflict(e.constraint.endsWith("_code") ? INVENTORY_CODE_TAKEN : INVENTORY_NAME_TAKEN);
+    }
+    throw err;
+  }
+}
+
+const mapInventoryItem = (row: typeof inventoryItems.$inferSelect): InventoryItem => ({
+  ...row,
+  kind: row.kind as InventoryItem["kind"],
+});
 const mapQcResult = (row: typeof qcResults.$inferSelect): QcResult => ({
   ...row,
   rules: (row.rules ?? []) as QcResult["rules"],
@@ -3654,6 +3676,52 @@ export class PgStorage implements IStorage {
     const [exists] = await db.select({ id: eqaResults.id }).from(eqaResults).where(eq(eqaResults.id, id)).limit(1);
     if (exists) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
     return undefined;
+  }
+
+  // ------------------------------------------------------------ inventory (B5)
+
+  async listInventoryItems(): Promise<InventoryItem[]> {
+    const rows = await db.select().from(inventoryItems).orderBy(desc(inventoryItems.isActive), asc(inventoryItems.name));
+    return rows.map(mapInventoryItem);
+  }
+
+  async getInventoryItem(id: string): Promise<InventoryItem | undefined> {
+    const [row] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id)).limit(1);
+    return row && mapInventoryItem(row);
+  }
+
+  async createInventoryItem(input: InsertInventoryItem, actor: Actor): Promise<InventoryItem> {
+    const [row] = await uniqueAsConflict(() =>
+      db
+      .insert(inventoryItems)
+      .values({
+        name: input.name,
+        kind: input.kind,
+        code: input.code ?? null,
+        manufacturer: input.manufacturer ?? null,
+        unit: input.unit,
+        minStock: input.minStock ?? 0,
+        salePrice: input.salePrice ?? null,
+        isActive: input.isActive ?? true,
+        notes: input.notes ?? null,
+        createdBy: actor.id,
+        updatedBy: actor.id,
+      })
+      .returning(),
+    );
+    return mapInventoryItem(row);
+  }
+
+  async updateInventoryItem(id: string, input: UpdateInventoryItemInput, actor: Actor): Promise<InventoryItem | undefined> {
+    const patch: Partial<typeof inventoryItems.$inferInsert> = { updatedAt: new Date().toISOString(), updatedBy: actor.id };
+    for (const [k, v] of Object.entries(input)) if (v !== undefined) (patch as Record<string, unknown>)[k] = v;
+    const [row] = await uniqueAsConflict(() => db.update(inventoryItems).set(patch).where(eq(inventoryItems.id, id)).returning());
+    return row && mapInventoryItem(row);
+  }
+
+  async deleteInventoryItem(id: string): Promise<boolean> {
+    const rows = await db.delete(inventoryItems).where(eq(inventoryItems.id, id)).returning({ id: inventoryItems.id });
+    return rows.length > 0;
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {
