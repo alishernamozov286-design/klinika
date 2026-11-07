@@ -5,6 +5,25 @@ import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type {
+  Calibration,
+  CalibrationView,
+  DeviceMaintenanceEntry,
+  DeviceMaintenanceView,
+  EqaResult,
+  EqaResultView,
+  InsertCalibrationInput,
+  InsertEqaInput,
+  InsertMaintenanceInput,
+  InsertQcMaterial,
+  InsertQcResultInput,
+  InsertQcTarget,
+  QcBoard,
+  QcMaterial,
+  QcResult,
+  QcTarget,
+  QcTargetView,
+  UpdateQcMaterialInput,
+  UpdateQcTargetInput,
   InsertDevice,
   InsertDeviceErrorInput,
   LabDevice,
@@ -759,6 +778,33 @@ export interface IStorage {
   createDeviceError(deviceId: string, input: InsertDeviceErrorInput, actor: Actor): Promise<LabDeviceError | undefined>;
   /** Closes an open entry. A second close throws StorageConflict; undefined: no such entry. */
   resolveDeviceError(id: string, resolution: string, actor: Actor): Promise<LabDeviceError | undefined>;
+
+  // ---------------------------------------------- quality control (B4.8)
+  /** Materials and every control series with its newest run; `day` scopes "runs today". */
+  getQcBoard(day: string): Promise<QcBoard>;
+  getQcMaterial(id: string): Promise<QcMaterial | undefined>;
+  createQcMaterial(input: InsertQcMaterial, actor: Actor): Promise<QcMaterial>;
+  updateQcMaterial(id: string, input: UpdateQcMaterialInput, actor: Actor): Promise<QcMaterial | undefined>;
+  getQcTarget(id: string): Promise<QcTarget | undefined>;
+  /** Throws StorageConflict (QC_TARGET_EXISTS) for a second series of the same material, test and device. */
+  createQcTarget(input: InsertQcTarget, actor: Actor): Promise<QcTarget>;
+  updateQcTarget(id: string, input: UpdateQcTargetInput, actor: Actor): Promise<QcTarget | undefined>;
+  /** The newest `limit` runs of a series, returned oldest → newest (voided ones included, flagged). */
+  listQcResults(targetId: string, limit?: number): Promise<QcResult[]>;
+  /** Judges the run against the series (shared/qc.ts judgeQcRun) with the series locked, and stores the verdict. */
+  addQcResult(target: QcTarget, input: InsertQcResultInput, actor: Actor): Promise<QcResult>;
+  getQcResult(id: string): Promise<QcResult | undefined>;
+  /** Writes the corrective action once (StorageConflict on a second time). */
+  reviewQcResult(id: string, correctiveAction: string, actor: Actor): Promise<QcResult | undefined>;
+  /** Voids once with a reason (StorageConflict on a second time). */
+  voidQcResult(id: string, reason: string, actor: Actor): Promise<QcResult | undefined>;
+  listCalibrations(query?: { deviceId?: string; limit?: number }): Promise<CalibrationView[]>;
+  addCalibration(input: InsertCalibrationInput, actor: Actor): Promise<Calibration>;
+  listMaintenance(query?: { deviceId?: string; limit?: number }): Promise<DeviceMaintenanceView[]>;
+  addMaintenance(input: InsertMaintenanceInput, actor: Actor): Promise<DeviceMaintenanceEntry>;
+  listEqa(query?: { limit?: number }): Promise<EqaResultView[]>;
+  addEqa(input: InsertEqaInput, actor: Actor): Promise<EqaResult>;
+  voidEqa(id: string, reason: string, actor: Actor): Promise<EqaResult | undefined>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

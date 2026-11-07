@@ -48,6 +48,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
       { title: "Navbat", url: "/queue", icon: CalendarClock },
       { title: "Buyurtmalar", url: "/orders", icon: FlaskConical },
       { title: "Natijalar", url: "/results", icon: FileText },
+      { title: "Sifat nazorati", url: "/qc", icon: ShieldCheck },
     ],
   },
   {

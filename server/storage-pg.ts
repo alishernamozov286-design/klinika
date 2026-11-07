@@ -5,6 +5,12 @@ import {
   appSettings,
   labDevices,
   labDeviceErrors,
+  qcMaterials,
+  qcTargets,
+  qcResults,
+  calibrations,
+  deviceMaintenance,
+  eqaResults,
   auditLog,
   departments,
   doctors,
@@ -116,7 +122,36 @@ import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, type LabBoard, type LabBoardCounts } from "@shared/lab-board";
 import { checkLogo, type ClinicLogo } from "@shared/branding";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
+import {
+  QC_LOOKBACK,
+  QC_RESULT_ALREADY_REVIEWED,
+  QC_RESULT_ALREADY_VOIDED,
+  QC_TARGET_EXISTS,
+  eqaEvaluation,
+  judgeQcRun,
+  roundZ,
+  zScore,
+} from "@shared/qc";
 import type {
+  Calibration,
+  CalibrationView,
+  DeviceMaintenanceEntry,
+  DeviceMaintenanceView,
+  EqaResult,
+  EqaResultView,
+  InsertCalibrationInput,
+  InsertEqaInput,
+  InsertMaintenanceInput,
+  InsertQcMaterial,
+  InsertQcResultInput,
+  InsertQcTarget,
+  QcBoard,
+  QcMaterial,
+  QcResult,
+  QcTarget,
+  QcTargetView,
+  UpdateQcMaterialInput,
+  UpdateQcTargetInput,
   InsertDevice,
   InsertDeviceErrorInput,
   LabDevice,
@@ -267,6 +302,16 @@ const mapExpense = (row: typeof expenses.$inferSelect): Expense => ({
   createdAt: iso(row.createdAt) ?? row.createdAt,
   updatedAt: iso(row.updatedAt),
   cancelledAt: iso(row.cancelledAt),
+});
+
+const mapQcResult = (row: typeof qcResults.$inferSelect): QcResult => ({
+  ...row,
+  rules: (row.rules ?? []) as QcResult["rules"],
+  status: row.status as QcResult["status"],
+});
+const mapEqa = (row: typeof eqaResults.$inferSelect): EqaResult => ({
+  ...row,
+  evaluation: row.evaluation as EqaResult["evaluation"],
 });
 
 const mapDevice = (row: typeof labDevices.$inferSelect): LabDevice => ({
@@ -3298,6 +3343,316 @@ export class PgStorage implements IStorage {
     if (row) return mapDeviceError(row);
     const [exists] = await db.select({ id: labDeviceErrors.id }).from(labDeviceErrors).where(eq(labDeviceErrors.id, id)).limit(1);
     if (exists) throw new StorageConflict(DEVICE_ERROR_ALREADY_RESOLVED);
+    return undefined;
+  }
+
+  // ---------------------------------------------------- quality control (B4.8)
+
+  async getQcBoard(day: string): Promise<QcBoard> {
+    const [materials, rows] = await Promise.all([
+      db.select().from(qcMaterials).orderBy(desc(qcMaterials.isActive), asc(qcMaterials.name), asc(qcMaterials.level)),
+      db
+        .select({
+          t: qcTargets,
+          materialName: qcMaterials.name,
+          level: qcMaterials.level,
+          lotNumber: qcMaterials.lotNumber,
+          materialExpiresOn: qcMaterials.expiresOn,
+          materialActive: qcMaterials.isActive,
+          testName: tests.name,
+          deviceName: labDevices.name,
+          last: sql<{ value: number; z: number; status: string; measuredAt: string } | null>`(
+            SELECT json_build_object('value', r.value, 'z', r.z, 'status', r.status, 'measuredAt', r.measured_at)
+              FROM qc_results r
+             WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
+             ORDER BY r.measured_at DESC, r.created_at DESC
+             LIMIT 1)`,
+          runs: sql<number>`(SELECT count(*)::int FROM qc_results r WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL)`,
+          runsToday: sql<number>`(SELECT count(*)::int FROM qc_results r
+                                   WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
+                                     AND (r.measured_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date)`,
+          openRejections: sql<number>`(SELECT count(*)::int FROM qc_results r
+                                        WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
+                                          AND r.status = 'reject' AND r.reviewed_at IS NULL)`,
+        })
+        .from(qcTargets)
+        .innerJoin(qcMaterials, eq(qcMaterials.id, qcTargets.materialId))
+        .leftJoin(tests, eq(tests.id, qcTargets.testId))
+        .leftJoin(labDevices, eq(labDevices.id, qcTargets.deviceId))
+        .orderBy(asc(tests.name), asc(qcMaterials.level)),
+    ]);
+    return {
+      date: day,
+      materials,
+      targets: rows.map((r) => ({
+        ...r.t,
+        materialName: r.materialName,
+        level: r.level,
+        lotNumber: r.lotNumber,
+        materialExpiresOn: r.materialExpiresOn,
+        materialActive: r.materialActive,
+        testName: r.testName ?? "—",
+        deviceName: r.deviceName ?? null,
+        lastResult: r.last
+          ? {
+              value: Number(r.last.value),
+              z: Number(r.last.z),
+              status: r.last.status as QcResult["status"],
+              measuredAt: new Date(r.last.measuredAt).toISOString(),
+            }
+          : null,
+        runs: r.runs,
+        runsToday: r.runsToday,
+        openRejections: r.openRejections,
+      })),
+    };
+  }
+
+  async getQcMaterial(id: string): Promise<QcMaterial | undefined> {
+    const [row] = await db.select().from(qcMaterials).where(eq(qcMaterials.id, id)).limit(1);
+    return row;
+  }
+
+  async createQcMaterial(input: InsertQcMaterial, actor: Actor): Promise<QcMaterial> {
+    const [row] = await db
+      .insert(qcMaterials)
+      .values({
+        name: input.name,
+        manufacturer: input.manufacturer ?? null,
+        lotNumber: input.lotNumber,
+        level: input.level,
+        expiresOn: input.expiresOn,
+        isActive: input.isActive ?? true,
+        notes: input.notes ?? null,
+        createdBy: actor.id,
+        updatedBy: actor.id,
+      })
+      .returning();
+    return row;
+  }
+
+  async updateQcMaterial(id: string, input: UpdateQcMaterialInput, actor: Actor): Promise<QcMaterial | undefined> {
+    const patch: Partial<typeof qcMaterials.$inferInsert> = { updatedAt: new Date().toISOString(), updatedBy: actor.id };
+    for (const [k, v] of Object.entries(input)) if (v !== undefined) (patch as Record<string, unknown>)[k] = v;
+    const [row] = await db.update(qcMaterials).set(patch).where(eq(qcMaterials.id, id)).returning();
+    return row;
+  }
+
+  async getQcTarget(id: string): Promise<QcTarget | undefined> {
+    const [row] = await db.select().from(qcTargets).where(eq(qcTargets.id, id)).limit(1);
+    return row;
+  }
+
+  async createQcTarget(input: InsertQcTarget, actor: Actor): Promise<QcTarget> {
+    try {
+      const [row] = await db
+        .insert(qcTargets)
+        .values({
+          materialId: input.materialId,
+          testId: input.testId,
+          deviceId: input.deviceId ?? null,
+          mean: input.mean,
+          sd: input.sd,
+          unit: input.unit ?? null,
+          createdBy: actor.id,
+          updatedBy: actor.id,
+        })
+        .returning();
+      return row;
+    } catch (err) {
+      // UQ_qc_targets_series (material, test, coalesce(device, '')).
+      if ((err as { code?: string })?.code === "23505") throw new StorageConflict(QC_TARGET_EXISTS);
+      throw err;
+    }
+  }
+
+  async updateQcTarget(id: string, input: UpdateQcTargetInput, actor: Actor): Promise<QcTarget | undefined> {
+    const patch: Partial<typeof qcTargets.$inferInsert> = { updatedAt: new Date().toISOString(), updatedBy: actor.id };
+    for (const [k, v] of Object.entries(input)) if (v !== undefined) (patch as Record<string, unknown>)[k] = v;
+    const [row] = await db.update(qcTargets).set(patch).where(eq(qcTargets.id, id)).returning();
+    return row;
+  }
+
+  async listQcResults(targetId: string, limit = 60): Promise<QcResult[]> {
+    const rows = await db
+      .select()
+      .from(qcResults)
+      .where(eq(qcResults.targetId, targetId))
+      .orderBy(desc(qcResults.measuredAt), desc(qcResults.createdAt))
+      .limit(limit);
+    return rows.reverse().map(mapQcResult);
+  }
+
+  async addQcResult(target: QcTarget, input: InsertQcResultInput, actor: Actor): Promise<QcResult> {
+    return db.transaction(async (tx) => {
+      // One run at a time per series, so two entries judged together see each other.
+      await tx.select({ id: qcTargets.id }).from(qcTargets).where(eq(qcTargets.id, target.id)).for("update");
+      const measuredAt = input.measuredAt ? new Date(input.measuredAt).toISOString() : new Date().toISOString();
+      const previous = await tx
+        .select({ z: qcResults.z })
+        .from(qcResults)
+        .where(and(eq(qcResults.targetId, target.id), isNull(qcResults.voidedAt), lte(qcResults.measuredAt, measuredAt)))
+        .orderBy(desc(qcResults.measuredAt), desc(qcResults.createdAt))
+        .limit(QC_LOOKBACK);
+      const verdict = judgeQcRun(previous.reverse().map((p) => p.z), input.value, target.mean, target.sd);
+      const [row] = await tx
+        .insert(qcResults)
+        .values({
+          targetId: target.id,
+          value: input.value,
+          mean: target.mean,
+          sd: target.sd,
+          z: verdict.z,
+          rules: verdict.rules,
+          status: verdict.status,
+          measuredAt,
+          reagentLot: input.reagentLot ?? null,
+          reagentExpiresOn: input.reagentExpiresOn ?? null,
+          comment: input.comment ?? null,
+          enteredBy: actor.id,
+          enteredByName: actor.name,
+        })
+        .returning();
+      return mapQcResult(row);
+    });
+  }
+
+  async getQcResult(id: string): Promise<QcResult | undefined> {
+    const [row] = await db.select().from(qcResults).where(eq(qcResults.id, id)).limit(1);
+    return row && mapQcResult(row);
+  }
+
+  async reviewQcResult(id: string, correctiveAction: string, actor: Actor): Promise<QcResult | undefined> {
+    const [row] = await db
+      .update(qcResults)
+      .set({ reviewedAt: new Date().toISOString(), reviewedBy: actor.id, reviewedByName: actor.name, correctiveAction })
+      .where(and(eq(qcResults.id, id), isNull(qcResults.reviewedAt)))
+      .returning();
+    if (row) return mapQcResult(row);
+    if (await this.getQcResult(id)) throw new StorageConflict(QC_RESULT_ALREADY_REVIEWED);
+    return undefined;
+  }
+
+  async voidQcResult(id: string, reason: string, actor: Actor): Promise<QcResult | undefined> {
+    const [row] = await db
+      .update(qcResults)
+      .set({ voidedAt: new Date().toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason })
+      .where(and(eq(qcResults.id, id), isNull(qcResults.voidedAt)))
+      .returning();
+    if (row) return mapQcResult(row);
+    if (await this.getQcResult(id)) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
+    return undefined;
+  }
+
+  async listCalibrations(query: { deviceId?: string; limit?: number } = {}): Promise<CalibrationView[]> {
+    const rows = await db
+      .select({ c: calibrations, deviceName: labDevices.name, testName: tests.name })
+      .from(calibrations)
+      .leftJoin(labDevices, eq(labDevices.id, calibrations.deviceId))
+      .leftJoin(tests, eq(tests.id, calibrations.testId))
+      .where(query.deviceId ? eq(calibrations.deviceId, query.deviceId) : undefined)
+      .orderBy(desc(calibrations.performedAt))
+      .limit(query.limit ?? 200);
+    return rows.map((r) => ({
+      ...r.c,
+      result: r.c.result as Calibration["result"],
+      deviceName: r.deviceName ?? "—",
+      testName: r.testName ?? null,
+    }));
+  }
+
+  async addCalibration(input: InsertCalibrationInput, actor: Actor): Promise<Calibration> {
+    const [row] = await db
+      .insert(calibrations)
+      .values({
+        deviceId: input.deviceId,
+        testId: input.testId ?? null,
+        performedAt: input.performedAt ? new Date(input.performedAt).toISOString() : new Date().toISOString(),
+        calibratorName: input.calibratorName,
+        calibratorLot: input.calibratorLot ?? null,
+        calibratorExpiresOn: input.calibratorExpiresOn ?? null,
+        reagentLot: input.reagentLot ?? null,
+        reagentExpiresOn: input.reagentExpiresOn ?? null,
+        result: input.result,
+        notes: input.notes ?? null,
+        performedBy: actor.id,
+        performedByName: actor.name,
+      })
+      .returning();
+    return { ...row, result: row.result as Calibration["result"] };
+  }
+
+  async listMaintenance(query: { deviceId?: string; limit?: number } = {}): Promise<DeviceMaintenanceView[]> {
+    const rows = await db
+      .select({ m: deviceMaintenance, deviceName: labDevices.name })
+      .from(deviceMaintenance)
+      .leftJoin(labDevices, eq(labDevices.id, deviceMaintenance.deviceId))
+      .where(query.deviceId ? eq(deviceMaintenance.deviceId, query.deviceId) : undefined)
+      .orderBy(desc(deviceMaintenance.performedAt))
+      .limit(query.limit ?? 200);
+    return rows.map((r) => ({ ...r.m, kind: r.m.kind as DeviceMaintenanceEntry["kind"], deviceName: r.deviceName ?? "—" }));
+  }
+
+  async addMaintenance(input: InsertMaintenanceInput, actor: Actor): Promise<DeviceMaintenanceEntry> {
+    const [row] = await db
+      .insert(deviceMaintenance)
+      .values({
+        deviceId: input.deviceId,
+        performedAt: input.performedAt ? new Date(input.performedAt).toISOString() : new Date().toISOString(),
+        kind: input.kind,
+        description: input.description,
+        nextDueOn: input.nextDueOn ?? null,
+        performedBy: actor.id,
+        performedByName: actor.name,
+      })
+      .returning();
+    return { ...row, kind: row.kind as DeviceMaintenanceEntry["kind"] };
+  }
+
+  async listEqa(query: { limit?: number } = {}): Promise<EqaResultView[]> {
+    const rows = await db
+      .select({ e: eqaResults, testName: tests.name, deviceName: labDevices.name })
+      .from(eqaResults)
+      .leftJoin(tests, eq(tests.id, eqaResults.testId))
+      .leftJoin(labDevices, eq(labDevices.id, eqaResults.deviceId))
+      .orderBy(desc(eqaResults.sampleDate), desc(eqaResults.createdAt))
+      .limit(query.limit ?? 200);
+    return rows.map((r) => ({ ...mapEqa(r.e), testName: r.testName ?? "—", deviceName: r.deviceName ?? null }));
+  }
+
+  async addEqa(input: InsertEqaInput, actor: Actor): Promise<EqaResult> {
+    const z = roundZ(zScore(input.reportedValue, input.assignedValue, input.sdpa));
+    const [row] = await db
+      .insert(eqaResults)
+      .values({
+        provider: input.provider,
+        cycle: input.cycle,
+        sampleCode: input.sampleCode ?? null,
+        testId: input.testId,
+        deviceId: input.deviceId ?? null,
+        sampleDate: input.sampleDate,
+        reportedValue: input.reportedValue,
+        assignedValue: input.assignedValue,
+        sdpa: input.sdpa,
+        z,
+        evaluation: eqaEvaluation(z),
+        notes: input.notes ?? null,
+        enteredBy: actor.id,
+        enteredByName: actor.name,
+      })
+      .returning();
+    return mapEqa(row);
+  }
+
+  async voidEqa(id: string, reason: string, actor: Actor): Promise<EqaResult | undefined> {
+    const [row] = await db
+      .update(eqaResults)
+      .set({ voidedAt: new Date().toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason })
+      .where(and(eq(eqaResults.id, id), isNull(eqaResults.voidedAt)))
+      .returning();
+    if (row) return mapEqa(row);
+    const [exists] = await db.select({ id: eqaResults.id }).from(eqaResults).where(eq(eqaResults.id, id)).limit(1);
+    if (exists) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
     return undefined;
   }
 

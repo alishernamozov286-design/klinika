@@ -1,5 +1,14 @@
 import type { ClinicLogo } from "@shared/branding";
-import type { LabDevice, LabDeviceError } from "@shared/schema";
+import type {
+  Calibration,
+  DeviceMaintenanceEntry,
+  EqaResult,
+  LabDevice,
+  LabDeviceError,
+  QcMaterial,
+  QcResult,
+  QcTarget,
+} from "@shared/schema";
 import { promises as fs } from "fs";
 import fsSync from "fs";
 import path from "path";
@@ -47,6 +56,12 @@ export type DbShape = {
   notifications: (AppNotification & { dedupeKey: string | null })[];
   labDevices: LabDevice[];
   labDeviceErrors: LabDeviceError[];
+  qcMaterials: QcMaterial[];
+  qcTargets: QcTarget[];
+  qcResults: QcResult[];
+  calibrations: Calibration[];
+  deviceMaintenance: DeviceMaintenanceEntry[];
+  eqaResults: EqaResult[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
   security: SecuritySettings | null;
@@ -95,6 +110,12 @@ export const emptyDb = (): DbShape => ({
   notifications: [],
   labDevices: [],
   labDeviceErrors: [],
+  qcMaterials: [],
+  qcTargets: [],
+  qcResults: [],
+  calibrations: [],
+  deviceMaintenance: [],
+  eqaResults: [],
   icdUzNames: {},
   security: null,
   patients: [],

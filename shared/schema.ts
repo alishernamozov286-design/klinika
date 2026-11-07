@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, index, json, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, index, json, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { isPermission, type Permission } from "./permissions";
@@ -15,6 +15,15 @@ import {
   type DeviceStatus,
   type ErrorSeverity,
 } from "./lab-devices";
+import {
+  CALIBRATION_RESULTS,
+  MAINTENANCE_KINDS,
+  type CalibrationResult,
+  type EqaEvaluation,
+  type MaintenanceKind,
+  type QcStatus,
+  type WestgardRule,
+} from "./qc";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -1071,6 +1080,145 @@ export const labDeviceErrors = pgTable(
   (t) => [index("IDX_lab_device_errors_device").on(t.deviceId, t.occurredAt)],
 );
 
+/*
+ * Sifat nazorati (B4.8, TZ §6.5). Rules: shared/qc.ts. Every table here is a
+ * record of what was done: results, calibrations, services and external QC
+ * are never edited or deleted. A wrong QC or EQA entry is voided with a reason.
+ */
+
+/** A control material lot at one level (TZ §6.5 "Nazorat materiallari"). */
+export const qcMaterials = pgTable("qc_materials", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  manufacturer: text("manufacturer"),
+  lotNumber: text("lot_number").notNull(),
+  level: text("level").notNull(),
+  /** YYYY-MM-DD. */
+  expiresOn: text("expires_on").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
+});
+
+/** A control series: one material level, one test, on one device (or none), with its target mean and SD. */
+export const qcTargets = pgTable("qc_targets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  materialId: varchar("material_id").notNull(),
+  testId: varchar("test_id").notNull(),
+  deviceId: varchar("device_id"),
+  mean: doublePrecision("mean").notNull(),
+  sd: doublePrecision("sd").notNull(),
+  unit: text("unit"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
+});
+
+/**
+ * One QC measurement. mean/sd are the target's values when it was entered,
+ * and rules/status the verdict then, so later target changes never rewrite it.
+ */
+export const qcResults = pgTable(
+  "qc_results",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    targetId: varchar("target_id").notNull(),
+    value: doublePrecision("value").notNull(),
+    mean: doublePrecision("mean").notNull(),
+    sd: doublePrecision("sd").notNull(),
+    z: doublePrecision("z").notNull(),
+    rules: text("rules").array().notNull().default(sql`'{}'::text[]`),
+    status: text("status").notNull(),
+    measuredAt: isoTimestamp("measured_at").notNull(),
+    reagentLot: text("reagent_lot"),
+    reagentExpiresOn: text("reagent_expires_on"),
+    comment: text("comment"),
+    enteredBy: varchar("entered_by"),
+    enteredByName: text("entered_by_name"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    reviewedAt: isoTimestamp("reviewed_at"),
+    reviewedBy: varchar("reviewed_by"),
+    reviewedByName: text("reviewed_by_name"),
+    correctiveAction: text("corrective_action"),
+    voidedAt: isoTimestamp("voided_at"),
+    voidedBy: varchar("voided_by"),
+    voidedByName: text("voided_by_name"),
+    voidReason: text("void_reason"),
+  },
+  (t) => [index("IDX_qc_results_target").on(t.targetId, t.measuredAt)],
+);
+
+/** TZ §6.5 "Kalibratsiya tarixi", with the reagent lot and expiry in use. */
+export const calibrations = pgTable(
+  "calibrations",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    deviceId: varchar("device_id").notNull(),
+    testId: varchar("test_id"),
+    performedAt: isoTimestamp("performed_at").notNull(),
+    calibratorName: text("calibrator_name").notNull(),
+    calibratorLot: text("calibrator_lot"),
+    calibratorExpiresOn: text("calibrator_expires_on"),
+    reagentLot: text("reagent_lot"),
+    reagentExpiresOn: text("reagent_expires_on"),
+    result: text("result").notNull(),
+    notes: text("notes"),
+    performedBy: varchar("performed_by"),
+    performedByName: text("performed_by_name"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("IDX_calibrations_device").on(t.deviceId, t.performedAt)],
+);
+
+/** TZ §6.5 "Analizator texnik xizmat jurnali". */
+export const deviceMaintenance = pgTable(
+  "device_maintenance",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    deviceId: varchar("device_id").notNull(),
+    performedAt: isoTimestamp("performed_at").notNull(),
+    kind: text("kind").notNull(),
+    description: text("description").notNull(),
+    /** YYYY-MM-DD: when the next one of this kind is due. */
+    nextDueOn: text("next_due_on"),
+    performedBy: varchar("performed_by"),
+    performedByName: text("performed_by_name"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("IDX_device_maintenance_device").on(t.deviceId, t.performedAt)],
+);
+
+/** TZ §6.5 "Laboratoriyalararo sifat nazorati natijalari" (EQA / proficiency testing). */
+export const eqaResults = pgTable("eqa_results", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  provider: text("provider").notNull(),
+  cycle: text("cycle").notNull(),
+  sampleCode: text("sample_code"),
+  testId: varchar("test_id").notNull(),
+  deviceId: varchar("device_id"),
+  /** YYYY-MM-DD. */
+  sampleDate: text("sample_date").notNull(),
+  reportedValue: doublePrecision("reported_value").notNull(),
+  assignedValue: doublePrecision("assigned_value").notNull(),
+  /** Standard deviation for proficiency assessment, from the provider's report. */
+  sdpa: doublePrecision("sdpa").notNull(),
+  z: doublePrecision("z").notNull(),
+  evaluation: text("evaluation").notNull(),
+  notes: text("notes"),
+  enteredBy: varchar("entered_by"),
+  enteredByName: text("entered_by_name"),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  voidedAt: isoTimestamp("voided_at"),
+  voidedBy: varchar("voided_by"),
+  voidedByName: text("voided_by_name"),
+  voidReason: text("void_reason"),
+});
+
 // ---------------------------------------------------------------- types
 
 export type User = typeof users.$inferSelect;
@@ -1314,6 +1462,32 @@ export type LabDevice = Omit<typeof labDevices.$inferSelect, "direction" | "conn
 export type LabDeviceWithStats = LabDevice & { errorCount: number; openErrors: number; lastErrorAt: string | null };
 export type LabDeviceError = Omit<typeof labDeviceErrors.$inferSelect, "severity"> & { severity: ErrorSeverity };
 export type LabDeviceErrorWithDevice = LabDeviceError & { deviceName: string };
+
+export type QcMaterial = typeof qcMaterials.$inferSelect;
+export type QcTarget = typeof qcTargets.$inferSelect;
+export type QcResult = Omit<typeof qcResults.$inferSelect, "rules" | "status"> & { rules: WestgardRule[]; status: QcStatus };
+/** A control series as the QC screen lists it, with its newest run. */
+export type QcTargetView = QcTarget & {
+  materialName: string;
+  level: string;
+  lotNumber: string;
+  materialExpiresOn: string;
+  materialActive: boolean;
+  testName: string;
+  deviceName: string | null;
+  lastResult: { value: number; z: number; status: QcStatus; measuredAt: string } | null;
+  runs: number;
+  runsToday: number;
+  /** Rejected runs nobody has written a corrective action for yet. */
+  openRejections: number;
+};
+export type QcBoard = { date: string; materials: QcMaterial[]; targets: QcTargetView[] };
+export type Calibration = Omit<typeof calibrations.$inferSelect, "result"> & { result: CalibrationResult };
+export type CalibrationView = Calibration & { deviceName: string; testName: string | null };
+export type DeviceMaintenanceEntry = Omit<typeof deviceMaintenance.$inferSelect, "kind"> & { kind: MaintenanceKind };
+export type DeviceMaintenanceView = DeviceMaintenanceEntry & { deviceName: string };
+export type EqaResult = Omit<typeof eqaResults.$inferSelect, "evaluation"> & { evaluation: EqaEvaluation };
+export type EqaResultView = EqaResult & { testName: string; deviceName: string | null };
 
 export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
   kind: ReferralKind;
@@ -2237,6 +2411,96 @@ export const insertDeviceErrorSchema = z.object({
   markOutOfService: z.boolean().default(false),
 });
 export type InsertDeviceErrorInput = z.infer<typeof insertDeviceErrorSchema>;
+
+// ------------------------------------------------------- quality control
+
+const qcNumber = (label: string) =>
+  z.number({ invalid_type_error: `${label}: raqam kiriting`, required_error: `${label}ni kiriting` }).finite(`${label}: raqam kiriting`);
+const optionalDay = dayString.nullish().or(z.literal("")).transform((v) => (v ? v : null));
+const pastTimestamp = z.string().datetime({ offset: true, message: "Vaqt noto'g'ri" }).nullish();
+
+export const insertQcMaterialSchema = z.object({
+  name: z.string().trim().min(2, "Material nomini kiriting").max(120, "Nom juda uzun"),
+  manufacturer: optionalText(80, "Ishlab chiqaruvchi"),
+  lotNumber: z.string().trim().min(1, "LOT raqamini kiriting").max(40, "LOT juda uzun"),
+  level: z.string().trim().min(1, "Darajani kiriting").max(40, "Daraja juda uzun"),
+  expiresOn: dayString,
+  notes: optionalText(500, "Izoh"),
+  isActive: z.boolean().default(true),
+});
+export const updateQcMaterialSchema = insertQcMaterialSchema.partial();
+export type InsertQcMaterial = z.infer<typeof insertQcMaterialSchema>;
+export type UpdateQcMaterialInput = z.infer<typeof updateQcMaterialSchema>;
+
+export const insertQcTargetSchema = z.object({
+  materialId: z.string().min(1, "Materialni tanlang"),
+  testId: z.string().min(1, "Tahlilni tanlang"),
+  deviceId: z.string().min(1).nullish().transform((v) => v ?? null),
+  mean: qcNumber("O'rtacha qiymat"),
+  sd: qcNumber("SD").positive("SD musbat bo'lishi kerak"),
+  unit: optionalText(30, "Birlik"),
+});
+export const updateQcTargetSchema = z.object({
+  mean: qcNumber("O'rtacha qiymat").optional(),
+  sd: qcNumber("SD").positive("SD musbat bo'lishi kerak").optional(),
+  unit: optionalText(30, "Birlik").optional(),
+  isActive: z.boolean().optional(),
+});
+export type InsertQcTarget = z.infer<typeof insertQcTargetSchema>;
+export type UpdateQcTargetInput = z.infer<typeof updateQcTargetSchema>;
+
+export const insertQcResultSchema = z.object({
+  value: qcNumber("Natija"),
+  measuredAt: pastTimestamp,
+  reagentLot: optionalText(40, "Reagent LOT"),
+  reagentExpiresOn: optionalDay,
+  comment: optionalText(500, "Izoh"),
+});
+export type InsertQcResultInput = z.infer<typeof insertQcResultSchema>;
+
+export const reviewQcResultSchema = z.object({
+  correctiveAction: z.string().trim().min(3, "Ko'rilgan chorani yozing").max(1000, "Matn juda uzun"),
+});
+export const voidRecordSchema = z.object({
+  reason: z.string().trim().min(3, "Sababni yozing").max(500, "Matn juda uzun"),
+});
+
+export const insertCalibrationSchema = z.object({
+  deviceId: z.string().min(1, "Qurilmani tanlang"),
+  testId: z.string().min(1).nullish().transform((v) => v ?? null),
+  performedAt: pastTimestamp,
+  calibratorName: z.string().trim().min(2, "Kalibrator nomini kiriting").max(120, "Nom juda uzun"),
+  calibratorLot: optionalText(40, "Kalibrator LOT"),
+  calibratorExpiresOn: optionalDay,
+  reagentLot: optionalText(40, "Reagent LOT"),
+  reagentExpiresOn: optionalDay,
+  result: z.enum(CALIBRATION_RESULTS, { errorMap: () => ({ message: "Natijani tanlang" }) }),
+  notes: optionalText(1000, "Izoh"),
+});
+export type InsertCalibrationInput = z.infer<typeof insertCalibrationSchema>;
+
+export const insertMaintenanceSchema = z.object({
+  deviceId: z.string().min(1, "Qurilmani tanlang"),
+  performedAt: pastTimestamp,
+  kind: z.enum(MAINTENANCE_KINDS, { errorMap: () => ({ message: "Turini tanlang" }) }),
+  description: z.string().trim().min(3, "Nima qilinganini yozing").max(1000, "Matn juda uzun"),
+  nextDueOn: optionalDay,
+});
+export type InsertMaintenanceInput = z.infer<typeof insertMaintenanceSchema>;
+
+export const insertEqaSchema = z.object({
+  provider: z.string().trim().min(2, "Dastur / provayderni kiriting").max(120, "Juda uzun"),
+  cycle: z.string().trim().min(1, "Tsiklni kiriting").max(40, "Juda uzun"),
+  sampleCode: optionalText(40, "Namuna kodi"),
+  testId: z.string().min(1, "Tahlilni tanlang"),
+  deviceId: z.string().min(1).nullish().transform((v) => v ?? null),
+  sampleDate: dayString,
+  reportedValue: qcNumber("Bizning natija"),
+  assignedValue: qcNumber("Belgilangan qiymat"),
+  sdpa: qcNumber("SD").positive("SD musbat bo'lishi kerak"),
+  notes: optionalText(1000, "Izoh"),
+});
+export type InsertEqaInput = z.infer<typeof insertEqaSchema>;
 
 export const resolveDeviceErrorSchema = z.object({
   resolution: z.string().trim().min(3, "Nima qilinganini yozing").max(1000, "Matn juda uzun"),

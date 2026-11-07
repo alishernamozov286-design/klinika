@@ -93,6 +93,7 @@ const ENTITIES = [
   { value: "referral", label: "Yo'llanmalar" },
   { value: "service", label: "Xizmatlar" },
   { value: "device", label: "Analizatorlar" },
+  { value: "qc", label: "Sifat nazorati" },
   { value: "session", label: "Seanslar" },
   { value: "settings", label: "Sozlamalar" },
   { value: "expense", label: "Xarajatlar" },

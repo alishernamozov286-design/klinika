@@ -77,7 +77,35 @@ import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, awaitsSample, summarizeLabBoard, type LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
+import {
+  QC_RESULT_ALREADY_REVIEWED,
+  QC_RESULT_ALREADY_VOIDED,
+  QC_TARGET_EXISTS,
+  eqaEvaluation,
+  judgeQcRun,
+  roundZ,
+  zScore,
+} from "@shared/qc";
 import type {
+  Calibration,
+  CalibrationView,
+  DeviceMaintenanceEntry,
+  DeviceMaintenanceView,
+  EqaResult,
+  EqaResultView,
+  InsertCalibrationInput,
+  InsertEqaInput,
+  InsertMaintenanceInput,
+  InsertQcMaterial,
+  InsertQcResultInput,
+  InsertQcTarget,
+  QcBoard,
+  QcMaterial,
+  QcResult,
+  QcTarget,
+  QcTargetView,
+  UpdateQcMaterialInput,
+  UpdateQcTargetInput,
   InsertDevice,
   InsertDeviceErrorInput,
   LabDevice,
@@ -2610,6 +2638,290 @@ export class FileStorage implements IStorage {
     if (!e) return undefined;
     if (e.resolvedAt) throw new StorageConflict(DEVICE_ERROR_ALREADY_RESOLVED);
     Object.assign(e, { resolvedAt: new Date().toISOString(), resolvedBy: actor.id, resolvedByName: actor.name, resolution });
+    await this.persist();
+    return { ...e };
+  }
+
+  // ---------------------------------------------------- quality control (B4.8)
+
+  async getQcBoard(day: string): Promise<QcBoard> {
+    const materials = [...this.db.qcMaterials].sort(
+      (a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name) || a.level.localeCompare(b.level),
+    );
+    const targets: QcTargetView[] = [];
+    for (const t of this.db.qcTargets) {
+      const m = this.db.qcMaterials.find((x) => x.id === t.materialId);
+      if (!m) continue;
+      const runs = this.db.qcResults
+        .filter((r) => r.targetId === t.id && !r.voidedAt)
+        .sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt));
+      const last = runs.at(-1);
+      targets.push({
+        ...t,
+        materialName: m.name,
+        level: m.level,
+        lotNumber: m.lotNumber,
+        materialExpiresOn: m.expiresOn,
+        materialActive: m.isActive,
+        testName: this.db.tests.find((x) => x.id === t.testId)?.name ?? "—",
+        deviceName: t.deviceId ? (this.db.labDevices.find((x) => x.id === t.deviceId)?.name ?? null) : null,
+        lastResult: last ? { value: last.value, z: last.z, status: last.status, measuredAt: last.measuredAt } : null,
+        runs: runs.length,
+        runsToday: runs.filter((r) => localDay(r.measuredAt) === day).length,
+        openRejections: runs.filter((r) => r.status === "reject" && !r.reviewedAt).length,
+      });
+    }
+    targets.sort((a, b) => a.testName.localeCompare(b.testName) || a.level.localeCompare(b.level));
+    return { date: day, materials, targets };
+  }
+
+  async getQcMaterial(id: string): Promise<QcMaterial | undefined> {
+    const m = this.db.qcMaterials.find((x) => x.id === id);
+    return m && { ...m };
+  }
+
+  async createQcMaterial(input: InsertQcMaterial, actor: Actor): Promise<QcMaterial> {
+    const m: QcMaterial = {
+      id: randomUUID(),
+      name: input.name,
+      manufacturer: input.manufacturer ?? null,
+      lotNumber: input.lotNumber,
+      level: input.level,
+      expiresOn: input.expiresOn,
+      isActive: input.isActive ?? true,
+      notes: input.notes ?? null,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      updatedAt: null,
+      updatedBy: actor.id,
+    };
+    this.db.qcMaterials.push(m);
+    await this.persist();
+    return { ...m };
+  }
+
+  async updateQcMaterial(id: string, input: UpdateQcMaterialInput, actor: Actor): Promise<QcMaterial | undefined> {
+    const m = this.db.qcMaterials.find((x) => x.id === id);
+    if (!m) return undefined;
+    for (const [k, v] of Object.entries(input)) if (v !== undefined) (m as Record<string, unknown>)[k] = v;
+    Object.assign(m, { updatedAt: new Date().toISOString(), updatedBy: actor.id });
+    await this.persist();
+    return { ...m };
+  }
+
+  async getQcTarget(id: string): Promise<QcTarget | undefined> {
+    const t = this.db.qcTargets.find((x) => x.id === id);
+    return t && { ...t };
+  }
+
+  async createQcTarget(input: InsertQcTarget, actor: Actor): Promise<QcTarget> {
+    const dup = this.db.qcTargets.some(
+      (t) => t.materialId === input.materialId && t.testId === input.testId && (t.deviceId ?? null) === (input.deviceId ?? null),
+    );
+    if (dup) throw new StorageConflict(QC_TARGET_EXISTS);
+    const t: QcTarget = {
+      id: randomUUID(),
+      materialId: input.materialId,
+      testId: input.testId,
+      deviceId: input.deviceId ?? null,
+      mean: input.mean,
+      sd: input.sd,
+      unit: input.unit ?? null,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      updatedAt: null,
+      updatedBy: actor.id,
+    };
+    this.db.qcTargets.push(t);
+    await this.persist();
+    return { ...t };
+  }
+
+  async updateQcTarget(id: string, input: UpdateQcTargetInput, actor: Actor): Promise<QcTarget | undefined> {
+    const t = this.db.qcTargets.find((x) => x.id === id);
+    if (!t) return undefined;
+    for (const [k, v] of Object.entries(input)) if (v !== undefined) (t as Record<string, unknown>)[k] = v;
+    Object.assign(t, { updatedAt: new Date().toISOString(), updatedBy: actor.id });
+    await this.persist();
+    return { ...t };
+  }
+
+  async listQcResults(targetId: string, limit = 60): Promise<QcResult[]> {
+    return this.db.qcResults
+      .filter((r) => r.targetId === targetId)
+      .sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt))
+      .slice(-limit)
+      .map((r) => ({ ...r, rules: [...r.rules] }));
+  }
+
+  async addQcResult(target: QcTarget, input: InsertQcResultInput, actor: Actor): Promise<QcResult> {
+    const now = new Date().toISOString();
+    const measuredAt = input.measuredAt ? new Date(input.measuredAt).toISOString() : now;
+    const previous = this.db.qcResults
+      .filter((r) => r.targetId === target.id && !r.voidedAt && r.measuredAt <= measuredAt)
+      .sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt))
+      .map((r) => r.z);
+    const verdict = judgeQcRun(previous, input.value, target.mean, target.sd);
+    const r: QcResult = {
+      id: randomUUID(),
+      targetId: target.id,
+      value: input.value,
+      mean: target.mean,
+      sd: target.sd,
+      z: verdict.z,
+      rules: verdict.rules,
+      status: verdict.status,
+      measuredAt,
+      reagentLot: input.reagentLot ?? null,
+      reagentExpiresOn: input.reagentExpiresOn ?? null,
+      comment: input.comment ?? null,
+      enteredBy: actor.id,
+      enteredByName: actor.name,
+      createdAt: now,
+      reviewedAt: null,
+      reviewedBy: null,
+      reviewedByName: null,
+      correctiveAction: null,
+      voidedAt: null,
+      voidedBy: null,
+      voidedByName: null,
+      voidReason: null,
+    };
+    this.db.qcResults.push(r);
+    await this.persist();
+    return { ...r, rules: [...r.rules] };
+  }
+
+  async getQcResult(id: string): Promise<QcResult | undefined> {
+    const r = this.db.qcResults.find((x) => x.id === id);
+    return r && { ...r, rules: [...r.rules] };
+  }
+
+  async reviewQcResult(id: string, correctiveAction: string, actor: Actor): Promise<QcResult | undefined> {
+    const r = this.db.qcResults.find((x) => x.id === id);
+    if (!r) return undefined;
+    if (r.reviewedAt) throw new StorageConflict(QC_RESULT_ALREADY_REVIEWED);
+    Object.assign(r, { reviewedAt: new Date().toISOString(), reviewedBy: actor.id, reviewedByName: actor.name, correctiveAction });
+    await this.persist();
+    return { ...r, rules: [...r.rules] };
+  }
+
+  async voidQcResult(id: string, reason: string, actor: Actor): Promise<QcResult | undefined> {
+    const r = this.db.qcResults.find((x) => x.id === id);
+    if (!r) return undefined;
+    if (r.voidedAt) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
+    Object.assign(r, { voidedAt: new Date().toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
+    await this.persist();
+    return { ...r, rules: [...r.rules] };
+  }
+
+  async listCalibrations(query: { deviceId?: string; limit?: number } = {}): Promise<CalibrationView[]> {
+    return this.db.calibrations
+      .filter((c) => !query.deviceId || c.deviceId === query.deviceId)
+      .sort((a, b) => b.performedAt.localeCompare(a.performedAt))
+      .slice(0, query.limit ?? 200)
+      .map((c) => ({
+        ...c,
+        deviceName: this.db.labDevices.find((d) => d.id === c.deviceId)?.name ?? "—",
+        testName: c.testId ? (this.db.tests.find((t) => t.id === c.testId)?.name ?? null) : null,
+      }));
+  }
+
+  async addCalibration(input: InsertCalibrationInput, actor: Actor): Promise<Calibration> {
+    const now = new Date().toISOString();
+    const c: Calibration = {
+      id: randomUUID(),
+      deviceId: input.deviceId,
+      testId: input.testId ?? null,
+      performedAt: input.performedAt ? new Date(input.performedAt).toISOString() : now,
+      calibratorName: input.calibratorName,
+      calibratorLot: input.calibratorLot ?? null,
+      calibratorExpiresOn: input.calibratorExpiresOn ?? null,
+      reagentLot: input.reagentLot ?? null,
+      reagentExpiresOn: input.reagentExpiresOn ?? null,
+      result: input.result,
+      notes: input.notes ?? null,
+      performedBy: actor.id,
+      performedByName: actor.name,
+      createdAt: now,
+    };
+    this.db.calibrations.push(c);
+    await this.persist();
+    return { ...c };
+  }
+
+  async listMaintenance(query: { deviceId?: string; limit?: number } = {}): Promise<DeviceMaintenanceView[]> {
+    return this.db.deviceMaintenance
+      .filter((m) => !query.deviceId || m.deviceId === query.deviceId)
+      .sort((a, b) => b.performedAt.localeCompare(a.performedAt))
+      .slice(0, query.limit ?? 200)
+      .map((m) => ({ ...m, deviceName: this.db.labDevices.find((d) => d.id === m.deviceId)?.name ?? "—" }));
+  }
+
+  async addMaintenance(input: InsertMaintenanceInput, actor: Actor): Promise<DeviceMaintenanceEntry> {
+    const now = new Date().toISOString();
+    const m: DeviceMaintenanceEntry = {
+      id: randomUUID(),
+      deviceId: input.deviceId,
+      performedAt: input.performedAt ? new Date(input.performedAt).toISOString() : now,
+      kind: input.kind,
+      description: input.description,
+      nextDueOn: input.nextDueOn ?? null,
+      performedBy: actor.id,
+      performedByName: actor.name,
+      createdAt: now,
+    };
+    this.db.deviceMaintenance.push(m);
+    await this.persist();
+    return { ...m };
+  }
+
+  async listEqa(query: { limit?: number } = {}): Promise<EqaResultView[]> {
+    return [...this.db.eqaResults]
+      .sort((a, b) => b.sampleDate.localeCompare(a.sampleDate) || b.createdAt.localeCompare(a.createdAt))
+      .slice(0, query.limit ?? 200)
+      .map((e) => ({
+        ...e,
+        testName: this.db.tests.find((t) => t.id === e.testId)?.name ?? "—",
+        deviceName: e.deviceId ? (this.db.labDevices.find((d) => d.id === e.deviceId)?.name ?? null) : null,
+      }));
+  }
+
+  async addEqa(input: InsertEqaInput, actor: Actor): Promise<EqaResult> {
+    const z = roundZ(zScore(input.reportedValue, input.assignedValue, input.sdpa));
+    const e: EqaResult = {
+      id: randomUUID(),
+      provider: input.provider,
+      cycle: input.cycle,
+      sampleCode: input.sampleCode ?? null,
+      testId: input.testId,
+      deviceId: input.deviceId ?? null,
+      sampleDate: input.sampleDate,
+      reportedValue: input.reportedValue,
+      assignedValue: input.assignedValue,
+      sdpa: input.sdpa,
+      z,
+      evaluation: eqaEvaluation(z),
+      notes: input.notes ?? null,
+      enteredBy: actor.id,
+      enteredByName: actor.name,
+      createdAt: new Date().toISOString(),
+      voidedAt: null,
+      voidedBy: null,
+      voidedByName: null,
+      voidReason: null,
+    };
+    this.db.eqaResults.push(e);
+    await this.persist();
+    return { ...e };
+  }
+
+  async voidEqa(id: string, reason: string, actor: Actor): Promise<EqaResult | undefined> {
+    const e = this.db.eqaResults.find((x) => x.id === id);
+    if (!e) return undefined;
+    if (e.voidedAt) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
+    Object.assign(e, { voidedAt: new Date().toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
     await this.persist();
     return { ...e };
   }

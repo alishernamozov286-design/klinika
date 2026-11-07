@@ -1754,6 +1754,87 @@ describe("lab catalogue groups and specimens (B4.6, B4.3)", () => {
   });
 });
 
+describe("quality control (B4.8)", () => {
+  const setup = async () => {
+    const material = await storage.createQcMaterial(
+      { name: "Lyphochek Assayed Chemistry", manufacturer: "Bio-Rad", lotNumber: "26431", level: "1-daraja", expiresOn: "2027-06-30", notes: null, isActive: true },
+      ACTOR,
+    );
+    const target = await storage.createQcTarget({ materialId: material.id, testId: "22", deviceId: null, mean: 5.5, sd: 0.2, unit: "mmol/l" }, ACTOR);
+    return { material, target };
+  };
+  const at = (min: number) => new Date(Date.UTC(2026, 10, 7, 6, min)).toISOString();
+  const run = (target: Awaited<ReturnType<typeof setup>>["target"], value: number, min: number) =>
+    storage.addQcResult(target, { value, measuredAt: at(min), reagentLot: null, reagentExpiresOn: null, comment: null }, ACTOR);
+
+  it("judges each run against the series and keeps the verdict", async () => {
+    const { target } = await setup();
+    expect(await run(target, 5.6, 0)).toMatchObject({ z: 0.5, status: "ok", rules: [], mean: 5.5, sd: 0.2 });
+    expect(await run(target, 5.95, 1)).toMatchObject({ z: 2.25, status: "warning", rules: ["1-2s"] });
+    // The second point beyond +2 SD completes 2-2s.
+    const third = await run(target, 5.92, 2);
+    expect(third).toMatchObject({ status: "reject", rules: ["1-2s", "2-2s"] });
+    // Changing the target later does not rewrite what the run was told.
+    await storage.updateQcTarget(target.id, { mean: 5.8 }, ACTOR);
+    expect((await storage.getQcResult(third.id))!).toMatchObject({ mean: 5.5, status: "reject" });
+    const list = await storage.listQcResults(target.id);
+    expect(list.map((r) => r.value)).toEqual([5.6, 5.95, 5.92]);
+  });
+
+  it("back-dated runs are judged against the history before them; voided runs drop out", async () => {
+    const { target } = await setup();
+    const high = await run(target, 6.0, 10); // z 2.5
+    await storage.voidQcResult(high.id, "Noto'g'ri namunadan o'lchangan", ACTOR);
+    await expect(storage.voidQcResult(high.id, "yana", ACTOR)).rejects.toThrow(/allaqachon/);
+    // With the voided run gone, a second +2.5 is only a warning, not 2-2s.
+    expect((await run(target, 6.0, 11)).rules).toEqual(["1-2s"]);
+    // A run dated before both sees neither.
+    expect((await run(target, 6.0, 1)).rules).toEqual(["1-2s"]);
+  });
+
+  it("the board shows each series with its newest run and open rejections", async () => {
+    const { target, material } = await setup();
+    const bad = await run(target, 6.3, 0); // z 4 → 1-3s
+    const board = await storage.getQcBoard("2026-11-07");
+    const row = board.targets.find((t) => t.id === target.id)!;
+    expect(board.materials.map((m) => m.id)).toContain(material.id);
+    expect(row).toMatchObject({ testName: "Glyukoza", level: "1-daraja", lotNumber: "26431", runs: 1, runsToday: 1, openRejections: 1 });
+    expect(row.lastResult).toMatchObject({ value: 6.3, status: "reject" });
+    await storage.reviewQcResult(bad.id, "Reagent almashtirildi, qayta kalibrlandi", ACTOR);
+    await expect(storage.reviewQcResult(bad.id, "yana", ACTOR)).rejects.toThrow(/allaqachon/);
+    expect((await storage.getQcBoard("2026-11-07")).targets.find((t) => t.id === target.id)!.openRejections).toBe(0);
+  });
+
+  it("one series per material, test and device", async () => {
+    const { material } = await setup();
+    await expect(
+      storage.createQcTarget({ materialId: material.id, testId: "22", deviceId: null, mean: 1, sd: 1, unit: null }, ACTOR),
+    ).rejects.toThrow(/allaqachon/);
+  });
+
+  it("calibration, maintenance and external QC are logged with names", async () => {
+    const device = await storage.createDevice(
+      { name: "BS-240 Pro", manufacturer: "Mindray", model: null, serialNumber: null, direction: "biokimyo", connection: "manual", status: "active", location: null, installedOn: null, notes: null },
+      ACTOR,
+    );
+    await storage.addCalibration(
+      { deviceId: device.id, testId: "22", performedAt: null, calibratorName: "Multi Calibrator", calibratorLot: "C-77", calibratorExpiresOn: "2027-01-01", reagentLot: "R-12", reagentExpiresOn: "2027-02-01", result: "passed", notes: null },
+      ACTOR,
+    );
+    await storage.addMaintenance({ deviceId: device.id, performedAt: null, kind: "weekly", description: "Kyuvetalar yuvildi", nextDueOn: "2026-11-14" }, ACTOR);
+    const eqa = await storage.addEqa(
+      { provider: "RIQAS", cycle: "2026-11", sampleCode: "S-3", testId: "22", deviceId: device.id, sampleDate: "2026-11-05", reportedValue: 6.1, assignedValue: 5.5, sdpa: 0.25, notes: null },
+      ACTOR,
+    );
+    expect(eqa).toMatchObject({ z: 2.4, evaluation: "questionable" });
+    expect((await storage.listCalibrations())[0]).toMatchObject({ deviceName: "BS-240 Pro", testName: "Glyukoza", result: "passed" });
+    expect((await storage.listMaintenance({ deviceId: device.id }))[0]).toMatchObject({ kind: "weekly", deviceName: "BS-240 Pro" });
+    expect((await storage.listEqa())[0]).toMatchObject({ testName: "Glyukoza", deviceName: "BS-240 Pro" });
+    await storage.voidEqa(eqa.id, "Boshqa tsikl natijasi", ACTOR);
+    expect((await storage.listEqa())[0].voidReason).toBe("Boshqa tsikl natijasi");
+  });
+});
+
 describe("lab devices and their error log (B4.9)", () => {
   const device = (name = "BS-240 Pro") =>
     storage.createDevice(

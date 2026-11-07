@@ -47,6 +47,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
 - `shared/icd10.ts` + `data/icd10/`: MKB-10 katalogini o'qish, kod normallash, o'zbekcha nomlar importi (B3.4).
 - `server/result-delivery.ts`: tasdiqlangan natijani yo'llagan shifokorga yetkazish (B3.9).
+- `shared/qc.ts`: sifat nazorati qoidalari — Westgard, z-score, EQA bahosi, muddatlar (B4.8). `server/routes-qc.ts`: QC API. `client/src/components/qc/`: Levey–Jennings kartasi va QC panellari.
 - `shared/lab-devices.ts`: analizatorlar yorliqlari va qoidalari, TZ §6.4 ro'yxati (B4.9). `server/routes-lab.ts`: analizatorlar va xatolar jurnali API.
 - `shared/branding.ts`: klinika logotipini tekshirish qoidalari (B4.7).
 - `shared/lab-board.ts`: lab bosh sahifasi ko'rsatkichlarining ta'riflari (B4.1).
@@ -58,7 +59,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/permissions.ts`: **ruxsatlar katalogi** (`PERMISSIONS`) va TZ §3 dagi 11 ta rolning boshlang‘ich ruxsatlari (`SYSTEM_ROLES`).
 - `server/rbac.ts`: `requirePermission`, `hasPermission`, `toSessionUser`, rollar keshi (60 s, `invalidateRoles()`).
 - `client/src/lib/access.ts`: qaysi sahifa qaysi ruxsat bilan ochiladi (router, sidebar, command palette uchun yagona jadval).
-- Menyu tuzilmasi: Ish maydoni (Bosh sahifa, Mening kabinetim, Bemorlar, Navbat, Buyurtmalar, Natijalar) · Klinika (Shifokorlar, Bo'limlar, Xizmatlar, Analizatorlar, Xodimlar) · Boshqaruv (Hisobotlar, Xarajatlar, Sozlamalar). Yangi modul sahifasi shu bo'limlardan biriga qo'shiladi.
+- Menyu tuzilmasi: Ish maydoni (Bosh sahifa, Mening kabinetim, Bemorlar, Navbat, Buyurtmalar, Natijalar, Sifat nazorati) · Klinika (Shifokorlar, Bo'limlar, Xizmatlar, Analizatorlar, Xodimlar) · Boshqaruv (Hisobotlar, Xarajatlar, Sozlamalar). Yangi modul sahifasi shu bo'limlardan biriga qo'shiladi.
 - Migratsiyalar: `npm run db:upgrade` hammasini ketma-ket bajaradi (har biri qayta ishga tushirsa xavfsiz).
 - `client/src/pages/*`: sahifalar. `client/src/App.tsx`: routing (og‘ir sahifalar `lazy`). `client/src/components/app-sidebar.tsx`: menyu.
 - `client/src/components/ui-kit.tsx`: `PageHeader`, `SectionCard`, `StatCard`, badge'lar, `EmptyState`, `TableSkeleton`, `Pagination`… **Yangi UI shulardan quriladi.**
@@ -102,7 +103,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-07. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 42.5 → ≈56%**.
+> Holat 2026-11-07. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 43.5 → ≈57%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -238,7 +239,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Migratsiya: `npm run db:notifications` (`db:upgrade` ichida). Jadvalsiz bazada qo'ng'iroqcha bo'sh, boshqa hech narsa buzilmaydi. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06).
   - Testlar: `storage-file.test.ts` (3 ta), TZ §2 asosiy oqimi bo'yicha 18 ta API E2E (registratura → shifokor → yo'llanma → kassa → laborant → mudiri → shifokor), brauzerda shifokor tomoni.
 
-### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 82%
+### Bosqich 4: Laboratoriya / LIS (`§6`, `§15.4`) 91%
 
 - [x] **B4.1** Lab bosh sahifasi (`§6.1.1`): TZ'dagi oltita ko'rsatkich.
   - `GET /api/lab-board` (`orders.read`): bugungi buyurtmalar, namuna kutilmoqda (rad etilganlar alohida), tahlil jarayonida, tasdiqlanishi kerak, bugun tayyor bo'lganlar, bugun bekor qilinganlar; bugungi buyurtmalar guruhlar bo'yicha; namuna kutayotgan eng eski 6 ta buyurtma. Postgres'da bitta CTE + ro'yxat parallel.
@@ -269,7 +270,17 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Logo: Sozlamalar → Klinika → "Klinika logotipi" (`settings.manage`). Brauzer rasmni 640×240 ichiga kichraytirib qayta kodlaydi (`client/src/lib/logo.ts`). Server faqat PNG/JPEG qabul qiladi, haqiqiy baytlar e'lon qilingan turga mos bo'lishi va hajm 300 KB dan oshmasligi kerak (`shared/branding.ts` `checkLogo`; SVG ataylab rad etiladi). `app_settings` jadvalidagi `logo` kalitida saqlanadi (D-3 fayl ombori kerak emas, migratsiya yo'q). `GET/PUT/DELETE /api/settings/logo`, audit bilan. JSON chegarasi faqat shu yo'l uchun 512 KB, qolganlari 100 KB; 413 xabari o'zbekcha.
   - Natija blankasi shapkasida va ko'rik xulosasi PDF'ida (B3.8) chiqadi; chizib bo'lmaydigan logo hujjatni to'xtatmaydi.
   - "QR orqali tekshirish" TZ §6.3 da yo'q, shuning uchun qilinmadi. U bemor natijasiga ochiq havola demak (xavfsizlik qarori), buyurtmachi so'rasa alohida vazifa bo'ladi.
-- [ ] **B4.8** Sifat nazorati (`§6.5`): nazorat materiallari, QC natijalari kiritish, Levey–Jennings grafigi, Westgard qoidalari (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x) bilan avtomatik ogohlantirish, kalibratsiya tarixi, analizator xizmat jurnali, laboratoriyalararo QC natijalari.
+- [x] **B4.8** Sifat nazorati (`§6.5`): TZ'dagi to'qqizta band.
+  - **Nazorat materiallari** (`qc_materials`): nomi, ishlab chiqaruvchi, **LOT**, daraja, **yaroqlilik muddati**, faol. Nom + LOT + daraja takrorlanmaydi. **Seriya** (`qc_targets`): material + tahlil + qurilma (ixtiyoriy) uchun o'rtacha qiymat va SD (musbat, CHECK), birlik katalogdan. Bitta material/tahlil/qurilmaga bitta seriya (`UQ_qc_targets_series`, 409).
+  - **Ichki nazorat** (`qc_results`): natija kiritilganda seriyaning oldingi natijalari bilan **Westgard** qoidalari (1₂s ogohlantirish; 1₃s, 2₂s, R₄s, 4₁s, 10x̄ rad) bo'yicha baholanadi (`shared/qc.ts` `judgeQcRun`, ikkala storage uchun bitta). Seriya `FOR UPDATE` bilan qulflanadi. O'sha paytdagi o'rtacha/SD va hukm natija bilan saqlanadi: keyin seriya o'zgarsa ham eski baho o'zgarmaydi. Orqa sanali natija o'zidan oldingi tarix bilan baholanadi. Muddati o'tgan material bilan natija kiritilmaydi (409), muddati o'tgan reagent rad etiladi (400), kelajak vaqti rad etiladi. Reagent LOT va muddati natija bilan yoziladi (TZ §6.5).
+  - **Chora**: ogohlantirish yoki rad etilgan natijaga bir marta (`reviewed_*`). **Bekor qilish** (`qc.manage`): sabab bilan, o'chirilmaydi, seriyadan va grafikdan chiqadi.
+  - **Levey–Jennings kartasi** (`client/src/components/qc/lj-chart.tsx`): SD birliklarida (har bir nuqta o'z bahosidagi z bilan), x̄ va ±1/2/3SD chiziqlari joriy qiymatlari bilan, holat rang **va shakl** bilan (doira / uchburchak / romb), eng yaqin nuqtaga yopishadigan kursor va tooltip, klaviatura (←/→), pastida jadval. Dataviz qoidalari bo'yicha.
+  - **Kalibratsiya tarixi** (`calibrations`): qurilma, tahlil, kalibrator nomi/LOT/muddati, reagent LOT/muddati, natija; muddati o'tgan kalibrator yoki reagent rad etiladi. **Texnik xizmat jurnali** (`device_maintenance`): turi (kundalik … servis muhandisi), nima qilindi, keyingi sana; 7 kun ichida yoki kechikkanlar ko'rsatiladi. **Tashqi nazorat** (`eqa_results`): dastur, tsikl, namuna, bizning natija, belgilangan qiymat, SD → z va ISO 13528 bahosi (|z| ≤ 2 qoniqarli, 2–3 shubhali, > 3 qoniqarsiz), bekor qilish sabab bilan.
+  - Ruxsatlar: `qc.read` (laborant, lab mudiri, rahbar, auditor), `qc.enter` (laborant, lab mudiri), `qc.manage` (lab mudiri). API `server/routes-qc.ts` (`/api/qc…`), har bir amal auditda (`qc`).
+  - UI: Ish maydoni → Sifat nazorati (`/qc`): ko'rsatkichlar (faol seriyalar, bugun o'lchangan, chora kutilmoqda, material muddati), tablar — Ichki nazorat (seriyalar, karta, kiritish, tarix), Nazorat materiallari, Kalibratsiya, Texnik xizmat, Tashqi nazorat. `?tab=` bilan to'g'ridan-to'g'ri ochiladi.
+  - Migratsiya: `npm run db:qc` (`db:upgrade` ichida): 6 jadval, indekslar, tizim rollariga ruxsatlarni **faqat qo'shadi**. Jadvalsiz bazada sahifa bo'sh, yozish 503; boshqa hech narsa bu jadvallarni o'qimaydi. Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi (migratsiya ikki marta, unique va CHECK cheklovlari, board so'rovi, Westgard oqimi).
+  - Testlar: `shared/qc.test.ts` (Westgard, statistika, EQA, sanalar), `storage-file.test.ts` (5 ta), brauzerda lab mudiri, laborant va auditor yo'li (37 tekshiruv, telefon o'lchami bilan).
+  - Reagent partiyalari ombor bilan bog'lanishi (LOT ni ombordan tanlash) — B5.2 dan keyin.
 - [x] **B4.9** Analizatorlar ro‘yxati (`§6.4`, `lab_devices`): qurilmalar va xatolar jurnali.
   - `lab_devices`: nom (katta-kichik harf va bo'shliqqa qaramay takrorlanmas), ishlab chiqaruvchi, model, seriya raqami, yo'nalish (biokimyo, gematologiya, immunologiya, IXLA, IFA, koagulologiya, siydik, boshqa), **ulanish usuli** (qo'lda / RS-232 / TCP/IP / HL7 / ishlab chiqaruvchi protokoli — TZ §6.4 bo'yicha qurilma-qurilma tekshiriladi, D-4 hal bo'lguncha "qo'lda"), holat (ishlamoqda / texnik xizmatda / ishdan chiqqan), joylashuv, o'rnatilgan sana, izoh, §10 ustunlari.
   - `lab_device_errors` (TZ §6.4 "Qurilma xatolarini qayd etish"): daraja (ogohlantirish / xato / jiddiy), kod, nima bo'ldi, ko'rilgan chora, qachon (kelajak vaqti rad etiladi), kim yozdi. **O'chirilmaydi va tahrirlanmaydi**, "hal qilindi" deb sabab bilan bir marta yopiladi (shartli `UPDATE … WHERE resolved_at IS NULL`, ikkinchisi 409). Yozish bilan birga qurilmani "ishdan chiqqan" deb belgilash mumkin (bitta tranzaksiya; "jiddiy" tanlansa taklif qilinadi).
@@ -372,6 +383,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-07 · B4.8 · Sifat nazorati: nazorat materiallari (LOT, muddat) va seriyalar, Westgard bahosi natija bilan saqlanadi, Levey–Jennings kartasi, chora va bekor qilish, kalibratsiya tarixi, texnik xizmat jurnali (navbatdagi xizmatlar), tashqi nazorat (z, ISO 13528); muddati o'tgan material/reagent/kalibrator rad etiladi.
 - 2026-11-07 · B4.9 · Analizatorlar: qurilmalar (yo'nalish, ulanish usuli, holat), o'chirilmaydigan xatolar jurnali (daraja, kod, chora, hal qilish), nosoz qurilmani bir qadamda ishdan chiqqan deb belgilash, TZ §6.4 dagi 6 ta analizator namuna sifatida, uchta yangi ruxsat.
 - 2026-11-07 · B4.7 · Klinika logotipi: yuklash (brauzerda kichraytirish, serverda tur va hajm tekshiruvi, audit), natija blankasi va ko'rik xulosasi PDF'ida. Yo'l-yo'lakay: body-parser xatolari (413, buzuq JSON) endi o'z statusi va o'zbekcha xabar bilan qaytadi.
 - 2026-11-07 · B4.2, B4.1 · Buyurtmalarda tahlil turi (ustun, filtr, chiplar) va bemor ID; laboratoriya bosh sahifasi: TZ'dagi oltita ko'rsatkich, namuna kutayotganlar ro'yxati, bugungi buyurtmalar guruhlar bo'yicha, kartalardan to'g'ri navbatga o'tish.

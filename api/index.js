@@ -178,6 +178,21 @@ var init_permissions = __esm({
         label: "Qurilma xatosini qayd etish",
         description: "Analizator xatosini jurnalga yozish, hal qilinganini belgilash, nosoz qurilmani ishdan chiqqan deb belgilash"
       },
+      "qc.read": {
+        group: "lab",
+        label: "Sifat nazorati",
+        description: "QC natijalari, Levey\u2013Jennings kartasi, kalibratsiya, texnik xizmat va tashqi nazorat natijalarini ko'rish (TZ \xA76.5)"
+      },
+      "qc.enter": {
+        group: "lab",
+        label: "QC natijasini kiritish",
+        description: "Nazorat natijasi, kalibratsiya, texnik xizmat va tashqi nazorat natijasini yozish; rad etilgan seriyaga chora yozish"
+      },
+      "qc.manage": {
+        group: "lab",
+        label: "Nazorat materiallari",
+        description: "Nazorat materiallari va seriyalari (o'rtacha qiymat, SD); noto'g'ri kiritilgan QC yozuvini sabab bilan bekor qilish"
+      },
       "devices.manage": {
         group: "lab",
         label: "Analizatorlarni boshqarish",
@@ -300,7 +315,8 @@ var init_permissions = __esm({
           "reports.view",
           "data.export",
           "audit.read",
-          "devices.read"
+          "devices.read",
+          "qc.read"
         ]
       },
       {
@@ -344,7 +360,7 @@ var init_permissions = __esm({
         key: "laborant",
         name: "Laborant",
         description: "Namunalarni qabul qilish va tahlil natijalarini kiritish",
-        permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send", "devices.read", "devices.log"]
+        permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send", "devices.read", "devices.log", "qc.read", "qc.enter"]
       },
       {
         key: "lab_mudiri",
@@ -363,6 +379,9 @@ var init_permissions = __esm({
           "devices.read",
           "devices.log",
           "devices.manage",
+          "qc.read",
+          "qc.enter",
+          "qc.manage",
           "reports.view"
         ]
       },
@@ -410,7 +429,8 @@ var init_permissions = __esm({
           "expenses.read",
           "reports.view",
           "audit.read",
-          "devices.read"
+          "devices.read",
+          "qc.read"
         ]
       }
     ];
@@ -627,6 +647,84 @@ var init_lab_devices = __esm({
   }
 });
 
+// shared/qc.ts
+function zScore(value, mean, sd) {
+  if (!(sd > 0)) return 0;
+  return (value - mean) / sd;
+}
+function evaluateWestgard(zs) {
+  const rules = [];
+  const n = zs.length;
+  if (n === 0) return { rules, status: "ok" };
+  const z2 = zs[n - 1];
+  const tail = (k) => n >= k ? zs.slice(n - k) : null;
+  const sameSide = (xs, beyond) => xs.every((x) => x > beyond) || xs.every((x) => x < -beyond);
+  if (Math.abs(z2) > 2) rules.push("1-2s");
+  if (Math.abs(z2) > 3) rules.push("1-3s");
+  const two = tail(2);
+  if (two && sameSide(two, 2)) rules.push("2-2s");
+  if (two && Math.abs(two[1] - two[0]) > 4 && Math.max(...two) > 2 && Math.min(...two) < -2) rules.push("R-4s");
+  const four = tail(4);
+  if (four && sameSide(four, 1)) rules.push("4-1s");
+  const ten = tail(10);
+  if (ten && sameSide(ten, 0)) rules.push("10x");
+  const status = rules.some((r) => WESTGARD_RULE_INFO[r].reject) ? "reject" : rules.length ? "warning" : "ok";
+  return { rules, status };
+}
+function eqaEvaluation(z2) {
+  const a = Math.abs(z2);
+  return a <= 2 ? "acceptable" : a <= 3 ? "questionable" : "unacceptable";
+}
+function judgeQcRun(previousZs, value, mean, sd) {
+  const z2 = roundZ(zScore(value, mean, sd));
+  const { rules, status } = evaluateWestgard([...previousZs.slice(-QC_LOOKBACK), z2]);
+  return { z: z2, rules, status };
+}
+var WESTGARD_RULE_INFO, QC_STATUS_LABELS, roundZ, EQA_EVALUATION_LABELS, CALIBRATION_RESULTS, CALIBRATION_RESULT_LABELS, MAINTENANCE_KINDS, MAINTENANCE_KIND_LABELS, isExpired, QC_RESULT_ALREADY_REVIEWED, QC_RESULT_ALREADY_VOIDED, QC_TARGET_EXISTS, QC_LOOKBACK;
+var init_qc = __esm({
+  "shared/qc.ts"() {
+    "use strict";
+    WESTGARD_RULE_INFO = {
+      "1-2s": { label: "1\u2082s", description: "Bitta natija o'rtachadan 2 SD dan uzoq \u2014 ogohlantirish", reject: false },
+      "1-3s": { label: "1\u2083s", description: "Bitta natija o'rtachadan 3 SD dan uzoq \u2014 tasodifiy xato", reject: true },
+      "2-2s": { label: "2\u2082s", description: "Ketma-ket 2 ta natija bir tomonda 2 SD dan uzoq \u2014 tizimli xato", reject: true },
+      "R-4s": { label: "R\u2084s", description: "Ketma-ket 2 natija orasidagi farq 4 SD dan katta \u2014 tasodifiy xato", reject: true },
+      "4-1s": { label: "4\u2081s", description: "Ketma-ket 4 ta natija bir tomonda 1 SD dan uzoq \u2014 tizimli xato", reject: true },
+      "10x": { label: "10x\u0304", description: "Ketma-ket 10 ta natija o'rtachaning bir tomonida \u2014 siljish", reject: true }
+    };
+    QC_STATUS_LABELS = {
+      ok: "Qabul qilindi",
+      warning: "Ogohlantirish",
+      reject: "Rad etildi"
+    };
+    roundZ = (z2) => Math.round(z2 * 100) / 100;
+    EQA_EVALUATION_LABELS = {
+      acceptable: "Qoniqarli",
+      questionable: "Shubhali",
+      unacceptable: "Qoniqarsiz"
+    };
+    CALIBRATION_RESULTS = ["passed", "failed"];
+    CALIBRATION_RESULT_LABELS = {
+      passed: "Muvaffaqiyatli",
+      failed: "O'tmadi"
+    };
+    MAINTENANCE_KINDS = ["daily", "weekly", "monthly", "preventive", "repair", "service"];
+    MAINTENANCE_KIND_LABELS = {
+      daily: "Kundalik",
+      weekly: "Haftalik",
+      monthly: "Oylik",
+      preventive: "Profilaktik",
+      repair: "Ta'mirlash",
+      service: "Servis muhandisi"
+    };
+    isExpired = (day, today) => !!day && day < today;
+    QC_RESULT_ALREADY_REVIEWED = "Bu natijaga chora allaqachon yozilgan";
+    QC_RESULT_ALREADY_VOIDED = "Bu natija allaqachon bekor qilingan";
+    QC_TARGET_EXISTS = "Bu material, tahlil va qurilma uchun nazorat seriyasi allaqachon bor";
+    QC_LOOKBACK = 9;
+  }
+});
+
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
@@ -671,6 +769,7 @@ __export(schema_exports, {
   appointmentStatusSchema: () => appointmentStatusSchema,
   appointments: () => appointments,
   auditLog: () => auditLog,
+  calibrations: () => calibrations,
   cancelExpenseSchema: () => cancelExpenseSchema,
   cancelReferralSchema: () => cancelReferralSchema,
   changePasswordSchema: () => changePasswordSchema,
@@ -680,18 +779,26 @@ __export(schema_exports, {
   createReferralSchema: () => createReferralSchema,
   daysBetween: () => daysBetween,
   departments: () => departments,
+  deviceMaintenance: () => deviceMaintenance,
   doctors: () => doctors,
   emergencyContactSchema: () => emergencyContactSchema,
+  eqaResults: () => eqaResults,
   expenses: () => expenses,
   icd10: () => icd10,
   importIcdUzSchema: () => importIcdUzSchema,
   insertAllergySchema: () => insertAllergySchema,
+  insertCalibrationSchema: () => insertCalibrationSchema,
   insertDepartmentSchema: () => insertDepartmentSchema,
   insertDeviceErrorSchema: () => insertDeviceErrorSchema,
   insertDeviceSchema: () => insertDeviceSchema,
   insertDoctorSchema: () => insertDoctorSchema,
+  insertEqaSchema: () => insertEqaSchema,
   insertExpenseSchema: () => insertExpenseSchema,
+  insertMaintenanceSchema: () => insertMaintenanceSchema,
   insertPatientSchema: () => insertPatientSchema,
+  insertQcMaterialSchema: () => insertQcMaterialSchema,
+  insertQcResultSchema: () => insertQcResultSchema,
+  insertQcTargetSchema: () => insertQcTargetSchema,
   insertRoleSchema: () => insertRoleSchema,
   insertServiceSchema: () => insertServiceSchema,
   insertTestSchema: () => insertTestSchema,
@@ -718,12 +825,16 @@ __export(schema_exports, {
   patients: () => patients,
   payments: () => payments,
   previousRange: () => previousRange,
+  qcMaterials: () => qcMaterials,
+  qcResults: () => qcResults,
+  qcTargets: () => qcTargets,
   recordFieldsSchema: () => recordFieldsSchema,
   referrals: () => referrals,
   removeAllergySchema: () => removeAllergySchema,
   rescheduleAppointmentSchema: () => rescheduleAppointmentSchema,
   resolveDeviceErrorSchema: () => resolveDeviceErrorSchema,
   returnResultsSchema: () => returnResultsSchema,
+  reviewQcResultSchema: () => reviewQcResultSchema,
   roles: () => roles,
   samples: () => samples,
   saveRecordSchema: () => saveRecordSchema,
@@ -741,6 +852,8 @@ __export(schema_exports, {
   updateExpenseSchema: () => updateExpenseSchema,
   updateIcdUzSchema: () => updateIcdUzSchema,
   updateOrderSchema: () => updateOrderSchema,
+  updateQcMaterialSchema: () => updateQcMaterialSchema,
+  updateQcTargetSchema: () => updateQcTargetSchema,
   updateRoleSchema: () => updateRoleSchema,
   updateSampleSchema: () => updateSampleSchema,
   updateServiceSchema: () => updateServiceSchema,
@@ -749,10 +862,11 @@ __export(schema_exports, {
   users: () => users,
   verifyResultsSchema: () => verifyResultsSchema,
   visits: () => visits,
-  voidPaymentSchema: () => voidPaymentSchema
+  voidPaymentSchema: () => voidPaymentSchema,
+  voidRecordSchema: () => voidRecordSchema
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, index, json, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, index, json, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 function normalizeUzPhone(value) {
@@ -790,7 +904,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -798,6 +912,7 @@ var init_schema = __esm({
     init_patient_identity();
     init_lab_catalogue();
     init_lab_devices();
+    init_qc();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
     ORDER_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
@@ -1532,6 +1647,124 @@ var init_schema = __esm({
       },
       (t) => [index("IDX_lab_device_errors_device").on(t.deviceId, t.occurredAt)]
     );
+    qcMaterials = pgTable("qc_materials", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      name: text("name").notNull(),
+      manufacturer: text("manufacturer"),
+      lotNumber: text("lot_number").notNull(),
+      level: text("level").notNull(),
+      /** YYYY-MM-DD. */
+      expiresOn: text("expires_on").notNull(),
+      isActive: boolean("is_active").notNull().default(true),
+      notes: text("notes"),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
+    });
+    qcTargets = pgTable("qc_targets", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      materialId: varchar("material_id").notNull(),
+      testId: varchar("test_id").notNull(),
+      deviceId: varchar("device_id"),
+      mean: doublePrecision("mean").notNull(),
+      sd: doublePrecision("sd").notNull(),
+      unit: text("unit"),
+      isActive: boolean("is_active").notNull().default(true),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
+    });
+    qcResults = pgTable(
+      "qc_results",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        targetId: varchar("target_id").notNull(),
+        value: doublePrecision("value").notNull(),
+        mean: doublePrecision("mean").notNull(),
+        sd: doublePrecision("sd").notNull(),
+        z: doublePrecision("z").notNull(),
+        rules: text("rules").array().notNull().default(sql`'{}'::text[]`),
+        status: text("status").notNull(),
+        measuredAt: isoTimestamp("measured_at").notNull(),
+        reagentLot: text("reagent_lot"),
+        reagentExpiresOn: text("reagent_expires_on"),
+        comment: text("comment"),
+        enteredBy: varchar("entered_by"),
+        enteredByName: text("entered_by_name"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        reviewedAt: isoTimestamp("reviewed_at"),
+        reviewedBy: varchar("reviewed_by"),
+        reviewedByName: text("reviewed_by_name"),
+        correctiveAction: text("corrective_action"),
+        voidedAt: isoTimestamp("voided_at"),
+        voidedBy: varchar("voided_by"),
+        voidedByName: text("voided_by_name"),
+        voidReason: text("void_reason")
+      },
+      (t) => [index("IDX_qc_results_target").on(t.targetId, t.measuredAt)]
+    );
+    calibrations = pgTable(
+      "calibrations",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        deviceId: varchar("device_id").notNull(),
+        testId: varchar("test_id"),
+        performedAt: isoTimestamp("performed_at").notNull(),
+        calibratorName: text("calibrator_name").notNull(),
+        calibratorLot: text("calibrator_lot"),
+        calibratorExpiresOn: text("calibrator_expires_on"),
+        reagentLot: text("reagent_lot"),
+        reagentExpiresOn: text("reagent_expires_on"),
+        result: text("result").notNull(),
+        notes: text("notes"),
+        performedBy: varchar("performed_by"),
+        performedByName: text("performed_by_name"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull()
+      },
+      (t) => [index("IDX_calibrations_device").on(t.deviceId, t.performedAt)]
+    );
+    deviceMaintenance = pgTable(
+      "device_maintenance",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        deviceId: varchar("device_id").notNull(),
+        performedAt: isoTimestamp("performed_at").notNull(),
+        kind: text("kind").notNull(),
+        description: text("description").notNull(),
+        /** YYYY-MM-DD: when the next one of this kind is due. */
+        nextDueOn: text("next_due_on"),
+        performedBy: varchar("performed_by"),
+        performedByName: text("performed_by_name"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull()
+      },
+      (t) => [index("IDX_device_maintenance_device").on(t.deviceId, t.performedAt)]
+    );
+    eqaResults = pgTable("eqa_results", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      provider: text("provider").notNull(),
+      cycle: text("cycle").notNull(),
+      sampleCode: text("sample_code"),
+      testId: varchar("test_id").notNull(),
+      deviceId: varchar("device_id"),
+      /** YYYY-MM-DD. */
+      sampleDate: text("sample_date").notNull(),
+      reportedValue: doublePrecision("reported_value").notNull(),
+      assignedValue: doublePrecision("assigned_value").notNull(),
+      /** Standard deviation for proficiency assessment, from the provider's report. */
+      sdpa: doublePrecision("sdpa").notNull(),
+      z: doublePrecision("z").notNull(),
+      evaluation: text("evaluation").notNull(),
+      notes: text("notes"),
+      enteredBy: varchar("entered_by"),
+      enteredByName: text("entered_by_name"),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      voidedAt: isoTimestamp("voided_at"),
+      voidedBy: varchar("voided_by"),
+      voidedByName: text("voided_by_name"),
+      voidReason: text("void_reason")
+    });
     NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"];
     birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
     emergencyContactSchema = z.object({
@@ -1876,6 +2109,77 @@ var init_schema = __esm({
       actionTaken: optionalText(1e3, "Ko'rilgan chora"),
       /** Takes the device out of service in the same step (a broken analyzer must not keep being used). */
       markOutOfService: z.boolean().default(false)
+    });
+    qcNumber = (label) => z.number({ invalid_type_error: `${label}: raqam kiriting`, required_error: `${label}ni kiriting` }).finite(`${label}: raqam kiriting`);
+    optionalDay = dayString.nullish().or(z.literal("")).transform((v) => v ? v : null);
+    pastTimestamp = z.string().datetime({ offset: true, message: "Vaqt noto'g'ri" }).nullish();
+    insertQcMaterialSchema = z.object({
+      name: z.string().trim().min(2, "Material nomini kiriting").max(120, "Nom juda uzun"),
+      manufacturer: optionalText(80, "Ishlab chiqaruvchi"),
+      lotNumber: z.string().trim().min(1, "LOT raqamini kiriting").max(40, "LOT juda uzun"),
+      level: z.string().trim().min(1, "Darajani kiriting").max(40, "Daraja juda uzun"),
+      expiresOn: dayString,
+      notes: optionalText(500, "Izoh"),
+      isActive: z.boolean().default(true)
+    });
+    updateQcMaterialSchema = insertQcMaterialSchema.partial();
+    insertQcTargetSchema = z.object({
+      materialId: z.string().min(1, "Materialni tanlang"),
+      testId: z.string().min(1, "Tahlilni tanlang"),
+      deviceId: z.string().min(1).nullish().transform((v) => v ?? null),
+      mean: qcNumber("O'rtacha qiymat"),
+      sd: qcNumber("SD").positive("SD musbat bo'lishi kerak"),
+      unit: optionalText(30, "Birlik")
+    });
+    updateQcTargetSchema = z.object({
+      mean: qcNumber("O'rtacha qiymat").optional(),
+      sd: qcNumber("SD").positive("SD musbat bo'lishi kerak").optional(),
+      unit: optionalText(30, "Birlik").optional(),
+      isActive: z.boolean().optional()
+    });
+    insertQcResultSchema = z.object({
+      value: qcNumber("Natija"),
+      measuredAt: pastTimestamp,
+      reagentLot: optionalText(40, "Reagent LOT"),
+      reagentExpiresOn: optionalDay,
+      comment: optionalText(500, "Izoh")
+    });
+    reviewQcResultSchema = z.object({
+      correctiveAction: z.string().trim().min(3, "Ko'rilgan chorani yozing").max(1e3, "Matn juda uzun")
+    });
+    voidRecordSchema = z.object({
+      reason: z.string().trim().min(3, "Sababni yozing").max(500, "Matn juda uzun")
+    });
+    insertCalibrationSchema = z.object({
+      deviceId: z.string().min(1, "Qurilmani tanlang"),
+      testId: z.string().min(1).nullish().transform((v) => v ?? null),
+      performedAt: pastTimestamp,
+      calibratorName: z.string().trim().min(2, "Kalibrator nomini kiriting").max(120, "Nom juda uzun"),
+      calibratorLot: optionalText(40, "Kalibrator LOT"),
+      calibratorExpiresOn: optionalDay,
+      reagentLot: optionalText(40, "Reagent LOT"),
+      reagentExpiresOn: optionalDay,
+      result: z.enum(CALIBRATION_RESULTS, { errorMap: () => ({ message: "Natijani tanlang" }) }),
+      notes: optionalText(1e3, "Izoh")
+    });
+    insertMaintenanceSchema = z.object({
+      deviceId: z.string().min(1, "Qurilmani tanlang"),
+      performedAt: pastTimestamp,
+      kind: z.enum(MAINTENANCE_KINDS, { errorMap: () => ({ message: "Turini tanlang" }) }),
+      description: z.string().trim().min(3, "Nima qilinganini yozing").max(1e3, "Matn juda uzun"),
+      nextDueOn: optionalDay
+    });
+    insertEqaSchema = z.object({
+      provider: z.string().trim().min(2, "Dastur / provayderni kiriting").max(120, "Juda uzun"),
+      cycle: z.string().trim().min(1, "Tsiklni kiriting").max(40, "Juda uzun"),
+      sampleCode: optionalText(40, "Namuna kodi"),
+      testId: z.string().min(1, "Tahlilni tanlang"),
+      deviceId: z.string().min(1).nullish().transform((v) => v ?? null),
+      sampleDate: dayString,
+      reportedValue: qcNumber("Bizning natija"),
+      assignedValue: qcNumber("Belgilangan qiymat"),
+      sdpa: qcNumber("SD").positive("SD musbat bo'lishi kerak"),
+      notes: optionalText(1e3, "Izoh")
     });
     resolveDeviceErrorSchema = z.object({
       resolution: z.string().trim().min(3, "Nima qilinganini yozing").max(1e3, "Matn juda uzun")
@@ -2942,7 +3246,7 @@ import { alias } from "drizzle-orm/pg-core";
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
+var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, mapQcResult, mapEqa, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -2954,6 +3258,7 @@ var init_storage_pg = __esm({
     init_lab_board();
     init_branding();
     init_lab_devices();
+    init_qc();
     init_icd10();
     init_lab_rules();
     init_patient_links();
@@ -3038,6 +3343,15 @@ var init_storage_pg = __esm({
       createdAt: iso(row.createdAt) ?? row.createdAt,
       updatedAt: iso(row.updatedAt),
       cancelledAt: iso(row.cancelledAt)
+    });
+    mapQcResult = (row) => ({
+      ...row,
+      rules: row.rules ?? [],
+      status: row.status
+    });
+    mapEqa = (row) => ({
+      ...row,
+      evaluation: row.evaluation
     });
     mapDevice = (row) => ({
       ...row,
@@ -5150,6 +5464,227 @@ var init_storage_pg = __esm({
         if (exists) throw new StorageConflict(DEVICE_ERROR_ALREADY_RESOLVED);
         return void 0;
       }
+      // ---------------------------------------------------- quality control (B4.8)
+      async getQcBoard(day) {
+        const [materials, rows] = await Promise.all([
+          db.select().from(qcMaterials).orderBy(desc(qcMaterials.isActive), asc(qcMaterials.name), asc(qcMaterials.level)),
+          db.select({
+            t: qcTargets,
+            materialName: qcMaterials.name,
+            level: qcMaterials.level,
+            lotNumber: qcMaterials.lotNumber,
+            materialExpiresOn: qcMaterials.expiresOn,
+            materialActive: qcMaterials.isActive,
+            testName: tests.name,
+            deviceName: labDevices.name,
+            last: sql2`(
+            SELECT json_build_object('value', r.value, 'z', r.z, 'status', r.status, 'measuredAt', r.measured_at)
+              FROM qc_results r
+             WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
+             ORDER BY r.measured_at DESC, r.created_at DESC
+             LIMIT 1)`,
+            runs: sql2`(SELECT count(*)::int FROM qc_results r WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL)`,
+            runsToday: sql2`(SELECT count(*)::int FROM qc_results r
+                                   WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
+                                     AND (r.measured_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date)`,
+            openRejections: sql2`(SELECT count(*)::int FROM qc_results r
+                                        WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
+                                          AND r.status = 'reject' AND r.reviewed_at IS NULL)`
+          }).from(qcTargets).innerJoin(qcMaterials, eq(qcMaterials.id, qcTargets.materialId)).leftJoin(tests, eq(tests.id, qcTargets.testId)).leftJoin(labDevices, eq(labDevices.id, qcTargets.deviceId)).orderBy(asc(tests.name), asc(qcMaterials.level))
+        ]);
+        return {
+          date: day,
+          materials,
+          targets: rows.map((r) => ({
+            ...r.t,
+            materialName: r.materialName,
+            level: r.level,
+            lotNumber: r.lotNumber,
+            materialExpiresOn: r.materialExpiresOn,
+            materialActive: r.materialActive,
+            testName: r.testName ?? "\u2014",
+            deviceName: r.deviceName ?? null,
+            lastResult: r.last ? {
+              value: Number(r.last.value),
+              z: Number(r.last.z),
+              status: r.last.status,
+              measuredAt: new Date(r.last.measuredAt).toISOString()
+            } : null,
+            runs: r.runs,
+            runsToday: r.runsToday,
+            openRejections: r.openRejections
+          }))
+        };
+      }
+      async getQcMaterial(id) {
+        const [row] = await db.select().from(qcMaterials).where(eq(qcMaterials.id, id)).limit(1);
+        return row;
+      }
+      async createQcMaterial(input, actor) {
+        const [row] = await db.insert(qcMaterials).values({
+          name: input.name,
+          manufacturer: input.manufacturer ?? null,
+          lotNumber: input.lotNumber,
+          level: input.level,
+          expiresOn: input.expiresOn,
+          isActive: input.isActive ?? true,
+          notes: input.notes ?? null,
+          createdBy: actor.id,
+          updatedBy: actor.id
+        }).returning();
+        return row;
+      }
+      async updateQcMaterial(id, input, actor) {
+        const patch = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id };
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) patch[k] = v;
+        const [row] = await db.update(qcMaterials).set(patch).where(eq(qcMaterials.id, id)).returning();
+        return row;
+      }
+      async getQcTarget(id) {
+        const [row] = await db.select().from(qcTargets).where(eq(qcTargets.id, id)).limit(1);
+        return row;
+      }
+      async createQcTarget(input, actor) {
+        try {
+          const [row] = await db.insert(qcTargets).values({
+            materialId: input.materialId,
+            testId: input.testId,
+            deviceId: input.deviceId ?? null,
+            mean: input.mean,
+            sd: input.sd,
+            unit: input.unit ?? null,
+            createdBy: actor.id,
+            updatedBy: actor.id
+          }).returning();
+          return row;
+        } catch (err) {
+          if (err?.code === "23505") throw new StorageConflict(QC_TARGET_EXISTS);
+          throw err;
+        }
+      }
+      async updateQcTarget(id, input, actor) {
+        const patch = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id };
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) patch[k] = v;
+        const [row] = await db.update(qcTargets).set(patch).where(eq(qcTargets.id, id)).returning();
+        return row;
+      }
+      async listQcResults(targetId, limit = 60) {
+        const rows = await db.select().from(qcResults).where(eq(qcResults.targetId, targetId)).orderBy(desc(qcResults.measuredAt), desc(qcResults.createdAt)).limit(limit);
+        return rows.reverse().map(mapQcResult);
+      }
+      async addQcResult(target, input, actor) {
+        return db.transaction(async (tx) => {
+          await tx.select({ id: qcTargets.id }).from(qcTargets).where(eq(qcTargets.id, target.id)).for("update");
+          const measuredAt = input.measuredAt ? new Date(input.measuredAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+          const previous = await tx.select({ z: qcResults.z }).from(qcResults).where(and(eq(qcResults.targetId, target.id), isNull(qcResults.voidedAt), lte(qcResults.measuredAt, measuredAt))).orderBy(desc(qcResults.measuredAt), desc(qcResults.createdAt)).limit(QC_LOOKBACK);
+          const verdict = judgeQcRun(previous.reverse().map((p) => p.z), input.value, target.mean, target.sd);
+          const [row] = await tx.insert(qcResults).values({
+            targetId: target.id,
+            value: input.value,
+            mean: target.mean,
+            sd: target.sd,
+            z: verdict.z,
+            rules: verdict.rules,
+            status: verdict.status,
+            measuredAt,
+            reagentLot: input.reagentLot ?? null,
+            reagentExpiresOn: input.reagentExpiresOn ?? null,
+            comment: input.comment ?? null,
+            enteredBy: actor.id,
+            enteredByName: actor.name
+          }).returning();
+          return mapQcResult(row);
+        });
+      }
+      async getQcResult(id) {
+        const [row] = await db.select().from(qcResults).where(eq(qcResults.id, id)).limit(1);
+        return row && mapQcResult(row);
+      }
+      async reviewQcResult(id, correctiveAction, actor) {
+        const [row] = await db.update(qcResults).set({ reviewedAt: (/* @__PURE__ */ new Date()).toISOString(), reviewedBy: actor.id, reviewedByName: actor.name, correctiveAction }).where(and(eq(qcResults.id, id), isNull(qcResults.reviewedAt))).returning();
+        if (row) return mapQcResult(row);
+        if (await this.getQcResult(id)) throw new StorageConflict(QC_RESULT_ALREADY_REVIEWED);
+        return void 0;
+      }
+      async voidQcResult(id, reason, actor) {
+        const [row] = await db.update(qcResults).set({ voidedAt: (/* @__PURE__ */ new Date()).toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason }).where(and(eq(qcResults.id, id), isNull(qcResults.voidedAt))).returning();
+        if (row) return mapQcResult(row);
+        if (await this.getQcResult(id)) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
+        return void 0;
+      }
+      async listCalibrations(query = {}) {
+        const rows = await db.select({ c: calibrations, deviceName: labDevices.name, testName: tests.name }).from(calibrations).leftJoin(labDevices, eq(labDevices.id, calibrations.deviceId)).leftJoin(tests, eq(tests.id, calibrations.testId)).where(query.deviceId ? eq(calibrations.deviceId, query.deviceId) : void 0).orderBy(desc(calibrations.performedAt)).limit(query.limit ?? 200);
+        return rows.map((r) => ({
+          ...r.c,
+          result: r.c.result,
+          deviceName: r.deviceName ?? "\u2014",
+          testName: r.testName ?? null
+        }));
+      }
+      async addCalibration(input, actor) {
+        const [row] = await db.insert(calibrations).values({
+          deviceId: input.deviceId,
+          testId: input.testId ?? null,
+          performedAt: input.performedAt ? new Date(input.performedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+          calibratorName: input.calibratorName,
+          calibratorLot: input.calibratorLot ?? null,
+          calibratorExpiresOn: input.calibratorExpiresOn ?? null,
+          reagentLot: input.reagentLot ?? null,
+          reagentExpiresOn: input.reagentExpiresOn ?? null,
+          result: input.result,
+          notes: input.notes ?? null,
+          performedBy: actor.id,
+          performedByName: actor.name
+        }).returning();
+        return { ...row, result: row.result };
+      }
+      async listMaintenance(query = {}) {
+        const rows = await db.select({ m: deviceMaintenance, deviceName: labDevices.name }).from(deviceMaintenance).leftJoin(labDevices, eq(labDevices.id, deviceMaintenance.deviceId)).where(query.deviceId ? eq(deviceMaintenance.deviceId, query.deviceId) : void 0).orderBy(desc(deviceMaintenance.performedAt)).limit(query.limit ?? 200);
+        return rows.map((r) => ({ ...r.m, kind: r.m.kind, deviceName: r.deviceName ?? "\u2014" }));
+      }
+      async addMaintenance(input, actor) {
+        const [row] = await db.insert(deviceMaintenance).values({
+          deviceId: input.deviceId,
+          performedAt: input.performedAt ? new Date(input.performedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+          kind: input.kind,
+          description: input.description,
+          nextDueOn: input.nextDueOn ?? null,
+          performedBy: actor.id,
+          performedByName: actor.name
+        }).returning();
+        return { ...row, kind: row.kind };
+      }
+      async listEqa(query = {}) {
+        const rows = await db.select({ e: eqaResults, testName: tests.name, deviceName: labDevices.name }).from(eqaResults).leftJoin(tests, eq(tests.id, eqaResults.testId)).leftJoin(labDevices, eq(labDevices.id, eqaResults.deviceId)).orderBy(desc(eqaResults.sampleDate), desc(eqaResults.createdAt)).limit(query.limit ?? 200);
+        return rows.map((r) => ({ ...mapEqa(r.e), testName: r.testName ?? "\u2014", deviceName: r.deviceName ?? null }));
+      }
+      async addEqa(input, actor) {
+        const z2 = roundZ(zScore(input.reportedValue, input.assignedValue, input.sdpa));
+        const [row] = await db.insert(eqaResults).values({
+          provider: input.provider,
+          cycle: input.cycle,
+          sampleCode: input.sampleCode ?? null,
+          testId: input.testId,
+          deviceId: input.deviceId ?? null,
+          sampleDate: input.sampleDate,
+          reportedValue: input.reportedValue,
+          assignedValue: input.assignedValue,
+          sdpa: input.sdpa,
+          z: z2,
+          evaluation: eqaEvaluation(z2),
+          notes: input.notes ?? null,
+          enteredBy: actor.id,
+          enteredByName: actor.name
+        }).returning();
+        return mapEqa(row);
+      }
+      async voidEqa(id, reason, actor) {
+        const [row] = await db.update(eqaResults).set({ voidedAt: (/* @__PURE__ */ new Date()).toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason }).where(and(eq(eqaResults.id, id), isNull(eqaResults.voidedAt))).returning();
+        if (row) return mapEqa(row);
+        const [exists] = await db.select({ id: eqaResults.id }).from(eqaResults).where(eq(eqaResults.id, id)).limit(1);
+        if (exists) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
+        return void 0;
+      }
       async getLabBoard(day) {
         const local = (col) => sql2.raw(`(${col} AT TIME ZONE current_setting('TIMEZONE'))::date`);
         const countsQuery = db.execute(sql2`
@@ -5432,6 +5967,12 @@ var init_db = __esm({
       notifications: [],
       labDevices: [],
       labDeviceErrors: [],
+      qcMaterials: [],
+      qcTargets: [],
+      qcResults: [],
+      calibrations: [],
+      deviceMaintenance: [],
+      eqaResults: [],
       icdUzNames: {},
       security: null,
       patients: [],
@@ -5494,6 +6035,7 @@ var init_storage_file = __esm({
     init_lab_catalogue();
     init_lab_board();
     init_lab_devices();
+    init_qc();
     init_icd10();
     init_lab_verification();
     init_lab_rules();
@@ -7541,6 +8083,250 @@ var init_storage_file = __esm({
         if (!e) return void 0;
         if (e.resolvedAt) throw new StorageConflict(DEVICE_ERROR_ALREADY_RESOLVED);
         Object.assign(e, { resolvedAt: (/* @__PURE__ */ new Date()).toISOString(), resolvedBy: actor.id, resolvedByName: actor.name, resolution });
+        await this.persist();
+        return { ...e };
+      }
+      // ---------------------------------------------------- quality control (B4.8)
+      async getQcBoard(day) {
+        const materials = [...this.db.qcMaterials].sort(
+          (a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name) || a.level.localeCompare(b.level)
+        );
+        const targets = [];
+        for (const t of this.db.qcTargets) {
+          const m = this.db.qcMaterials.find((x) => x.id === t.materialId);
+          if (!m) continue;
+          const runs = this.db.qcResults.filter((r) => r.targetId === t.id && !r.voidedAt).sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt));
+          const last = runs.at(-1);
+          targets.push({
+            ...t,
+            materialName: m.name,
+            level: m.level,
+            lotNumber: m.lotNumber,
+            materialExpiresOn: m.expiresOn,
+            materialActive: m.isActive,
+            testName: this.db.tests.find((x) => x.id === t.testId)?.name ?? "\u2014",
+            deviceName: t.deviceId ? this.db.labDevices.find((x) => x.id === t.deviceId)?.name ?? null : null,
+            lastResult: last ? { value: last.value, z: last.z, status: last.status, measuredAt: last.measuredAt } : null,
+            runs: runs.length,
+            runsToday: runs.filter((r) => localDay(r.measuredAt) === day).length,
+            openRejections: runs.filter((r) => r.status === "reject" && !r.reviewedAt).length
+          });
+        }
+        targets.sort((a, b) => a.testName.localeCompare(b.testName) || a.level.localeCompare(b.level));
+        return { date: day, materials, targets };
+      }
+      async getQcMaterial(id) {
+        const m = this.db.qcMaterials.find((x) => x.id === id);
+        return m && { ...m };
+      }
+      async createQcMaterial(input, actor) {
+        const m = {
+          id: randomUUID(),
+          name: input.name,
+          manufacturer: input.manufacturer ?? null,
+          lotNumber: input.lotNumber,
+          level: input.level,
+          expiresOn: input.expiresOn,
+          isActive: input.isActive ?? true,
+          notes: input.notes ?? null,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: actor.id
+        };
+        this.db.qcMaterials.push(m);
+        await this.persist();
+        return { ...m };
+      }
+      async updateQcMaterial(id, input, actor) {
+        const m = this.db.qcMaterials.find((x) => x.id === id);
+        if (!m) return void 0;
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) m[k] = v;
+        Object.assign(m, { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id });
+        await this.persist();
+        return { ...m };
+      }
+      async getQcTarget(id) {
+        const t = this.db.qcTargets.find((x) => x.id === id);
+        return t && { ...t };
+      }
+      async createQcTarget(input, actor) {
+        const dup = this.db.qcTargets.some(
+          (t2) => t2.materialId === input.materialId && t2.testId === input.testId && (t2.deviceId ?? null) === (input.deviceId ?? null)
+        );
+        if (dup) throw new StorageConflict(QC_TARGET_EXISTS);
+        const t = {
+          id: randomUUID(),
+          materialId: input.materialId,
+          testId: input.testId,
+          deviceId: input.deviceId ?? null,
+          mean: input.mean,
+          sd: input.sd,
+          unit: input.unit ?? null,
+          isActive: true,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: actor.id
+        };
+        this.db.qcTargets.push(t);
+        await this.persist();
+        return { ...t };
+      }
+      async updateQcTarget(id, input, actor) {
+        const t = this.db.qcTargets.find((x) => x.id === id);
+        if (!t) return void 0;
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) t[k] = v;
+        Object.assign(t, { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id });
+        await this.persist();
+        return { ...t };
+      }
+      async listQcResults(targetId, limit = 60) {
+        return this.db.qcResults.filter((r) => r.targetId === targetId).sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt)).slice(-limit).map((r) => ({ ...r, rules: [...r.rules] }));
+      }
+      async addQcResult(target, input, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const measuredAt = input.measuredAt ? new Date(input.measuredAt).toISOString() : now;
+        const previous = this.db.qcResults.filter((r2) => r2.targetId === target.id && !r2.voidedAt && r2.measuredAt <= measuredAt).sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt)).map((r2) => r2.z);
+        const verdict = judgeQcRun(previous, input.value, target.mean, target.sd);
+        const r = {
+          id: randomUUID(),
+          targetId: target.id,
+          value: input.value,
+          mean: target.mean,
+          sd: target.sd,
+          z: verdict.z,
+          rules: verdict.rules,
+          status: verdict.status,
+          measuredAt,
+          reagentLot: input.reagentLot ?? null,
+          reagentExpiresOn: input.reagentExpiresOn ?? null,
+          comment: input.comment ?? null,
+          enteredBy: actor.id,
+          enteredByName: actor.name,
+          createdAt: now,
+          reviewedAt: null,
+          reviewedBy: null,
+          reviewedByName: null,
+          correctiveAction: null,
+          voidedAt: null,
+          voidedBy: null,
+          voidedByName: null,
+          voidReason: null
+        };
+        this.db.qcResults.push(r);
+        await this.persist();
+        return { ...r, rules: [...r.rules] };
+      }
+      async getQcResult(id) {
+        const r = this.db.qcResults.find((x) => x.id === id);
+        return r && { ...r, rules: [...r.rules] };
+      }
+      async reviewQcResult(id, correctiveAction, actor) {
+        const r = this.db.qcResults.find((x) => x.id === id);
+        if (!r) return void 0;
+        if (r.reviewedAt) throw new StorageConflict(QC_RESULT_ALREADY_REVIEWED);
+        Object.assign(r, { reviewedAt: (/* @__PURE__ */ new Date()).toISOString(), reviewedBy: actor.id, reviewedByName: actor.name, correctiveAction });
+        await this.persist();
+        return { ...r, rules: [...r.rules] };
+      }
+      async voidQcResult(id, reason, actor) {
+        const r = this.db.qcResults.find((x) => x.id === id);
+        if (!r) return void 0;
+        if (r.voidedAt) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
+        Object.assign(r, { voidedAt: (/* @__PURE__ */ new Date()).toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
+        await this.persist();
+        return { ...r, rules: [...r.rules] };
+      }
+      async listCalibrations(query = {}) {
+        return this.db.calibrations.filter((c) => !query.deviceId || c.deviceId === query.deviceId).sort((a, b) => b.performedAt.localeCompare(a.performedAt)).slice(0, query.limit ?? 200).map((c) => ({
+          ...c,
+          deviceName: this.db.labDevices.find((d) => d.id === c.deviceId)?.name ?? "\u2014",
+          testName: c.testId ? this.db.tests.find((t) => t.id === c.testId)?.name ?? null : null
+        }));
+      }
+      async addCalibration(input, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const c = {
+          id: randomUUID(),
+          deviceId: input.deviceId,
+          testId: input.testId ?? null,
+          performedAt: input.performedAt ? new Date(input.performedAt).toISOString() : now,
+          calibratorName: input.calibratorName,
+          calibratorLot: input.calibratorLot ?? null,
+          calibratorExpiresOn: input.calibratorExpiresOn ?? null,
+          reagentLot: input.reagentLot ?? null,
+          reagentExpiresOn: input.reagentExpiresOn ?? null,
+          result: input.result,
+          notes: input.notes ?? null,
+          performedBy: actor.id,
+          performedByName: actor.name,
+          createdAt: now
+        };
+        this.db.calibrations.push(c);
+        await this.persist();
+        return { ...c };
+      }
+      async listMaintenance(query = {}) {
+        return this.db.deviceMaintenance.filter((m) => !query.deviceId || m.deviceId === query.deviceId).sort((a, b) => b.performedAt.localeCompare(a.performedAt)).slice(0, query.limit ?? 200).map((m) => ({ ...m, deviceName: this.db.labDevices.find((d) => d.id === m.deviceId)?.name ?? "\u2014" }));
+      }
+      async addMaintenance(input, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const m = {
+          id: randomUUID(),
+          deviceId: input.deviceId,
+          performedAt: input.performedAt ? new Date(input.performedAt).toISOString() : now,
+          kind: input.kind,
+          description: input.description,
+          nextDueOn: input.nextDueOn ?? null,
+          performedBy: actor.id,
+          performedByName: actor.name,
+          createdAt: now
+        };
+        this.db.deviceMaintenance.push(m);
+        await this.persist();
+        return { ...m };
+      }
+      async listEqa(query = {}) {
+        return [...this.db.eqaResults].sort((a, b) => b.sampleDate.localeCompare(a.sampleDate) || b.createdAt.localeCompare(a.createdAt)).slice(0, query.limit ?? 200).map((e) => ({
+          ...e,
+          testName: this.db.tests.find((t) => t.id === e.testId)?.name ?? "\u2014",
+          deviceName: e.deviceId ? this.db.labDevices.find((d) => d.id === e.deviceId)?.name ?? null : null
+        }));
+      }
+      async addEqa(input, actor) {
+        const z2 = roundZ(zScore(input.reportedValue, input.assignedValue, input.sdpa));
+        const e = {
+          id: randomUUID(),
+          provider: input.provider,
+          cycle: input.cycle,
+          sampleCode: input.sampleCode ?? null,
+          testId: input.testId,
+          deviceId: input.deviceId ?? null,
+          sampleDate: input.sampleDate,
+          reportedValue: input.reportedValue,
+          assignedValue: input.assignedValue,
+          sdpa: input.sdpa,
+          z: z2,
+          evaluation: eqaEvaluation(z2),
+          notes: input.notes ?? null,
+          enteredBy: actor.id,
+          enteredByName: actor.name,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          voidedAt: null,
+          voidedBy: null,
+          voidedByName: null,
+          voidReason: null
+        };
+        this.db.eqaResults.push(e);
+        await this.persist();
+        return { ...e };
+      }
+      async voidEqa(id, reason, actor) {
+        const e = this.db.eqaResults.find((x) => x.id === id);
+        if (!e) return void 0;
+        if (e.voidedAt) throw new StorageConflict(QC_RESULT_ALREADY_VOIDED);
+        Object.assign(e, { voidedAt: (/* @__PURE__ */ new Date()).toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
         await this.persist();
         return { ...e };
       }
@@ -9784,6 +10570,284 @@ function registerLabRoutes(app) {
   );
 }
 
+// server/routes-qc.ts
+init_schema();
+init_qc();
+init_appointment();
+init_lab_devices();
+init_storage_types();
+var fmt = (n) => String(Math.round(n * 1e3) / 1e3);
+function limitParam(req, fallback, max) {
+  const n = Number(stringParam(req.query.limit) ?? fallback);
+  return Number.isFinite(n) ? Math.min(Math.max(1, Math.trunc(n)), max) : fallback;
+}
+function registerQcRoutes(app) {
+  app.get(
+    "/api/qc",
+    requirePermission("qc.read"),
+    handle(async (_req, res) => {
+      const date = clockNow().date;
+      res.json(await storage.getQcBoard(date).catch((e) => emptyIfMissing(e, { date, materials: [], targets: [] })));
+    })
+  );
+  async function materialTaken(name, lot, level, exceptId) {
+    const key = (s) => s.trim().toLowerCase();
+    const { materials } = await storage.getQcBoard(clockNow().date);
+    return materials.some((m) => m.id !== exceptId && key(m.name) === key(name) && key(m.lotNumber) === key(lot) && key(m.level) === key(level));
+  }
+  app.post(
+    "/api/qc/materials",
+    requirePermission("qc.manage"),
+    handle(async (req, res) => {
+      const input = insertQcMaterialSchema.parse(req.body);
+      if (await materialTaken(input.name, input.lotNumber, input.level)) {
+        return res.status(409).json({ message: "Bu material, LOT va daraja allaqachon kiritilgan" });
+      }
+      const m = await storage.createQcMaterial(input, actorOf(req));
+      await audit(req, "create", "qc", m.id, `Nazorat materiali qo'shildi: ${m.name}, ${m.level}, LOT ${m.lotNumber}, muddati ${m.expiresOn}`);
+      res.status(201).json(m);
+    })
+  );
+  app.patch(
+    "/api/qc/materials/:id",
+    requirePermission("qc.manage"),
+    handle(async (req, res) => {
+      const input = updateQcMaterialSchema.parse(req.body);
+      const before = await storage.getQcMaterial(req.params.id);
+      if (!before) return res.status(404).json({ message: "Material topilmadi" });
+      const next = { ...before, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== void 0)) };
+      if (await materialTaken(next.name, next.lotNumber, next.level, before.id)) {
+        return res.status(409).json({ message: "Bu material, LOT va daraja allaqachon kiritilgan" });
+      }
+      const m = await storage.updateQcMaterial(before.id, input, actorOf(req));
+      if (!m) return res.status(404).json({ message: "Material topilmadi" });
+      const changes = [];
+      if (m.lotNumber !== before.lotNumber) changes.push(`LOT: ${before.lotNumber} \u2192 ${m.lotNumber}`);
+      if (m.expiresOn !== before.expiresOn) changes.push(`muddati: ${before.expiresOn} \u2192 ${m.expiresOn}`);
+      if (m.isActive !== before.isActive) changes.push(m.isActive ? "qayta faollashtirildi" : "ishlatishdan olindi");
+      if (m.name !== before.name || m.level !== before.level) changes.push(`nomi: ${m.name}, ${m.level}`);
+      await audit(req, "update", "qc", m.id, `Nazorat materiali ${m.name} (${m.level}) \u2014 ${changes.join(", ") || "izoh yangilandi"}`);
+      res.json(m);
+    })
+  );
+  app.post(
+    "/api/qc/targets",
+    requirePermission("qc.manage"),
+    handle(async (req, res) => {
+      const input = insertQcTargetSchema.parse(req.body);
+      const [material, test, device] = await Promise.all([
+        storage.getQcMaterial(input.materialId),
+        storage.getTest(input.testId),
+        input.deviceId ? storage.getDevice(input.deviceId) : Promise.resolve(null)
+      ]);
+      if (!material) return res.status(400).json({ message: "Material topilmadi" });
+      if (!test) return res.status(400).json({ message: "Tahlil topilmadi" });
+      if (input.deviceId && !device) return res.status(400).json({ message: "Qurilma topilmadi" });
+      const t = await storage.createQcTarget({ ...input, unit: input.unit ?? test.unit ?? null }, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "qc",
+        t.id,
+        `Nazorat seriyasi: ${test.name} \u2014 ${material.name} ${material.level}${device ? `, ${device.name}` : ""}; o'rtacha ${fmt(t.mean)}, SD ${fmt(t.sd)}`
+      );
+      res.status(201).json(t);
+    })
+  );
+  app.patch(
+    "/api/qc/targets/:id",
+    requirePermission("qc.manage"),
+    handle(async (req, res) => {
+      const input = updateQcTargetSchema.parse(req.body);
+      const before = await storage.getQcTarget(req.params.id);
+      if (!before) return res.status(404).json({ message: "Nazorat seriyasi topilmadi" });
+      const t = await storage.updateQcTarget(before.id, input, actorOf(req));
+      if (!t) return res.status(404).json({ message: "Nazorat seriyasi topilmadi" });
+      const test = await storage.getTest(t.testId);
+      const changes = [];
+      if (t.mean !== before.mean) changes.push(`o'rtacha ${fmt(before.mean)} \u2192 ${fmt(t.mean)}`);
+      if (t.sd !== before.sd) changes.push(`SD ${fmt(before.sd)} \u2192 ${fmt(t.sd)}`);
+      if (t.isActive !== before.isActive) changes.push(t.isActive ? "qayta faollashtirildi" : "to'xtatildi");
+      if (t.unit !== before.unit) changes.push(`birlik: ${t.unit ?? "\u2014"}`);
+      await audit(req, "update", "qc", t.id, `Nazorat seriyasi ${test?.name ?? ""} \u2014 ${changes.join(", ") || "o'zgarishsiz"}`);
+      res.json(t);
+    })
+  );
+  app.get(
+    "/api/qc/targets/:id/results",
+    requirePermission("qc.read"),
+    handle(async (req, res) => {
+      res.json(await storage.listQcResults(req.params.id, limitParam(req, 60, 500)));
+    })
+  );
+  app.post(
+    "/api/qc/targets/:id/results",
+    requirePermission("qc.enter"),
+    handle(async (req, res) => {
+      const input = insertQcResultSchema.parse(req.body);
+      if (input.measuredAt) {
+        const problem = occurredAtProblem(input.measuredAt);
+        if (problem) return res.status(400).json({ message: problem });
+      }
+      const target = await storage.getQcTarget(req.params.id);
+      if (!target) return res.status(404).json({ message: "Nazorat seriyasi topilmadi" });
+      if (!target.isActive) return res.status(409).json({ message: "Bu nazorat seriyasi to'xtatilgan" });
+      const material = await storage.getQcMaterial(target.materialId);
+      if (!material || !material.isActive) return res.status(409).json({ message: "Nazorat materiali ishlatishdan olingan" });
+      const day = localDay(input.measuredAt ?? /* @__PURE__ */ new Date());
+      if (isExpired(material.expiresOn, day)) {
+        return res.status(409).json({ message: `Nazorat materialining muddati o'tgan (${material.expiresOn}). Yangi LOT kiriting.` });
+      }
+      if (isExpired(input.reagentExpiresOn, day)) {
+        return res.status(400).json({ message: `Reagentning yaroqlilik muddati o'tgan (${input.reagentExpiresOn})` });
+      }
+      const r = await storage.addQcResult(target, input, actorOf(req));
+      const test = await storage.getTest(target.testId);
+      const rules = r.rules.map((x) => WESTGARD_RULE_INFO[x].label).join(", ");
+      await audit(
+        req,
+        "create",
+        "qc",
+        target.id,
+        `QC ${test?.name ?? ""} (${material.level}): ${fmt(r.value)}, z = ${r.z} \u2014 ${QC_STATUS_LABELS[r.status]}${rules ? ` (${rules})` : ""}`
+      );
+      res.status(201).json(r);
+    })
+  );
+  app.post(
+    "/api/qc/results/:id/review",
+    requirePermission("qc.enter"),
+    handle(async (req, res) => {
+      const { correctiveAction } = reviewQcResultSchema.parse(req.body);
+      const before = await storage.getQcResult(req.params.id);
+      if (!before) return res.status(404).json({ message: "QC natijasi topilmadi" });
+      if (before.status === "ok") return res.status(409).json({ message: "Qabul qilingan natijaga chora kerak emas" });
+      if (before.voidedAt) return res.status(409).json({ message: "Bekor qilingan natijaga chora yozilmaydi" });
+      const r = await storage.reviewQcResult(before.id, correctiveAction, actorOf(req));
+      if (!r) return res.status(404).json({ message: "QC natijasi topilmadi" });
+      await audit(req, "update", "qc", r.targetId, `QC natijasiga chora yozildi (${fmt(r.value)}, ${QC_STATUS_LABELS[r.status]}): ${correctiveAction}`);
+      res.json(r);
+    })
+  );
+  app.post(
+    "/api/qc/results/:id/void",
+    requirePermission("qc.manage"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const r = await storage.voidQcResult(req.params.id, reason, actorOf(req));
+      if (!r) return res.status(404).json({ message: "QC natijasi topilmadi" });
+      await audit(req, "void", "qc", r.targetId, `QC natijasi bekor qilindi (${fmt(r.value)}, ${r.measuredAt}): ${reason}`);
+      res.json(r);
+    })
+  );
+  app.get(
+    "/api/qc/calibrations",
+    requirePermission("qc.read"),
+    handle(async (req, res) => {
+      res.json(
+        await storage.listCalibrations({ deviceId: stringParam(req.query.deviceId), limit: limitParam(req, 200, 500) }).catch((e) => emptyIfMissing(e, []))
+      );
+    })
+  );
+  app.post(
+    "/api/qc/calibrations",
+    requirePermission("qc.enter"),
+    handle(async (req, res) => {
+      const input = insertCalibrationSchema.parse(req.body);
+      if (input.performedAt) {
+        const problem = occurredAtProblem(input.performedAt);
+        if (problem) return res.status(400).json({ message: problem });
+      }
+      const device = await storage.getDevice(input.deviceId);
+      if (!device) return res.status(400).json({ message: "Qurilma topilmadi" });
+      const test = input.testId ? await storage.getTest(input.testId) : null;
+      if (input.testId && !test) return res.status(400).json({ message: "Tahlil topilmadi" });
+      const day = localDay(input.performedAt ?? /* @__PURE__ */ new Date());
+      if (isExpired(input.calibratorExpiresOn, day)) {
+        return res.status(400).json({ message: `Kalibratorning yaroqlilik muddati o'tgan (${input.calibratorExpiresOn})` });
+      }
+      if (isExpired(input.reagentExpiresOn, day)) {
+        return res.status(400).json({ message: `Reagentning yaroqlilik muddati o'tgan (${input.reagentExpiresOn})` });
+      }
+      const c = await storage.addCalibration(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "qc",
+        device.id,
+        `Kalibratsiya: ${device.name}${test ? `, ${test.name}` : ""} \u2014 ${CALIBRATION_RESULT_LABELS[c.result]} (${c.calibratorName}${c.calibratorLot ? `, LOT ${c.calibratorLot}` : ""})`
+      );
+      res.status(201).json(c);
+    })
+  );
+  app.get(
+    "/api/qc/maintenance",
+    requirePermission("qc.read"),
+    handle(async (req, res) => {
+      res.json(
+        await storage.listMaintenance({ deviceId: stringParam(req.query.deviceId), limit: limitParam(req, 200, 500) }).catch((e) => emptyIfMissing(e, []))
+      );
+    })
+  );
+  app.post(
+    "/api/qc/maintenance",
+    requirePermission("qc.enter"),
+    handle(async (req, res) => {
+      const input = insertMaintenanceSchema.parse(req.body);
+      if (input.performedAt) {
+        const problem = occurredAtProblem(input.performedAt);
+        if (problem) return res.status(400).json({ message: problem });
+      }
+      const device = await storage.getDevice(input.deviceId);
+      if (!device) return res.status(400).json({ message: "Qurilma topilmadi" });
+      if (input.nextDueOn && input.nextDueOn < localDay(input.performedAt ?? /* @__PURE__ */ new Date())) {
+        return res.status(400).json({ message: "Keyingi xizmat sanasi bajarilgan kundan oldin bo'lishi mumkin emas" });
+      }
+      const m = await storage.addMaintenance(input, actorOf(req));
+      await audit(req, "create", "qc", device.id, `Texnik xizmat: ${device.name} \u2014 ${MAINTENANCE_KIND_LABELS[m.kind]}: ${m.description}`);
+      res.status(201).json(m);
+    })
+  );
+  app.get(
+    "/api/qc/eqa",
+    requirePermission("qc.read"),
+    handle(async (req, res) => {
+      res.json(await storage.listEqa({ limit: limitParam(req, 200, 500) }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.post(
+    "/api/qc/eqa",
+    requirePermission("qc.enter"),
+    handle(async (req, res) => {
+      const input = insertEqaSchema.parse(req.body);
+      if (input.sampleDate > clockNow().date) return res.status(400).json({ message: "Namuna sanasi kelajakda bo'lishi mumkin emas" });
+      const test = await storage.getTest(input.testId);
+      if (!test) return res.status(400).json({ message: "Tahlil topilmadi" });
+      if (input.deviceId && !await storage.getDevice(input.deviceId)) return res.status(400).json({ message: "Qurilma topilmadi" });
+      const e = await storage.addEqa(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "qc",
+        e.id,
+        `Tashqi nazorat: ${e.provider} ${e.cycle}, ${test.name} \u2014 ${fmt(e.reportedValue)} / ${fmt(e.assignedValue)}, z = ${e.z} (${EQA_EVALUATION_LABELS[e.evaluation]})`
+      );
+      res.status(201).json(e);
+    })
+  );
+  app.post(
+    "/api/qc/eqa/:id/void",
+    requirePermission("qc.manage"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const e = await storage.voidEqa(req.params.id, reason, actorOf(req));
+      if (!e) return res.status(404).json({ message: "Yozuv topilmadi" });
+      await audit(req, "void", "qc", e.id, `Tashqi nazorat natijasi bekor qilindi (${e.provider} ${e.cycle}): ${reason}`);
+      res.json(e);
+    })
+  );
+}
+
 // server/routes.ts
 async function registerRoutes(app) {
   setupAuth(app);
@@ -11561,6 +12625,7 @@ async function registerRoutes(app) {
   registerClinicRoutes(app);
   registerMedicalRoutes(app);
   registerLabRoutes(app);
+  registerQcRoutes(app);
   app.use("/api", (req, res, next) => {
     if (res.headersSent) return next();
     res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });

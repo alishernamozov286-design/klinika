@@ -184,6 +184,21 @@ export const PERMISSIONS = {
     label: "Qurilma xatosini qayd etish",
     description: "Analizator xatosini jurnalga yozish, hal qilinganini belgilash, nosoz qurilmani ishdan chiqqan deb belgilash",
   },
+  "qc.read": {
+    group: "lab",
+    label: "Sifat nazorati",
+    description: "QC natijalari, Levey–Jennings kartasi, kalibratsiya, texnik xizmat va tashqi nazorat natijalarini ko'rish (TZ §6.5)",
+  },
+  "qc.enter": {
+    group: "lab",
+    label: "QC natijasini kiritish",
+    description: "Nazorat natijasi, kalibratsiya, texnik xizmat va tashqi nazorat natijasini yozish; rad etilgan seriyaga chora yozish",
+  },
+  "qc.manage": {
+    group: "lab",
+    label: "Nazorat materiallari",
+    description: "Nazorat materiallari va seriyalari (o'rtacha qiymat, SD); noto'g'ri kiritilgan QC yozuvini sabab bilan bekor qilish",
+  },
   "devices.manage": {
     group: "lab",
     label: "Analizatorlarni boshqarish",
@@ -350,6 +365,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "data.export",
       "audit.read",
       "devices.read",
+      "qc.read",
     ],
   },
   {
@@ -393,7 +409,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "laborant",
     name: "Laborant",
     description: "Namunalarni qabul qilish va tahlil natijalarini kiritish",
-    permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send", "devices.read", "devices.log"],
+    permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send", "devices.read", "devices.log", "qc.read", "qc.enter"],
   },
   {
     key: "lab_mudiri",
@@ -412,6 +428,9 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "devices.read",
       "devices.log",
       "devices.manage",
+      "qc.read",
+      "qc.enter",
+      "qc.manage",
       "reports.view",
     ],
   },
@@ -460,6 +479,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "reports.view",
       "audit.read",
       "devices.read",
+      "qc.read",
     ],
   },
 ];
