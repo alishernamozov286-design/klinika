@@ -76,6 +76,16 @@ import { referralStage } from "@shared/referral";
 import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, awaitsSample, summarizeLabBoard, type LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
+import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
+import type {
+  InsertDevice,
+  InsertDeviceErrorInput,
+  LabDevice,
+  LabDeviceError,
+  LabDeviceErrorWithDevice,
+  LabDeviceWithStats,
+  UpdateDeviceInput,
+} from "@shared/schema";
 import { ICD_SOURCE, normalizeIcdCode, parseNsiIcd10, type IcdRow } from "@shared/icd10";
 import { readFileSync } from "fs";
 import path from "path";
@@ -2497,6 +2507,111 @@ export class FileStorage implements IStorage {
         .filter((o) => o.status !== "cancelled")
         .reduce((sum, o) => sum + Math.max(0, o.totalAmount - o.paidAmount), 0),
     };
+  }
+
+  // ------------------------------------------------------ lab devices (B4.9)
+
+  async listDevices(): Promise<LabDeviceWithStats[]> {
+    return this.db.labDevices
+      .map((d) => {
+        const log = this.db.labDeviceErrors.filter((e) => e.deviceId === d.id);
+        const last = log.reduce<string | null>((m, e) => (!m || e.occurredAt > m ? e.occurredAt : m), null);
+        return { ...d, errorCount: log.length, openErrors: log.filter((e) => !e.resolvedAt).length, lastErrorAt: last };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getDevice(id: string): Promise<LabDevice | undefined> {
+    const d = this.db.labDevices.find((x) => x.id === id);
+    return d && { ...d };
+  }
+
+  async createDevice(input: InsertDevice, actor: Actor): Promise<LabDevice> {
+    const device: LabDevice = {
+      id: randomUUID(),
+      name: input.name,
+      manufacturer: input.manufacturer ?? null,
+      model: input.model ?? null,
+      serialNumber: input.serialNumber ?? null,
+      direction: input.direction,
+      connection: input.connection,
+      status: input.status,
+      location: input.location ?? null,
+      installedOn: input.installedOn ?? null,
+      notes: input.notes ?? null,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      updatedAt: null,
+      updatedBy: actor.id,
+    };
+    this.db.labDevices.push(device);
+    await this.persist();
+    return { ...device };
+  }
+
+  async updateDevice(id: string, input: UpdateDeviceInput, actor: Actor): Promise<LabDevice | undefined> {
+    const d = this.db.labDevices.find((x) => x.id === id);
+    if (!d) return undefined;
+    for (const [k, v] of Object.entries(input)) if (v !== undefined) (d as Record<string, unknown>)[k] = v;
+    d.updatedAt = new Date().toISOString();
+    d.updatedBy = actor.id;
+    await this.persist();
+    return { ...d };
+  }
+
+  async deleteDevice(id: string): Promise<boolean> {
+    const i = this.db.labDevices.findIndex((x) => x.id === id);
+    if (i < 0) return false;
+    if (this.db.labDeviceErrors.some((e) => e.deviceId === id)) throw new StorageConflict(DEVICE_HAS_LOG);
+    this.db.labDevices.splice(i, 1);
+    await this.persist();
+    return true;
+  }
+
+  async listDeviceErrors(query: { deviceId?: string; open?: boolean; limit?: number } = {}): Promise<LabDeviceErrorWithDevice[]> {
+    const names = new Map(this.db.labDevices.map((d) => [d.id, d.name]));
+    return this.db.labDeviceErrors
+      .filter((e) => (!query.deviceId || e.deviceId === query.deviceId) && (!query.open || !e.resolvedAt))
+      .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.createdAt.localeCompare(a.createdAt))
+      .slice(0, query.limit ?? 200)
+      .map((e) => ({ ...e, deviceName: names.get(e.deviceId) ?? "—" }));
+  }
+
+  async createDeviceError(deviceId: string, input: InsertDeviceErrorInput, actor: Actor): Promise<LabDeviceError | undefined> {
+    const device = this.db.labDevices.find((x) => x.id === deviceId);
+    if (!device) return undefined;
+    const now = new Date().toISOString();
+    const entry: LabDeviceError = {
+      id: randomUUID(),
+      deviceId,
+      occurredAt: input.occurredAt ? new Date(input.occurredAt).toISOString() : now,
+      severity: input.severity,
+      code: input.code ?? null,
+      message: input.message,
+      actionTaken: input.actionTaken ?? null,
+      reportedBy: actor.id,
+      reportedByName: actor.name,
+      createdAt: now,
+      resolvedAt: null,
+      resolvedBy: null,
+      resolvedByName: null,
+      resolution: null,
+    };
+    this.db.labDeviceErrors.push(entry);
+    if (input.markOutOfService && device.status !== "out_of_service") {
+      Object.assign(device, { status: "out_of_service", updatedAt: now, updatedBy: actor.id });
+    }
+    await this.persist();
+    return { ...entry };
+  }
+
+  async resolveDeviceError(id: string, resolution: string, actor: Actor): Promise<LabDeviceError | undefined> {
+    const e = this.db.labDeviceErrors.find((x) => x.id === id);
+    if (!e) return undefined;
+    if (e.resolvedAt) throw new StorageConflict(DEVICE_ERROR_ALREADY_RESOLVED);
+    Object.assign(e, { resolvedAt: new Date().toISOString(), resolvedBy: actor.id, resolvedByName: actor.name, resolution });
+    await this.persist();
+    return { ...e };
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {

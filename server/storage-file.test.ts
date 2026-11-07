@@ -1754,6 +1754,55 @@ describe("lab catalogue groups and specimens (B4.6, B4.3)", () => {
   });
 });
 
+describe("lab devices and their error log (B4.9)", () => {
+  const device = (name = "BS-240 Pro") =>
+    storage.createDevice(
+      { name, manufacturer: "Mindray", model: name, serialNumber: null, direction: "biokimyo", connection: "manual", status: "active", location: "2-xona", installedOn: null, notes: null },
+      ACTOR,
+    );
+
+  it("lists devices with what their log says", async () => {
+    const d = await device();
+    expect((await storage.listDevices())[0]).toMatchObject({ id: d.id, errorCount: 0, openErrors: 0, lastErrorAt: null });
+    await storage.createDeviceError(d.id, { severity: "warning", message: "Reagent kam", markOutOfService: false, occurredAt: "2026-11-01T08:00:00.000Z" }, ACTOR);
+    const e2 = await storage.createDeviceError(d.id, { severity: "error", code: "E-12", message: "Lampa xatosi", markOutOfService: false }, ACTOR);
+    await storage.resolveDeviceError(e2!.id, "Lampa almashtirildi", ACTOR);
+    const [row] = await storage.listDevices();
+    expect(row).toMatchObject({ errorCount: 2, openErrors: 1 });
+    expect(row.lastErrorAt).toBe(e2!.occurredAt);
+    const log = await storage.listDeviceErrors({ deviceId: d.id });
+    expect(log.map((e) => e.message)).toEqual(["Lampa xatosi", "Reagent kam"]);
+    expect(log[0]).toMatchObject({ deviceName: "BS-240 Pro", reportedByName: ACTOR.name, resolvedByName: ACTOR.name, resolution: "Lampa almashtirildi" });
+    expect((await storage.listDeviceErrors({ open: true })).map((e) => e.message)).toEqual(["Reagent kam"]);
+  });
+
+  it("a critical entry can take the device out of service in the same step", async () => {
+    const d = await device("DH26");
+    await storage.createDeviceError(d.id, { severity: "critical", message: "Nasos ishlamayapti", markOutOfService: true }, ACTOR);
+    expect((await storage.getDevice(d.id))!.status).toBe("out_of_service");
+    expect(await storage.createDeviceError("missing", { severity: "error", message: "x x x", markOutOfService: false }, ACTOR)).toBeUndefined();
+  });
+
+  it("an entry is closed once; a device with a log is not deleted", async () => {
+    const d = await device("MAGLUMI 600");
+    const e = await storage.createDeviceError(d.id, { severity: "error", message: "Kalibrlash xatosi", markOutOfService: false }, ACTOR);
+    await storage.resolveDeviceError(e!.id, "Qayta kalibrlandi", ACTOR);
+    await expect(storage.resolveDeviceError(e!.id, "yana", ACTOR)).rejects.toThrow(/allaqachon/);
+    expect(await storage.resolveDeviceError("missing", "x", ACTOR)).toBeUndefined();
+    await expect(storage.deleteDevice(d.id)).rejects.toThrow(/jurnali bor/);
+    const clean = await device("BA-88A");
+    expect(await storage.deleteDevice(clean.id)).toBe(true);
+    expect(await storage.getDevice(clean.id)).toBeUndefined();
+  });
+
+  it("edits only what was sent", async () => {
+    const d = await device("EIAQUANT");
+    const edited = await storage.updateDevice(d.id, { status: "maintenance", connection: "rs232" }, ACTOR);
+    expect(edited).toMatchObject({ status: "maintenance", connection: "rs232", location: "2-xona", manufacturer: "Mindray" });
+    expect(edited!.updatedAt).toBeTruthy();
+  });
+});
+
 describe("clinic logo (B4.7)", () => {
   it("is stored, replaced and removed, and survives a reload", async () => {
     expect(await storage.getLogo()).toBeNull();

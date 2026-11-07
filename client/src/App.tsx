@@ -58,6 +58,7 @@ const Staff = lazy(() => import("@/pages/staff"));
 const Doctors = lazy(() => import("@/pages/doctors"));
 const Departments = lazy(() => import("@/pages/departments"));
 const Services = lazy(() => import("@/pages/services"));
+const Devices = lazy(() => import("@/pages/devices"));
 const Queue = lazy(() => import("@/pages/queue"));
 const Cabinet = lazy(() => import("@/pages/cabinet"));
 const Examination = lazy(() => import("@/pages/examination"));
@@ -86,6 +87,7 @@ const StaffPage = guarded("/staff", Staff);
 const DoctorsPage = guarded("/doctors", Doctors);
 const DepartmentsPage = guarded("/departments", Departments);
 const ServicesPage = guarded("/services", Services);
+const DevicesPage = guarded("/devices", Devices);
 const QueuePage = guarded("/queue", Queue);
 const CabinetPage = guarded("/cabinet", Cabinet);
 const ExaminationPage = guarded("/cabinet/visit", Examination);
@@ -110,6 +112,7 @@ function Router() {
         <Route path="/doctors" component={DoctorsPage} />
         <Route path="/departments" component={DepartmentsPage} />
         <Route path="/services" component={ServicesPage} />
+        <Route path="/devices" component={DevicesPage} />
         <Route path="/queue" component={QueuePage} />
         <Route path="/cabinet" component={CabinetPage} />
         <Route path="/cabinet/visit/:id" component={ExaminationPage} />
@@ -131,6 +134,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/doctors": "Shifokorlar",
   "/departments": "Bo'limlar",
   "/services": "Xizmatlar",
+  "/devices": "Analizatorlar",
   "/queue": "Navbat",
   "/cabinet": "Kabinet",
   "/settings": "Sozlamalar",

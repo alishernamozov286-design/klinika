@@ -168,6 +168,21 @@ var init_permissions = __esm({
         label: "Tahlillar katalogi",
         description: "Tahlil qo'shish, narx va referens oraliqlarni o'zgartirish"
       },
+      "devices.read": {
+        group: "lab",
+        label: "Analizatorlar",
+        description: "Analizatorlar ro'yxati va qurilma xatolari jurnalini ko'rish (TZ \xA76.4)"
+      },
+      "devices.log": {
+        group: "lab",
+        label: "Qurilma xatosini qayd etish",
+        description: "Analizator xatosini jurnalga yozish, hal qilinganini belgilash, nosoz qurilmani ishdan chiqqan deb belgilash"
+      },
+      "devices.manage": {
+        group: "lab",
+        label: "Analizatorlarni boshqarish",
+        description: "Qurilma qo'shish, tahrirlash, holatini o'zgartirish va jurnali bo'lmagan qurilmani o'chirish"
+      },
       "finance.view": {
         group: "finance",
         label: "Moliyaviy ko'rsatkichlar",
@@ -284,7 +299,8 @@ var init_permissions = __esm({
           "expenses.read",
           "reports.view",
           "data.export",
-          "audit.read"
+          "audit.read",
+          "devices.read"
         ]
       },
       {
@@ -328,7 +344,7 @@ var init_permissions = __esm({
         key: "laborant",
         name: "Laborant",
         description: "Namunalarni qabul qilish va tahlil natijalarini kiritish",
-        permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send"]
+        permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send", "devices.read", "devices.log"]
       },
       {
         key: "lab_mudiri",
@@ -344,6 +360,9 @@ var init_permissions = __esm({
           "results.amend",
           "results.send",
           "tests.manage",
+          "devices.read",
+          "devices.log",
+          "devices.manage",
           "reports.view"
         ]
       },
@@ -390,7 +409,8 @@ var init_permissions = __esm({
           "finance.view",
           "expenses.read",
           "reports.view",
-          "audit.read"
+          "audit.read",
+          "devices.read"
         ]
       }
     ];
@@ -550,6 +570,63 @@ var init_lab_catalogue = __esm({
   }
 });
 
+// shared/lab-devices.ts
+function occurredAtProblem(occurredAt, now = Date.now()) {
+  const t = Date.parse(occurredAt);
+  if (Number.isNaN(t)) return "Vaqt noto'g'ri";
+  if (t > now + 6e4) return "Xato vaqti kelajakda bo'lishi mumkin emas";
+  return null;
+}
+var DEVICE_DIRECTIONS, DEVICE_DIRECTION_LABELS, DEVICE_CONNECTIONS, DEVICE_CONNECTION_LABELS, DEVICE_STATUSES, DEVICE_STATUS_LABELS, ERROR_SEVERITIES, ERROR_SEVERITY_LABELS, deviceNameKey, DEVICE_HAS_LOG, DEVICE_ERROR_ALREADY_RESOLVED;
+var init_lab_devices = __esm({
+  "shared/lab-devices.ts"() {
+    "use strict";
+    DEVICE_DIRECTIONS = [
+      "biokimyo",
+      "gematologiya",
+      "immunologiya",
+      "ixla",
+      "ifa",
+      "koagulologiya",
+      "siydik",
+      "boshqa"
+    ];
+    DEVICE_DIRECTION_LABELS = {
+      biokimyo: "Biokimyo",
+      gematologiya: "Gematologiya",
+      immunologiya: "Immunologiya",
+      ixla: "Immunoferment / immunoxemilyuminessensiya",
+      ifa: "IFA",
+      koagulologiya: "Koagulologiya",
+      siydik: "Siydik tahlili",
+      boshqa: "Boshqa"
+    };
+    DEVICE_CONNECTIONS = ["manual", "rs232", "tcp", "hl7", "vendor"];
+    DEVICE_CONNECTION_LABELS = {
+      manual: "Qo'lda kiritish",
+      rs232: "RS-232",
+      tcp: "TCP/IP",
+      hl7: "HL7",
+      vendor: "Ishlab chiqaruvchi protokoli"
+    };
+    DEVICE_STATUSES = ["active", "maintenance", "out_of_service"];
+    DEVICE_STATUS_LABELS = {
+      active: "Ishlamoqda",
+      maintenance: "Texnik xizmatda",
+      out_of_service: "Ishdan chiqqan"
+    };
+    ERROR_SEVERITIES = ["warning", "error", "critical"];
+    ERROR_SEVERITY_LABELS = {
+      warning: "Ogohlantirish",
+      error: "Xato",
+      critical: "Jiddiy"
+    };
+    deviceNameKey = (name) => name.trim().toLowerCase().replace(/\s+/g, " ");
+    DEVICE_HAS_LOG = `Bu qurilmaning xatolar jurnali bor, shuning uchun o'chirilmaydi. Uni "Ishdan chiqqan" deb belgilang.`;
+    DEVICE_ERROR_ALREADY_RESOLVED = "Bu yozuv allaqachon hal qilingan deb belgilangan";
+  }
+});
+
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
@@ -610,6 +687,8 @@ __export(schema_exports, {
   importIcdUzSchema: () => importIcdUzSchema,
   insertAllergySchema: () => insertAllergySchema,
   insertDepartmentSchema: () => insertDepartmentSchema,
+  insertDeviceErrorSchema: () => insertDeviceErrorSchema,
+  insertDeviceSchema: () => insertDeviceSchema,
   insertDoctorSchema: () => insertDoctorSchema,
   insertExpenseSchema: () => insertExpenseSchema,
   insertPatientSchema: () => insertPatientSchema,
@@ -617,6 +696,8 @@ __export(schema_exports, {
   insertServiceSchema: () => insertServiceSchema,
   insertTestSchema: () => insertTestSchema,
   insertUserSchema: () => insertUserSchema,
+  labDeviceErrors: () => labDeviceErrors,
+  labDevices: () => labDevices,
   labSettings: () => labSettings,
   labSettingsSchema: () => labSettingsSchema,
   localDayString: () => localDayString,
@@ -641,6 +722,7 @@ __export(schema_exports, {
   referrals: () => referrals,
   removeAllergySchema: () => removeAllergySchema,
   rescheduleAppointmentSchema: () => rescheduleAppointmentSchema,
+  resolveDeviceErrorSchema: () => resolveDeviceErrorSchema,
   returnResultsSchema: () => returnResultsSchema,
   roles: () => roles,
   samples: () => samples,
@@ -654,6 +736,7 @@ __export(schema_exports, {
   telegramContacts: () => telegramContacts,
   tests: () => tests,
   updateDepartmentSchema: () => updateDepartmentSchema,
+  updateDeviceSchema: () => updateDeviceSchema,
   updateDoctorSchema: () => updateDoctorSchema,
   updateExpenseSchema: () => updateExpenseSchema,
   updateIcdUzSchema: () => updateIcdUzSchema,
@@ -707,13 +790,14 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
     init_permissions();
     init_patient_identity();
     init_lab_catalogue();
+    init_lab_devices();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
     ORDER_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
@@ -1410,6 +1494,44 @@ var init_schema = __esm({
       director: text("director"),
       licenseNumber: text("license_number")
     });
+    labDevices = pgTable("lab_devices", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      name: text("name").notNull(),
+      manufacturer: text("manufacturer"),
+      model: text("model"),
+      serialNumber: text("serial_number"),
+      direction: text("direction").notNull().default("boshqa"),
+      connection: text("connection").notNull().default("manual"),
+      status: text("status").notNull().default("active"),
+      location: text("location"),
+      /** YYYY-MM-DD, a calendar day like the appointment dates. */
+      installedOn: text("installed_on"),
+      notes: text("notes"),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
+      updatedAt: isoTimestamp("updated_at"),
+      updatedBy: varchar("updated_by")
+    });
+    labDeviceErrors = pgTable(
+      "lab_device_errors",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        deviceId: varchar("device_id").notNull(),
+        occurredAt: isoTimestamp("occurred_at").notNull(),
+        severity: text("severity").notNull().default("error"),
+        code: text("code"),
+        message: text("message").notNull(),
+        actionTaken: text("action_taken"),
+        reportedBy: varchar("reported_by"),
+        reportedByName: text("reported_by_name"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        resolvedAt: isoTimestamp("resolved_at"),
+        resolvedBy: varchar("resolved_by"),
+        resolvedByName: text("resolved_by_name"),
+        resolution: text("resolution")
+      },
+      (t) => [index("IDX_lab_device_errors_device").on(t.deviceId, t.occurredAt)]
+    );
     NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"];
     birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
     emergencyContactSchema = z.object({
@@ -1730,6 +1852,33 @@ var init_schema = __esm({
       phone: z.string().trim().nullish().transform((v) => v ? normalizeUzPhone(v) : v),
       director: z.string().trim().nullish(),
       licenseNumber: z.string().trim().nullish()
+    });
+    optionalText = (max, label) => z.string().trim().max(max, `${label} juda uzun`).nullish().transform((v) => v ? v : null);
+    insertDeviceSchema = z.object({
+      name: z.string().trim().min(2, "Qurilma nomini kiriting").max(80, "Nom juda uzun"),
+      manufacturer: optionalText(80, "Ishlab chiqaruvchi"),
+      model: optionalText(80, "Model"),
+      serialNumber: optionalText(60, "Seriya raqami"),
+      direction: z.enum(DEVICE_DIRECTIONS, { errorMap: () => ({ message: "Yo'nalishni tanlang" }) }).default("boshqa"),
+      connection: z.enum(DEVICE_CONNECTIONS, { errorMap: () => ({ message: "Ulanish usulini tanlang" }) }).default("manual"),
+      status: z.enum(DEVICE_STATUSES, { errorMap: () => ({ message: "Holatni tanlang" }) }).default("active"),
+      location: optionalText(60, "Joylashuv"),
+      installedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Sana noto'g'ri").nullish().or(z.literal("")).transform((v) => v ? v : null),
+      notes: optionalText(500, "Izoh")
+    });
+    updateDeviceSchema = insertDeviceSchema.partial();
+    insertDeviceErrorSchema = z.object({
+      /** When it happened; defaults to now. */
+      occurredAt: z.string().datetime({ offset: true, message: "Vaqt noto'g'ri" }).nullish(),
+      severity: z.enum(ERROR_SEVERITIES, { errorMap: () => ({ message: "Darajani tanlang" }) }).default("error"),
+      code: optionalText(40, "Xato kodi"),
+      message: z.string().trim().min(3, "Nima bo'lganini yozing").max(1e3, "Matn juda uzun"),
+      actionTaken: optionalText(1e3, "Ko'rilgan chora"),
+      /** Takes the device out of service in the same step (a broken analyzer must not keep being used). */
+      markOutOfService: z.boolean().default(false)
+    });
+    resolveDeviceErrorSchema = z.object({
+      resolution: z.string().trim().min(3, "Nima qilinganini yozing").max(1e3, "Matn juda uzun")
     });
   }
 });
@@ -2793,7 +2942,7 @@ import { alias } from "drizzle-orm/pg-core";
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
+var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -2804,6 +2953,7 @@ var init_storage_pg = __esm({
     init_lab_catalogue();
     init_lab_board();
     init_branding();
+    init_lab_devices();
     init_icd10();
     init_lab_rules();
     init_patient_links();
@@ -2888,6 +3038,16 @@ var init_storage_pg = __esm({
       createdAt: iso(row.createdAt) ?? row.createdAt,
       updatedAt: iso(row.updatedAt),
       cancelledAt: iso(row.cancelledAt)
+    });
+    mapDevice = (row) => ({
+      ...row,
+      direction: row.direction,
+      connection: row.connection,
+      status: row.status
+    });
+    mapDeviceError = (row) => ({
+      ...row,
+      severity: row.severity
     });
     mapDepartment = (row) => ({
       ...row,
@@ -4902,6 +5062,94 @@ var init_storage_pg = __esm({
           unpaidAmount: r?.unpaid ?? 0
         };
       }
+      // ------------------------------------------------------ lab devices (B4.9)
+      async listDevices() {
+        const rows = await db.select({
+          d: labDevices,
+          errorCount: sql2`(SELECT count(*)::int FROM lab_device_errors e WHERE e.device_id = "lab_devices"."id")`,
+          openErrors: sql2`(SELECT count(*)::int FROM lab_device_errors e
+                                  WHERE e.device_id = "lab_devices"."id" AND e.resolved_at IS NULL)`,
+          lastErrorAt: sql2`(SELECT max(e.occurred_at) FROM lab_device_errors e WHERE e.device_id = "lab_devices"."id")`
+        }).from(labDevices).orderBy(asc(labDevices.name));
+        return rows.map((r) => ({
+          ...mapDevice(r.d),
+          errorCount: r.errorCount,
+          openErrors: r.openErrors,
+          lastErrorAt: r.lastErrorAt ? new Date(r.lastErrorAt).toISOString() : null
+        }));
+      }
+      async getDevice(id) {
+        const [row] = await db.select().from(labDevices).where(eq(labDevices.id, id)).limit(1);
+        return row && mapDevice(row);
+      }
+      async createDevice(input, actor) {
+        const [row] = await db.insert(labDevices).values({
+          name: input.name,
+          manufacturer: input.manufacturer ?? null,
+          model: input.model ?? null,
+          serialNumber: input.serialNumber ?? null,
+          direction: input.direction,
+          connection: input.connection,
+          status: input.status,
+          location: input.location ?? null,
+          installedOn: input.installedOn ?? null,
+          notes: input.notes ?? null,
+          createdBy: actor.id,
+          updatedBy: actor.id
+        }).returning();
+        return mapDevice(row);
+      }
+      async updateDevice(id, input, actor) {
+        const patch = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id };
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) patch[k] = v;
+        const [row] = await db.update(labDevices).set(patch).where(eq(labDevices.id, id)).returning();
+        return row && mapDevice(row);
+      }
+      async deleteDevice(id) {
+        return db.transaction(async (tx) => {
+          const [device] = await tx.select({ id: labDevices.id }).from(labDevices).where(eq(labDevices.id, id)).for("update");
+          if (!device) return false;
+          const [logged] = await tx.select({ id: labDeviceErrors.id }).from(labDeviceErrors).where(eq(labDeviceErrors.deviceId, id)).limit(1);
+          if (logged) throw new StorageConflict(DEVICE_HAS_LOG);
+          await tx.delete(labDevices).where(eq(labDevices.id, id));
+          return true;
+        });
+      }
+      async listDeviceErrors(query = {}) {
+        const where = [];
+        if (query.deviceId) where.push(eq(labDeviceErrors.deviceId, query.deviceId));
+        if (query.open) where.push(isNull(labDeviceErrors.resolvedAt));
+        const rows = await db.select({ e: labDeviceErrors, deviceName: labDevices.name }).from(labDeviceErrors).leftJoin(labDevices, eq(labDevices.id, labDeviceErrors.deviceId)).where(where.length ? and(...where) : void 0).orderBy(desc(labDeviceErrors.occurredAt), desc(labDeviceErrors.createdAt)).limit(query.limit ?? 200);
+        return rows.map((r) => ({ ...mapDeviceError(r.e), deviceName: r.deviceName ?? "\u2014" }));
+      }
+      async createDeviceError(deviceId, input, actor) {
+        return db.transaction(async (tx) => {
+          const [device] = await tx.select().from(labDevices).where(eq(labDevices.id, deviceId)).for("update");
+          if (!device) return void 0;
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          const [row] = await tx.insert(labDeviceErrors).values({
+            deviceId,
+            occurredAt: input.occurredAt ? new Date(input.occurredAt).toISOString() : now,
+            severity: input.severity,
+            code: input.code ?? null,
+            message: input.message,
+            actionTaken: input.actionTaken ?? null,
+            reportedBy: actor.id,
+            reportedByName: actor.name
+          }).returning();
+          if (input.markOutOfService && device.status !== "out_of_service") {
+            await tx.update(labDevices).set({ status: "out_of_service", updatedAt: now, updatedBy: actor.id }).where(eq(labDevices.id, deviceId));
+          }
+          return mapDeviceError(row);
+        });
+      }
+      async resolveDeviceError(id, resolution, actor) {
+        const [row] = await db.update(labDeviceErrors).set({ resolvedAt: (/* @__PURE__ */ new Date()).toISOString(), resolvedBy: actor.id, resolvedByName: actor.name, resolution }).where(and(eq(labDeviceErrors.id, id), isNull(labDeviceErrors.resolvedAt))).returning();
+        if (row) return mapDeviceError(row);
+        const [exists] = await db.select({ id: labDeviceErrors.id }).from(labDeviceErrors).where(eq(labDeviceErrors.id, id)).limit(1);
+        if (exists) throw new StorageConflict(DEVICE_ERROR_ALREADY_RESOLVED);
+        return void 0;
+      }
       async getLabBoard(day) {
         const local = (col) => sql2.raw(`(${col} AT TIME ZONE current_setting('TIMEZONE'))::date`);
         const countsQuery = db.execute(sql2`
@@ -5182,6 +5430,8 @@ var init_db = __esm({
       patientAllergies: [],
       referrals: [],
       notifications: [],
+      labDevices: [],
+      labDeviceErrors: [],
       icdUzNames: {},
       security: null,
       patients: [],
@@ -5243,6 +5493,7 @@ var init_storage_file = __esm({
     init_referral();
     init_lab_catalogue();
     init_lab_board();
+    init_lab_devices();
     init_icd10();
     init_lab_verification();
     init_lab_rules();
@@ -7202,6 +7453,96 @@ var init_storage_file = __esm({
           totalPatients: this.db.patients.length,
           unpaidAmount: this.db.orders.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + Math.max(0, o.totalAmount - o.paidAmount), 0)
         };
+      }
+      // ------------------------------------------------------ lab devices (B4.9)
+      async listDevices() {
+        return this.db.labDevices.map((d) => {
+          const log2 = this.db.labDeviceErrors.filter((e) => e.deviceId === d.id);
+          const last = log2.reduce((m, e) => !m || e.occurredAt > m ? e.occurredAt : m, null);
+          return { ...d, errorCount: log2.length, openErrors: log2.filter((e) => !e.resolvedAt).length, lastErrorAt: last };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+      }
+      async getDevice(id) {
+        const d = this.db.labDevices.find((x) => x.id === id);
+        return d && { ...d };
+      }
+      async createDevice(input, actor) {
+        const device = {
+          id: randomUUID(),
+          name: input.name,
+          manufacturer: input.manufacturer ?? null,
+          model: input.model ?? null,
+          serialNumber: input.serialNumber ?? null,
+          direction: input.direction,
+          connection: input.connection,
+          status: input.status,
+          location: input.location ?? null,
+          installedOn: input.installedOn ?? null,
+          notes: input.notes ?? null,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: actor.id
+        };
+        this.db.labDevices.push(device);
+        await this.persist();
+        return { ...device };
+      }
+      async updateDevice(id, input, actor) {
+        const d = this.db.labDevices.find((x) => x.id === id);
+        if (!d) return void 0;
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) d[k] = v;
+        d.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        d.updatedBy = actor.id;
+        await this.persist();
+        return { ...d };
+      }
+      async deleteDevice(id) {
+        const i = this.db.labDevices.findIndex((x) => x.id === id);
+        if (i < 0) return false;
+        if (this.db.labDeviceErrors.some((e) => e.deviceId === id)) throw new StorageConflict(DEVICE_HAS_LOG);
+        this.db.labDevices.splice(i, 1);
+        await this.persist();
+        return true;
+      }
+      async listDeviceErrors(query = {}) {
+        const names = new Map(this.db.labDevices.map((d) => [d.id, d.name]));
+        return this.db.labDeviceErrors.filter((e) => (!query.deviceId || e.deviceId === query.deviceId) && (!query.open || !e.resolvedAt)).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.createdAt.localeCompare(a.createdAt)).slice(0, query.limit ?? 200).map((e) => ({ ...e, deviceName: names.get(e.deviceId) ?? "\u2014" }));
+      }
+      async createDeviceError(deviceId, input, actor) {
+        const device = this.db.labDevices.find((x) => x.id === deviceId);
+        if (!device) return void 0;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const entry = {
+          id: randomUUID(),
+          deviceId,
+          occurredAt: input.occurredAt ? new Date(input.occurredAt).toISOString() : now,
+          severity: input.severity,
+          code: input.code ?? null,
+          message: input.message,
+          actionTaken: input.actionTaken ?? null,
+          reportedBy: actor.id,
+          reportedByName: actor.name,
+          createdAt: now,
+          resolvedAt: null,
+          resolvedBy: null,
+          resolvedByName: null,
+          resolution: null
+        };
+        this.db.labDeviceErrors.push(entry);
+        if (input.markOutOfService && device.status !== "out_of_service") {
+          Object.assign(device, { status: "out_of_service", updatedAt: now, updatedBy: actor.id });
+        }
+        await this.persist();
+        return { ...entry };
+      }
+      async resolveDeviceError(id, resolution, actor) {
+        const e = this.db.labDeviceErrors.find((x) => x.id === id);
+        if (!e) return void 0;
+        if (e.resolvedAt) throw new StorageConflict(DEVICE_ERROR_ALREADY_RESOLVED);
+        Object.assign(e, { resolvedAt: (/* @__PURE__ */ new Date()).toISOString(), resolvedBy: actor.id, resolvedByName: actor.name, resolution });
+        await this.persist();
+        return { ...e };
       }
       async getLabBoard(day) {
         const all = this.db.orders.map((o) => this.hydrate(o));
@@ -9313,6 +9654,136 @@ function labResults(orders2) {
   );
 }
 
+// server/routes-lab.ts
+init_schema();
+init_lab_devices();
+function registerLabRoutes(app) {
+  async function nameTaken(name, exceptId) {
+    const key = deviceNameKey(name);
+    return (await storage.listDevices()).some((d) => d.id !== exceptId && deviceNameKey(d.name) === key);
+  }
+  app.get(
+    "/api/devices",
+    requirePermission("devices.read"),
+    handle(async (_req, res) => {
+      res.json(await storage.listDevices().catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.post(
+    "/api/devices",
+    requirePermission("devices.manage"),
+    handle(async (req, res) => {
+      const input = insertDeviceSchema.parse(req.body);
+      if (await nameTaken(input.name)) return res.status(409).json({ message: "Bunday nomli qurilma allaqachon bor" });
+      const device = await storage.createDevice(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "device",
+        device.id,
+        `"${device.name}" analizatori qo'shildi (${DEVICE_DIRECTION_LABELS[device.direction]}, ${DEVICE_CONNECTION_LABELS[device.connection]})`
+      );
+      res.status(201).json({ ...device, errorCount: 0, openErrors: 0, lastErrorAt: null });
+    })
+  );
+  app.patch(
+    "/api/devices/:id",
+    requirePermission("devices.manage"),
+    handle(async (req, res) => {
+      const input = updateDeviceSchema.parse(req.body);
+      const before = await storage.getDevice(req.params.id);
+      if (!before) return res.status(404).json({ message: "Qurilma topilmadi" });
+      if (input.name && await nameTaken(input.name, before.id)) {
+        return res.status(409).json({ message: "Bunday nomli qurilma allaqachon bor" });
+      }
+      const device = await storage.updateDevice(before.id, input, actorOf(req));
+      if (!device) return res.status(404).json({ message: "Qurilma topilmadi" });
+      const changes = [];
+      if (device.name !== before.name) changes.push(`nomi: ${before.name} \u2192 ${device.name}`);
+      if (device.status !== before.status) {
+        changes.push(`holati: ${DEVICE_STATUS_LABELS[before.status]} \u2192 ${DEVICE_STATUS_LABELS[device.status]}`);
+      }
+      if (device.connection !== before.connection) {
+        changes.push(`ulanish: ${DEVICE_CONNECTION_LABELS[before.connection]} \u2192 ${DEVICE_CONNECTION_LABELS[device.connection]}`);
+      }
+      if (device.direction !== before.direction) changes.push(`yo'nalish: ${DEVICE_DIRECTION_LABELS[device.direction]}`);
+      for (const [key, label] of [
+        ["manufacturer", "ishlab chiqaruvchi"],
+        ["model", "model"],
+        ["serialNumber", "seriya raqami"],
+        ["location", "joylashuv"],
+        ["installedOn", "o'rnatilgan sana"],
+        ["notes", "izoh"]
+      ]) {
+        if (device[key] !== before[key]) changes.push(label);
+      }
+      await audit(req, "update", "device", device.id, `"${device.name}" analizatori \u2014 ${changes.join(", ") || "o'zgarishsiz saqlandi"}`);
+      res.json(device);
+    })
+  );
+  app.delete(
+    "/api/devices/:id",
+    requirePermission("devices.manage"),
+    handle(async (req, res) => {
+      const device = await storage.getDevice(req.params.id);
+      if (!device) return res.status(404).json({ message: "Qurilma topilmadi" });
+      await storage.deleteDevice(device.id);
+      await audit(req, "delete", "device", device.id, `"${device.name}" analizatori o'chirildi`);
+      res.sendStatus(204);
+    })
+  );
+  app.get(
+    "/api/device-errors",
+    requirePermission("devices.read"),
+    handle(async (req, res) => {
+      const limit = Number(stringParam(req.query.limit) ?? 200);
+      res.json(
+        await storage.listDeviceErrors({
+          deviceId: stringParam(req.query.deviceId),
+          open: req.query.open === "1",
+          limit: Number.isFinite(limit) ? Math.min(Math.max(1, limit), 500) : 200
+        }).catch((e) => emptyIfMissing(e, []))
+      );
+    })
+  );
+  app.post(
+    "/api/devices/:id/errors",
+    requirePermission("devices.log"),
+    handle(async (req, res) => {
+      const input = insertDeviceErrorSchema.parse(req.body);
+      if (input.occurredAt) {
+        const problem = occurredAtProblem(input.occurredAt);
+        if (problem) return res.status(400).json({ message: problem });
+      }
+      const device = await storage.getDevice(req.params.id);
+      if (!device) return res.status(404).json({ message: "Qurilma topilmadi" });
+      const entry = await storage.createDeviceError(device.id, input, actorOf(req));
+      if (!entry) return res.status(404).json({ message: "Qurilma topilmadi" });
+      const retired = input.markOutOfService && device.status !== "out_of_service";
+      await audit(
+        req,
+        "create",
+        "device",
+        device.id,
+        `"${device.name}": ${ERROR_SEVERITY_LABELS[entry.severity].toLowerCase()} qayd etildi${entry.code ? ` (${entry.code})` : ""} \u2014 ${entry.message}` + (retired ? `; qurilma "${DEVICE_STATUS_LABELS.out_of_service}" deb belgilandi` : "")
+      );
+      res.status(201).json(entry);
+    })
+  );
+  app.post(
+    "/api/device-errors/:id/resolve",
+    requirePermission("devices.log"),
+    handle(async (req, res) => {
+      const { resolution } = resolveDeviceErrorSchema.parse(req.body);
+      const entry = await storage.resolveDeviceError(req.params.id, resolution, actorOf(req));
+      if (!entry) return res.status(404).json({ message: "Yozuv topilmadi" });
+      const device = await storage.getDevice(entry.deviceId);
+      await audit(req, "update", "device", entry.deviceId, `"${device?.name ?? "\u2014"}": xato hal qilindi \u2014 ${resolution}`);
+      res.json(entry);
+    })
+  );
+}
+
 // server/routes.ts
 async function registerRoutes(app) {
   setupAuth(app);
@@ -11089,6 +11560,7 @@ async function registerRoutes(app) {
   );
   registerClinicRoutes(app);
   registerMedicalRoutes(app);
+  registerLabRoutes(app);
   app.use("/api", (req, res, next) => {
     if (res.headersSent) return next();
     res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });

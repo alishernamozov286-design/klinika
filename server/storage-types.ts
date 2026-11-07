@@ -5,6 +5,15 @@ import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type {
+  InsertDevice,
+  InsertDeviceErrorInput,
+  LabDevice,
+  LabDeviceError,
+  LabDeviceErrorWithDevice,
+  LabDeviceWithStats,
+  UpdateDeviceInput,
+} from "@shared/schema";
+import type {
   AuditEntry,
   CreatePaymentInput,
   DashboardStatsData,
@@ -737,6 +746,19 @@ export interface IStorage {
   getReceptionDay(day: string): Promise<ReceptionDay>;
   /** Laboratoriya bosh sahifasi (TZ §6.1.1); the rules are in shared/lab-board.ts. */
   getLabBoard(day: string): Promise<LabBoard>;
+
+  // ------------------------------------------------- lab devices (B4.9)
+  listDevices(): Promise<LabDeviceWithStats[]>;
+  getDevice(id: string): Promise<LabDevice | undefined>;
+  createDevice(input: InsertDevice, actor: Actor): Promise<LabDevice>;
+  updateDevice(id: string, input: UpdateDeviceInput, actor: Actor): Promise<LabDevice | undefined>;
+  /** Throws StorageConflict (DEVICE_HAS_LOG) for a device with log entries: retire it instead. */
+  deleteDevice(id: string): Promise<boolean>;
+  listDeviceErrors(query?: { deviceId?: string; open?: boolean; limit?: number }): Promise<LabDeviceErrorWithDevice[]>;
+  /** Logs an entry; with markOutOfService the device is taken out of service in the same step. Undefined: no such device. */
+  createDeviceError(deviceId: string, input: InsertDeviceErrorInput, actor: Actor): Promise<LabDeviceError | undefined>;
+  /** Closes an open entry. A second close throws StorageConflict; undefined: no such entry. */
+  resolveDeviceError(id: string, resolution: string, actor: Actor): Promise<LabDeviceError | undefined>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

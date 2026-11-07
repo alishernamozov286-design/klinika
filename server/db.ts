@@ -1,4 +1,5 @@
 import type { ClinicLogo } from "@shared/branding";
+import type { LabDevice, LabDeviceError } from "@shared/schema";
 import { promises as fs } from "fs";
 import fsSync from "fs";
 import path from "path";
@@ -44,6 +45,8 @@ export type DbShape = {
   patientAllergies: Omit<PatientAllergy, "createdByName">[];
   referrals: Referral[];
   notifications: (AppNotification & { dedupeKey: string | null })[];
+  labDevices: LabDevice[];
+  labDeviceErrors: LabDeviceError[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
   security: SecuritySettings | null;
@@ -90,6 +93,8 @@ export const emptyDb = (): DbShape => ({
   patientAllergies: [],
   referrals: [],
   notifications: [],
+  labDevices: [],
+  labDeviceErrors: [],
   icdUzNames: {},
   security: null,
   patients: [],

@@ -5,6 +5,16 @@ import { z } from "zod";
 import { isPermission, type Permission } from "./permissions";
 import { normalizePassport, normalizePinfl } from "./patient-identity";
 import { SAMPLE_QUALITIES, SAMPLE_TYPES, TEST_GROUPS, type SampleType, type TestGroup } from "./lab-catalogue";
+import {
+  DEVICE_CONNECTIONS,
+  DEVICE_DIRECTIONS,
+  DEVICE_STATUSES,
+  ERROR_SEVERITIES,
+  type DeviceConnection,
+  type DeviceDirection,
+  type DeviceStatus,
+  type ErrorSeverity,
+} from "./lab-devices";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -1013,6 +1023,54 @@ export const labSettings = pgTable("lab_settings", {
   licenseNumber: text("license_number"),
 });
 
+/**
+ * Analizatorlar (B4.9, TZ §6.4). Rules and labels: shared/lab-devices.ts.
+ * A device with log entries is never deleted, only taken out of service.
+ */
+export const labDevices = pgTable("lab_devices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  manufacturer: text("manufacturer"),
+  model: text("model"),
+  serialNumber: text("serial_number"),
+  direction: text("direction").notNull().default("boshqa"),
+  connection: text("connection").notNull().default("manual"),
+  status: text("status").notNull().default("active"),
+  location: text("location"),
+  /** YYYY-MM-DD, a calendar day like the appointment dates. */
+  installedOn: text("installed_on"),
+  notes: text("notes"),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
+  updatedAt: isoTimestamp("updated_at"),
+  updatedBy: varchar("updated_by"),
+});
+
+/**
+ * TZ §6.4 "Qurilma xatolarini qayd etish". Append-only: an entry is closed
+ * with what was done (resolved_*), never edited or deleted.
+ */
+export const labDeviceErrors = pgTable(
+  "lab_device_errors",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    deviceId: varchar("device_id").notNull(),
+    occurredAt: isoTimestamp("occurred_at").notNull(),
+    severity: text("severity").notNull().default("error"),
+    code: text("code"),
+    message: text("message").notNull(),
+    actionTaken: text("action_taken"),
+    reportedBy: varchar("reported_by"),
+    reportedByName: text("reported_by_name"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    resolvedAt: isoTimestamp("resolved_at"),
+    resolvedBy: varchar("resolved_by"),
+    resolvedByName: text("resolved_by_name"),
+    resolution: text("resolution"),
+  },
+  (t) => [index("IDX_lab_device_errors_device").on(t.deviceId, t.occurredAt)],
+);
+
 // ---------------------------------------------------------------- types
 
 export type User = typeof users.$inferSelect;
@@ -1246,6 +1304,16 @@ export const NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 export type AppNotification = Omit<typeof notifications.$inferSelect, "kind" | "dedupeKey"> & { kind: NotificationKind };
 export type NotificationFeed = { items: AppNotification[]; unread: number };
+
+export type LabDevice = Omit<typeof labDevices.$inferSelect, "direction" | "connection" | "status"> & {
+  direction: DeviceDirection;
+  connection: DeviceConnection;
+  status: DeviceStatus;
+};
+/** The device list with what its log says, counted in the same query. */
+export type LabDeviceWithStats = LabDevice & { errorCount: number; openErrors: number; lastErrorAt: string | null };
+export type LabDeviceError = Omit<typeof labDeviceErrors.$inferSelect, "severity"> & { severity: ErrorSeverity };
+export type LabDeviceErrorWithDevice = LabDeviceError & { deviceName: string };
 
 export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
   kind: ReferralKind;
@@ -2128,6 +2196,51 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type LabSettingsInput = z.infer<typeof labSettingsSchema>;
+
+const optionalText = (max: number, label: string) =>
+  z
+    .string()
+    .trim()
+    .max(max, `${label} juda uzun`)
+    .nullish()
+    .transform((v) => (v ? v : null));
+
+export const insertDeviceSchema = z.object({
+  name: z.string().trim().min(2, "Qurilma nomini kiriting").max(80, "Nom juda uzun"),
+  manufacturer: optionalText(80, "Ishlab chiqaruvchi"),
+  model: optionalText(80, "Model"),
+  serialNumber: optionalText(60, "Seriya raqami"),
+  direction: z.enum(DEVICE_DIRECTIONS, { errorMap: () => ({ message: "Yo'nalishni tanlang" }) }).default("boshqa"),
+  connection: z.enum(DEVICE_CONNECTIONS, { errorMap: () => ({ message: "Ulanish usulini tanlang" }) }).default("manual"),
+  status: z.enum(DEVICE_STATUSES, { errorMap: () => ({ message: "Holatni tanlang" }) }).default("active"),
+  location: optionalText(60, "Joylashuv"),
+  installedOn: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Sana noto'g'ri")
+    .nullish()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
+  notes: optionalText(500, "Izoh"),
+});
+export const updateDeviceSchema = insertDeviceSchema.partial();
+export type InsertDevice = z.infer<typeof insertDeviceSchema>;
+export type UpdateDeviceInput = z.infer<typeof updateDeviceSchema>;
+
+export const insertDeviceErrorSchema = z.object({
+  /** When it happened; defaults to now. */
+  occurredAt: z.string().datetime({ offset: true, message: "Vaqt noto'g'ri" }).nullish(),
+  severity: z.enum(ERROR_SEVERITIES, { errorMap: () => ({ message: "Darajani tanlang" }) }).default("error"),
+  code: optionalText(40, "Xato kodi"),
+  message: z.string().trim().min(3, "Nima bo'lganini yozing").max(1000, "Matn juda uzun"),
+  actionTaken: optionalText(1000, "Ko'rilgan chora"),
+  /** Takes the device out of service in the same step (a broken analyzer must not keep being used). */
+  markOutOfService: z.boolean().default(false),
+});
+export type InsertDeviceErrorInput = z.infer<typeof insertDeviceErrorSchema>;
+
+export const resolveDeviceErrorSchema = z.object({
+  resolution: z.string().trim().min(3, "Nima qilinganini yozing").max(1000, "Matn juda uzun"),
+});
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

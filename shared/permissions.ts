@@ -174,6 +174,21 @@ export const PERMISSIONS = {
     label: "Tahlillar katalogi",
     description: "Tahlil qo'shish, narx va referens oraliqlarni o'zgartirish",
   },
+  "devices.read": {
+    group: "lab",
+    label: "Analizatorlar",
+    description: "Analizatorlar ro'yxati va qurilma xatolari jurnalini ko'rish (TZ §6.4)",
+  },
+  "devices.log": {
+    group: "lab",
+    label: "Qurilma xatosini qayd etish",
+    description: "Analizator xatosini jurnalga yozish, hal qilinganini belgilash, nosoz qurilmani ishdan chiqqan deb belgilash",
+  },
+  "devices.manage": {
+    group: "lab",
+    label: "Analizatorlarni boshqarish",
+    description: "Qurilma qo'shish, tahrirlash, holatini o'zgartirish va jurnali bo'lmagan qurilmani o'chirish",
+  },
 
   "finance.view": {
     group: "finance",
@@ -334,6 +349,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "reports.view",
       "data.export",
       "audit.read",
+      "devices.read",
     ],
   },
   {
@@ -377,7 +393,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "laborant",
     name: "Laborant",
     description: "Namunalarni qabul qilish va tahlil natijalarini kiritish",
-    permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send"],
+    permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send", "devices.read", "devices.log"],
   },
   {
     key: "lab_mudiri",
@@ -393,6 +409,9 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "results.amend",
       "results.send",
       "tests.manage",
+      "devices.read",
+      "devices.log",
+      "devices.manage",
       "reports.view",
     ],
   },
@@ -440,6 +459,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "expenses.read",
       "reports.view",
       "audit.read",
+      "devices.read",
     ],
   },
 ];

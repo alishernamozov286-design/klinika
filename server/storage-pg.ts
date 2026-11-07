@@ -3,6 +3,8 @@ import { alias } from "drizzle-orm/pg-core";
 import { defaultTests, testReferences } from "@shared/tests-data";
 import {
   appSettings,
+  labDevices,
+  labDeviceErrors,
   auditLog,
   departments,
   doctors,
@@ -113,6 +115,16 @@ import { referralStage } from "@shared/referral";
 import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, type LabBoard, type LabBoardCounts } from "@shared/lab-board";
 import { checkLogo, type ClinicLogo } from "@shared/branding";
+import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
+import type {
+  InsertDevice,
+  InsertDeviceErrorInput,
+  LabDevice,
+  LabDeviceError,
+  LabDeviceErrorWithDevice,
+  LabDeviceWithStats,
+  UpdateDeviceInput,
+} from "@shared/schema";
 import { ICD_SOURCE, normalizeIcdCode } from "@shared/icd10";
 import { amendProblem, pickForVerification } from "./lab-rules";
 import { BLOCKING_TABLES, patientHistoryProblem, type BlockingTable } from "@shared/patient-links";
@@ -255,6 +267,17 @@ const mapExpense = (row: typeof expenses.$inferSelect): Expense => ({
   createdAt: iso(row.createdAt) ?? row.createdAt,
   updatedAt: iso(row.updatedAt),
   cancelledAt: iso(row.cancelledAt),
+});
+
+const mapDevice = (row: typeof labDevices.$inferSelect): LabDevice => ({
+  ...row,
+  direction: row.direction as LabDevice["direction"],
+  connection: row.connection as LabDevice["connection"],
+  status: row.status as LabDevice["status"],
+});
+const mapDeviceError = (row: typeof labDeviceErrors.$inferSelect): LabDeviceError => ({
+  ...row,
+  severity: row.severity as LabDeviceError["severity"],
 });
 
 const mapDepartment = (row: typeof departments.$inferSelect): Department => ({
@@ -3156,6 +3179,126 @@ export class PgStorage implements IStorage {
       totalPatients: r?.total_patients ?? 0,
       unpaidAmount: r?.unpaid ?? 0,
     };
+  }
+
+  // ------------------------------------------------------ lab devices (B4.9)
+
+  async listDevices(): Promise<LabDeviceWithStats[]> {
+    const rows = await db
+      .select({
+        d: labDevices,
+        errorCount: sql<number>`(SELECT count(*)::int FROM lab_device_errors e WHERE e.device_id = "lab_devices"."id")`,
+        openErrors: sql<number>`(SELECT count(*)::int FROM lab_device_errors e
+                                  WHERE e.device_id = "lab_devices"."id" AND e.resolved_at IS NULL)`,
+        lastErrorAt: sql<string | Date | null>`(SELECT max(e.occurred_at) FROM lab_device_errors e WHERE e.device_id = "lab_devices"."id")`,
+      })
+      .from(labDevices)
+      .orderBy(asc(labDevices.name));
+    return rows.map((r) => ({
+      ...mapDevice(r.d),
+      errorCount: r.errorCount,
+      openErrors: r.openErrors,
+      lastErrorAt: r.lastErrorAt ? new Date(r.lastErrorAt).toISOString() : null,
+    }));
+  }
+
+  async getDevice(id: string): Promise<LabDevice | undefined> {
+    const [row] = await db.select().from(labDevices).where(eq(labDevices.id, id)).limit(1);
+    return row && mapDevice(row);
+  }
+
+  async createDevice(input: InsertDevice, actor: Actor): Promise<LabDevice> {
+    const [row] = await db
+      .insert(labDevices)
+      .values({
+        name: input.name,
+        manufacturer: input.manufacturer ?? null,
+        model: input.model ?? null,
+        serialNumber: input.serialNumber ?? null,
+        direction: input.direction,
+        connection: input.connection,
+        status: input.status,
+        location: input.location ?? null,
+        installedOn: input.installedOn ?? null,
+        notes: input.notes ?? null,
+        createdBy: actor.id,
+        updatedBy: actor.id,
+      })
+      .returning();
+    return mapDevice(row);
+  }
+
+  async updateDevice(id: string, input: UpdateDeviceInput, actor: Actor): Promise<LabDevice | undefined> {
+    const patch: Partial<typeof labDevices.$inferInsert> = { updatedAt: new Date().toISOString(), updatedBy: actor.id };
+    for (const [k, v] of Object.entries(input)) if (v !== undefined) (patch as Record<string, unknown>)[k] = v;
+    const [row] = await db.update(labDevices).set(patch).where(eq(labDevices.id, id)).returning();
+    return row && mapDevice(row);
+  }
+
+  async deleteDevice(id: string): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const [device] = await tx.select({ id: labDevices.id }).from(labDevices).where(eq(labDevices.id, id)).for("update");
+      if (!device) return false;
+      const [logged] = await tx.select({ id: labDeviceErrors.id }).from(labDeviceErrors).where(eq(labDeviceErrors.deviceId, id)).limit(1);
+      if (logged) throw new StorageConflict(DEVICE_HAS_LOG);
+      await tx.delete(labDevices).where(eq(labDevices.id, id));
+      return true;
+    });
+  }
+
+  async listDeviceErrors(query: { deviceId?: string; open?: boolean; limit?: number } = {}): Promise<LabDeviceErrorWithDevice[]> {
+    const where = [];
+    if (query.deviceId) where.push(eq(labDeviceErrors.deviceId, query.deviceId));
+    if (query.open) where.push(isNull(labDeviceErrors.resolvedAt));
+    const rows = await db
+      .select({ e: labDeviceErrors, deviceName: labDevices.name })
+      .from(labDeviceErrors)
+      .leftJoin(labDevices, eq(labDevices.id, labDeviceErrors.deviceId))
+      .where(where.length ? and(...where) : undefined)
+      .orderBy(desc(labDeviceErrors.occurredAt), desc(labDeviceErrors.createdAt))
+      .limit(query.limit ?? 200);
+    return rows.map((r) => ({ ...mapDeviceError(r.e), deviceName: r.deviceName ?? "—" }));
+  }
+
+  async createDeviceError(deviceId: string, input: InsertDeviceErrorInput, actor: Actor): Promise<LabDeviceError | undefined> {
+    return db.transaction(async (tx) => {
+      const [device] = await tx.select().from(labDevices).where(eq(labDevices.id, deviceId)).for("update");
+      if (!device) return undefined;
+      const now = new Date().toISOString();
+      const [row] = await tx
+        .insert(labDeviceErrors)
+        .values({
+          deviceId,
+          occurredAt: input.occurredAt ? new Date(input.occurredAt).toISOString() : now,
+          severity: input.severity,
+          code: input.code ?? null,
+          message: input.message,
+          actionTaken: input.actionTaken ?? null,
+          reportedBy: actor.id,
+          reportedByName: actor.name,
+        })
+        .returning();
+      if (input.markOutOfService && device.status !== "out_of_service") {
+        await tx
+          .update(labDevices)
+          .set({ status: "out_of_service", updatedAt: now, updatedBy: actor.id })
+          .where(eq(labDevices.id, deviceId));
+      }
+      return mapDeviceError(row);
+    });
+  }
+
+  async resolveDeviceError(id: string, resolution: string, actor: Actor): Promise<LabDeviceError | undefined> {
+    // Closing is one conditional UPDATE: two people pressing at once, one wins.
+    const [row] = await db
+      .update(labDeviceErrors)
+      .set({ resolvedAt: new Date().toISOString(), resolvedBy: actor.id, resolvedByName: actor.name, resolution })
+      .where(and(eq(labDeviceErrors.id, id), isNull(labDeviceErrors.resolvedAt)))
+      .returning();
+    if (row) return mapDeviceError(row);
+    const [exists] = await db.select({ id: labDeviceErrors.id }).from(labDeviceErrors).where(eq(labDeviceErrors.id, id)).limit(1);
+    if (exists) throw new StorageConflict(DEVICE_ERROR_ALREADY_RESOLVED);
+    return undefined;
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {

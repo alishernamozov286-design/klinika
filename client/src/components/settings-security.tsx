@@ -92,6 +92,7 @@ const ENTITIES = [
   { value: "record", label: "Ko'rik yozuvlari" },
   { value: "referral", label: "Yo'llanmalar" },
   { value: "service", label: "Xizmatlar" },
+  { value: "device", label: "Analizatorlar" },
   { value: "session", label: "Seanslar" },
   { value: "settings", label: "Sozlamalar" },
   { value: "expense", label: "Xarajatlar" },
