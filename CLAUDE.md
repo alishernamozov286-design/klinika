@@ -309,7 +309,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Katalog endi har bir mahsulotning **qoldig'ini** (tirik partiyalar yig'indisi) va eng yaqin muddatini ko'rsatadi; "kam qolgan" ko'rsatkichi. Jadvallar yo'q bazada katalog qoldiqni 0 deb ishlaydi.
   - Ruxsat: `inventory.receive` (omborchi). Audit: kirim (yetkazib beruvchi, qatorlar, LOT, jami) va bekor qilish.
   - UI: Ombor → "Kirim" tabi: oy bo'yicha jami, hujjatlar ro'yxati, yangi kirim (ko'p qatorli, telefonda har maydon nomi bilan, jami jonli hisoblanadi), hujjat ko'rinishi va **chop etish** (imzo joylari bilan), bekor qilingani muhr bilan.
-  - Migratsiya: `npm run db:stock` (`db:upgrade` ichida). Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi (CHECK'lar, identity, katalog so'rovi, bekor qilishda daftar nolga tushishi).
+  - Migratsiya: `npm run db:stock` (`db:upgrade` ichida). Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi (CHECK'lar, identity, katalog so'rovi, bekor qilishda daftar nolga tushishi), so'ng bajarildi (2026-11-08): 3 jadval, indekslar, omborchiga ruxsat; qayta ishga tushirish hech narsani o'zgartirmadi.
   - Testlar: `shared/inventory.test.ts` (+4), `storage-file.test.ts` (2), brauzerda omborchi va lab mudiri yo'li (26 tekshiruv, telefon o'lchami bilan).
 - [ ] **B5.3** Chiqim va bo‘limlarga berish (`§7.1`): qaysi bo‘limga, kim oldi. FEFO (muddati yaqinini birinchi).
 - [ ] **B5.4** Qoldiq va yaroqlilik muddati (`§7.1`, `§7.3`): partiyalar bo‘yicha qoldiq, muddati yaqinlashganlar haqida ogohlantirish.
