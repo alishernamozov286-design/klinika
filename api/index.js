@@ -207,7 +207,12 @@ var init_permissions = __esm({
       "inventory.manage": {
         group: "warehouse",
         label: "Katalogni boshqarish",
-        description: "Mahsulot qo'shish, tahrirlash, faolsizlantirish; birlik, minimal qoldiq va narx"
+        description: "Mahsulot qo'shish, tahrirlash, faolsizlantirish; birlik, minimal qoldiq va narx; kirimni bekor qilish"
+      },
+      "inventory.receive": {
+        group: "warehouse",
+        label: "Kirim",
+        description: "Kirim hujjatini rasmiylashtirish: yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (TZ \xA77.3)"
       },
       "finance.view": {
         group: "finance",
@@ -402,7 +407,7 @@ var init_permissions = __esm({
         key: "omborchi",
         name: "Omborchi",
         description: "Ombor: kirim, chiqim va qoldiq",
-        permissions: ["inventory.read", "inventory.manage"]
+        permissions: ["inventory.read", "inventory.manage", "inventory.receive"]
       },
       {
         key: "hamshira",
@@ -741,7 +746,27 @@ var init_qc = __esm({
 });
 
 // shared/inventory.ts
-var INVENTORY_KINDS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN;
+function receiptLineProblem(item, line, today) {
+  if (!item) return "Mahsulot topilmadi";
+  if (!item.isActive) return `"${item.name}" faolsizlantirilgan \u2014 avval katalogda faollashtiring`;
+  if (!(line.quantity > 0)) return `"${item.name}": miqdor musbat bo'lishi kerak`;
+  if (isLotTracked(item.kind)) {
+    if (!line.lotNumber) return `"${item.name}": LOT raqamini kiriting`;
+    if (!line.expiresOn) return `"${item.name}": yaroqlilik muddatini kiriting`;
+  }
+  if (line.expiresOn && line.expiresOn < today) return `"${item.name}": yaroqlilik muddati o'tgan (${line.expiresOn}) \u2014 qabul qilinmaydi`;
+  return null;
+}
+function duplicateLine(lines) {
+  const seen = /* @__PURE__ */ new Set();
+  for (let i = 0; i < lines.length; i++) {
+    const key = `${lines[i].itemId}|${inventoryKey(lines[i].lotNumber ?? "")}`;
+    if (seen.has(key)) return i;
+    seen.add(key);
+  }
+  return null;
+}
+var INVENTORY_KINDS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN, LOT_TRACKED, isLotTracked, MAX_RECEIPT_LINES, lineTotal, ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE;
 var init_inventory = __esm({
   "shared/inventory.ts"() {
     "use strict";
@@ -768,6 +793,13 @@ var init_inventory = __esm({
     inventoryKey = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
     INVENTORY_NAME_TAKEN = "Bunday nomli mahsulot allaqachon bor";
     INVENTORY_CODE_TAKEN = "Bu artikul boshqa mahsulotga berilgan";
+    LOT_TRACKED = ["reagent", "calibrator", "control", "medicine"];
+    isLotTracked = (kind) => LOT_TRACKED.includes(kind);
+    MAX_RECEIPT_LINES = 100;
+    lineTotal = (quantity, price) => Math.round(quantity * price);
+    ITEM_HAS_STOCK_HISTORY = "Bu mahsulot bo'yicha kirim yoki chiqim bor, shuning uchun o'chirilmaydi. Uni faolsizlantiring.";
+    RECEIPT_ALREADY_CANCELLED = "Bu kirim allaqachon bekor qilingan";
+    RECEIPT_IN_USE = "Bu kirimdagi mahsulotdan foydalanilgan, shuning uchun bekor qilib bo'lmaydi. Ortiqchasini chiqim yoki inventarizatsiya orqali tuzating.";
   }
 });
 
@@ -822,6 +854,7 @@ __export(schema_exports, {
   createAppointmentSchema: () => createAppointmentSchema,
   createOrderSchema: () => createOrderSchema,
   createPaymentSchema: () => createPaymentSchema,
+  createReceiptSchema: () => createReceiptSchema,
   createReferralSchema: () => createReferralSchema,
   daysBetween: () => daysBetween,
   departments: () => departments,
@@ -850,6 +883,7 @@ __export(schema_exports, {
   insertServiceSchema: () => insertServiceSchema,
   insertTestSchema: () => insertTestSchema,
   insertUserSchema: () => insertUserSchema,
+  inventoryBatches: () => inventoryBatches,
   inventoryItems: () => inventoryItems,
   labDeviceErrors: () => labDeviceErrors,
   labDevices: () => labDevices,
@@ -876,6 +910,7 @@ __export(schema_exports, {
   qcMaterials: () => qcMaterials,
   qcResults: () => qcResults,
   qcTargets: () => qcTargets,
+  receiptLineSchema: () => receiptLineSchema,
   recordFieldsSchema: () => recordFieldsSchema,
   referrals: () => referrals,
   removeAllergySchema: () => removeAllergySchema,
@@ -892,6 +927,8 @@ __export(schema_exports, {
   services: () => services,
   sessions: () => sessions,
   signRecordSchema: () => signRecordSchema,
+  stockMovements: () => stockMovements,
+  stockReceipts: () => stockReceipts,
   telegramContacts: () => telegramContacts,
   tests: () => tests,
   updateDepartmentSchema: () => updateDepartmentSchema,
@@ -953,7 +990,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockMovements, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1834,6 +1871,58 @@ var init_schema = __esm({
       updatedAt: isoTimestamp("updated_at"),
       updatedBy: varchar("updated_by")
     });
+    stockReceipts = pgTable("stock_receipts", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+      supplier: text("supplier").notNull(),
+      /** The supplier's own invoice / waybill number. */
+      documentNumber: text("document_number"),
+      /** YYYY-MM-DD. */
+      receivedOn: text("received_on").notNull(),
+      notes: text("notes"),
+      total: money("total").notNull().default(0),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
+      createdByName: text("created_by_name"),
+      cancelledAt: isoTimestamp("cancelled_at"),
+      cancelledBy: varchar("cancelled_by"),
+      cancelledByName: text("cancelled_by_name"),
+      cancelReason: text("cancel_reason")
+    });
+    inventoryBatches = pgTable(
+      "inventory_batches",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        itemId: varchar("item_id").notNull(),
+        receiptId: varchar("receipt_id").notNull(),
+        lotNumber: text("lot_number"),
+        /** YYYY-MM-DD; null for goods without one. */
+        expiresOn: text("expires_on"),
+        quantity: doublePrecision("quantity").notNull(),
+        remaining: doublePrecision("remaining").notNull(),
+        /** Per unit, so'm. */
+        purchasePrice: money("purchase_price").notNull(),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        cancelledAt: isoTimestamp("cancelled_at")
+      },
+      (t) => [index("IDX_inventory_batches_item").on(t.itemId), index("IDX_inventory_batches_receipt").on(t.receiptId)]
+    );
+    stockMovements = pgTable(
+      "stock_movements",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        itemId: varchar("item_id").notNull(),
+        batchId: varchar("batch_id").notNull(),
+        kind: text("kind").notNull(),
+        quantity: doublePrecision("quantity").notNull(),
+        receiptId: varchar("receipt_id"),
+        note: text("note"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        createdByName: text("created_by_name")
+      },
+      (t) => [index("IDX_stock_movements_item").on(t.itemId, t.createdAt)]
+    );
     NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"];
     birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
     emergencyContactSchema = z.object({
@@ -2191,6 +2280,20 @@ var init_schema = __esm({
       notes: optionalText(500, "Izoh")
     });
     updateInventoryItemSchema = insertInventoryItemSchema.partial();
+    receiptLineSchema = z.object({
+      itemId: z.string().min(1, "Mahsulotni tanlang"),
+      lotNumber: optionalText(40, "LOT"),
+      expiresOn: dayString.nullish().or(z.literal("")).transform((v) => v ? v : null),
+      quantity: z.number({ invalid_type_error: "Miqdor: raqam kiriting", required_error: "Miqdorni kiriting" }).finite("Miqdor: raqam kiriting").positive("Miqdor musbat bo'lishi kerak").max(1e6, "Miqdor juda katta"),
+      purchasePrice: z.number({ invalid_type_error: "Xarid narxi: raqam kiriting", required_error: "Xarid narxini kiriting" }).int("Narx butun so'mda bo'lsin").min(0, "Narx manfiy bo'lmasligi kerak").max(1e9, "Narx juda katta")
+    });
+    createReceiptSchema = z.object({
+      supplier: z.string().trim().min(2, "Yetkazib beruvchini kiriting").max(160, "Juda uzun"),
+      documentNumber: optionalText(60, "Hujjat raqami"),
+      receivedOn: dayString,
+      notes: optionalText(1e3, "Izoh"),
+      lines: z.array(receiptLineSchema).min(1, "Kamida bitta mahsulot qo'shing").max(MAX_RECEIPT_LINES, `Bir hujjatda ko'pi bilan ${MAX_RECEIPT_LINES} ta qator`)
+    });
     qcNumber = (label) => z.number({ invalid_type_error: `${label}: raqam kiriting`, required_error: `${label}ni kiriting` }).finite(`${label}: raqam kiriting`);
     optionalDay = dayString.nullish().or(z.literal("")).transform((v) => v ? v : null);
     pastTimestamp = z.string().datetime({ offset: true, message: "Vaqt noto'g'ri" }).nullish();
@@ -5784,8 +5887,21 @@ var init_storage_pg = __esm({
       }
       // ------------------------------------------------------------ inventory (B5)
       async listInventoryItems() {
-        const rows = await db.select().from(inventoryItems).orderBy(desc(inventoryItems.isActive), asc(inventoryItems.name));
-        return rows.map(mapInventoryItem);
+        const order = [desc(inventoryItems.isActive), asc(inventoryItems.name)];
+        try {
+          const rows = await db.select({
+            item: inventoryItems,
+            onHand: sql2`(SELECT coalesce(sum(b.remaining), 0) FROM inventory_batches b
+                                WHERE b.item_id = "inventory_items"."id" AND b.cancelled_at IS NULL)`,
+            nearestExpiry: sql2`(SELECT min(b.expires_on) FROM inventory_batches b
+                                              WHERE b.item_id = "inventory_items"."id" AND b.cancelled_at IS NULL AND b.remaining > 0)`
+          }).from(inventoryItems).orderBy(...order);
+          return rows.map((r) => ({ ...mapInventoryItem(r.item), onHand: Number(r.onHand), nearestExpiry: r.nearestExpiry ?? null }));
+        } catch (err) {
+          if (!isMissingTable(err)) throw err;
+          const rows = await db.select().from(inventoryItems).orderBy(...order);
+          return rows.map((r) => ({ ...mapInventoryItem(r), onHand: 0, nearestExpiry: null }));
+        }
       }
       async getInventoryItem(id) {
         const [row] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id)).limit(1);
@@ -5816,8 +5932,100 @@ var init_storage_pg = __esm({
         return row && mapInventoryItem(row);
       }
       async deleteInventoryItem(id) {
-        const rows = await db.delete(inventoryItems).where(eq(inventoryItems.id, id)).returning({ id: inventoryItems.id });
-        return rows.length > 0;
+        return db.transaction(async (tx) => {
+          const [item] = await tx.select({ id: inventoryItems.id }).from(inventoryItems).where(eq(inventoryItems.id, id)).for("update");
+          if (!item) return false;
+          const [moved] = await tx.select({ id: stockMovements.id }).from(stockMovements).where(eq(stockMovements.itemId, id)).limit(1);
+          if (moved) throw new StorageConflict(ITEM_HAS_STOCK_HISTORY);
+          await tx.delete(inventoryItems).where(eq(inventoryItems.id, id));
+          return true;
+        });
+      }
+      async receiptDetail(exec, receipt) {
+        const rows = await exec.select({ b: inventoryBatches, itemName: inventoryItems.name, unit: inventoryItems.unit, kind: inventoryItems.kind }).from(inventoryBatches).leftJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId)).where(eq(inventoryBatches.receiptId, receipt.id)).orderBy(asc(inventoryBatches.createdAt), asc(inventoryItems.name));
+        return {
+          ...receipt,
+          lines: rows.map((r) => ({
+            ...r.b,
+            itemName: r.itemName ?? "\u2014",
+            unit: r.unit ?? "",
+            kind: r.kind ?? "consumable"
+          }))
+        };
+      }
+      async listReceipts(query = {}) {
+        const rows = await db.select({
+          r: stockReceipts,
+          lineCount: sql2`(SELECT count(*)::int FROM inventory_batches b WHERE b.receipt_id = "stock_receipts"."id")`
+        }).from(stockReceipts).orderBy(desc(stockReceipts.number)).limit(query.limit ?? 200);
+        return rows.map((x) => ({ ...x.r, lineCount: x.lineCount }));
+      }
+      async getReceipt(id) {
+        const [r] = await db.select().from(stockReceipts).where(eq(stockReceipts.id, id)).limit(1);
+        return r && this.receiptDetail(db, r);
+      }
+      async createReceipt(input, actor) {
+        return db.transaction(async (tx) => {
+          const [receipt] = await tx.insert(stockReceipts).values({
+            supplier: input.supplier,
+            documentNumber: input.documentNumber ?? null,
+            receivedOn: input.receivedOn,
+            notes: input.notes ?? null,
+            total: input.lines.reduce((s, l) => s + lineTotal(l.quantity, l.purchasePrice), 0),
+            createdBy: actor.id,
+            createdByName: actor.name
+          }).returning();
+          const batches = await tx.insert(inventoryBatches).values(
+            input.lines.map((l) => ({
+              itemId: l.itemId,
+              receiptId: receipt.id,
+              lotNumber: l.lotNumber ?? null,
+              expiresOn: l.expiresOn ?? null,
+              quantity: l.quantity,
+              remaining: l.quantity,
+              purchasePrice: l.purchasePrice
+            }))
+          ).returning();
+          await tx.insert(stockMovements).values(
+            batches.map((b) => ({
+              itemId: b.itemId,
+              batchId: b.id,
+              kind: "receipt",
+              quantity: b.quantity,
+              receiptId: receipt.id,
+              createdBy: actor.id,
+              createdByName: actor.name
+            }))
+          );
+          return this.receiptDetail(tx, receipt);
+        });
+      }
+      async cancelReceipt(id, reason, actor) {
+        return db.transaction(async (tx) => {
+          const [receipt] = await tx.select().from(stockReceipts).where(eq(stockReceipts.id, id)).for("update");
+          if (!receipt) return void 0;
+          if (receipt.cancelledAt) throw new StorageConflict(RECEIPT_ALREADY_CANCELLED);
+          const batches = await tx.select().from(inventoryBatches).where(eq(inventoryBatches.receiptId, id)).for("update");
+          if (batches.some((b) => Math.abs(b.remaining - b.quantity) > 1e-9)) throw new StorageConflict(RECEIPT_IN_USE);
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          if (batches.length) {
+            await tx.insert(stockMovements).values(
+              batches.map((b) => ({
+                itemId: b.itemId,
+                batchId: b.id,
+                kind: "receipt_cancel",
+                quantity: -b.remaining,
+                receiptId: id,
+                note: reason,
+                createdBy: actor.id,
+                createdByName: actor.name
+              }))
+            );
+            await tx.update(inventoryBatches).set({ remaining: 0, cancelledAt: now }).where(eq(inventoryBatches.receiptId, id));
+          }
+          const [updated] = await tx.update(stockReceipts).set({ cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason }).where(eq(stockReceipts.id, id)).returning();
+          return this.receiptDetail(tx, updated);
+        });
       }
       async getLabBoard(day) {
         const local = (col) => sql2.raw(`(${col} AT TIME ZONE current_setting('TIMEZONE'))::date`);
@@ -6108,6 +6316,9 @@ var init_db = __esm({
       deviceMaintenance: [],
       eqaResults: [],
       inventoryItems: [],
+      stockReceipts: [],
+      inventoryBatches: [],
+      stockMovements: [],
       icdUzNames: {},
       security: null,
       patients: [],
@@ -6131,7 +6342,7 @@ var init_db = __esm({
         director: null,
         licenseNumber: null
       },
-      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0 }
+      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0 }
     });
     queue = Promise.resolve();
   }
@@ -6171,6 +6382,7 @@ var init_storage_file = __esm({
     init_lab_board();
     init_lab_devices();
     init_qc();
+    init_inventory();
     init_icd10();
     init_lab_verification();
     init_lab_rules();
@@ -8467,7 +8679,15 @@ var init_storage_file = __esm({
       }
       // ------------------------------------------------------------ inventory (B5)
       async listInventoryItems() {
-        return [...this.db.inventoryItems].sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name)).map((i) => ({ ...i }));
+        return [...this.db.inventoryItems].sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name)).map((i) => {
+          const live = this.db.inventoryBatches.filter((b) => b.itemId === i.id && !b.cancelledAt);
+          const expiries = live.filter((b) => b.remaining > 0 && b.expiresOn).map((b) => b.expiresOn);
+          return {
+            ...i,
+            onHand: live.reduce((s, b) => s + b.remaining, 0),
+            nearestExpiry: expiries.length ? expiries.sort()[0] : null
+          };
+        });
       }
       async getInventoryItem(id) {
         const i = this.db.inventoryItems.find((x) => x.id === id);
@@ -8503,11 +8723,102 @@ var init_storage_file = __esm({
         return { ...i };
       }
       async deleteInventoryItem(id) {
+        if (this.db.stockMovements.some((m) => m.itemId === id)) throw new StorageConflict(ITEM_HAS_STOCK_HISTORY);
         const n = this.db.inventoryItems.length;
         this.db.inventoryItems = this.db.inventoryItems.filter((x) => x.id !== id);
         if (this.db.inventoryItems.length === n) return false;
         await this.persist();
         return true;
+      }
+      receiptDetail(r) {
+        const lines = this.db.inventoryBatches.filter((b) => b.receiptId === r.id).map((b) => {
+          const item = this.db.inventoryItems.find((i) => i.id === b.itemId);
+          return { ...b, itemName: item?.name ?? "\u2014", unit: item?.unit ?? "", kind: item?.kind ?? "consumable" };
+        });
+        return { ...r, lines };
+      }
+      async listReceipts(query = {}) {
+        return [...this.db.stockReceipts].sort((a, b) => b.number - a.number).slice(0, query.limit ?? 200).map((r) => ({ ...r, lineCount: this.db.inventoryBatches.filter((b) => b.receiptId === r.id).length }));
+      }
+      async getReceipt(id) {
+        const r = this.db.stockReceipts.find((x) => x.id === id);
+        return r && this.receiptDetail(r);
+      }
+      async createReceipt(input, actor) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        this.db.counters.receiptNumber += 1;
+        const receipt = {
+          id: randomUUID(),
+          number: this.db.counters.receiptNumber,
+          supplier: input.supplier,
+          documentNumber: input.documentNumber ?? null,
+          receivedOn: input.receivedOn,
+          notes: input.notes ?? null,
+          total: input.lines.reduce((s, l) => s + lineTotal(l.quantity, l.purchasePrice), 0),
+          createdAt: now,
+          createdBy: actor.id,
+          createdByName: actor.name,
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelledByName: null,
+          cancelReason: null
+        };
+        this.db.stockReceipts.push(receipt);
+        for (const l of input.lines) {
+          const batch = {
+            id: randomUUID(),
+            itemId: l.itemId,
+            receiptId: receipt.id,
+            lotNumber: l.lotNumber ?? null,
+            expiresOn: l.expiresOn ?? null,
+            quantity: l.quantity,
+            remaining: l.quantity,
+            purchasePrice: l.purchasePrice,
+            createdAt: now,
+            cancelledAt: null
+          };
+          this.db.inventoryBatches.push(batch);
+          this.db.stockMovements.push({
+            id: randomUUID(),
+            itemId: l.itemId,
+            batchId: batch.id,
+            kind: "receipt",
+            quantity: l.quantity,
+            receiptId: receipt.id,
+            note: null,
+            createdAt: now,
+            createdBy: actor.id,
+            createdByName: actor.name
+          });
+        }
+        await this.persist();
+        return this.receiptDetail(receipt);
+      }
+      async cancelReceipt(id, reason, actor) {
+        const r = this.db.stockReceipts.find((x) => x.id === id);
+        if (!r) return void 0;
+        if (r.cancelledAt) throw new StorageConflict(RECEIPT_ALREADY_CANCELLED);
+        const batches = this.db.inventoryBatches.filter((b) => b.receiptId === id);
+        if (batches.some((b) => Math.abs(b.remaining - b.quantity) > 1e-9)) throw new StorageConflict(RECEIPT_IN_USE);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const b of batches) {
+          this.db.stockMovements.push({
+            id: randomUUID(),
+            itemId: b.itemId,
+            batchId: b.id,
+            kind: "receipt_cancel",
+            quantity: -b.remaining,
+            receiptId: id,
+            note: reason,
+            createdAt: now,
+            createdBy: actor.id,
+            createdByName: actor.name
+          });
+          Object.assign(b, { remaining: 0, cancelledAt: now });
+        }
+        Object.assign(r, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+        await this.persist();
+        return this.receiptDetail(r);
       }
       async getLabBoard(day) {
         const all = this.db.orders.map((o) => this.hydrate(o));
@@ -11030,6 +11341,7 @@ function registerQcRoutes(app) {
 // server/routes-inventory.ts
 init_schema();
 init_inventory();
+init_appointment();
 var fmtQty = (n) => String(Math.round(n * 1e3) / 1e3);
 function registerInventoryRoutes(app) {
   async function clash(input, exceptId) {
@@ -11098,6 +11410,63 @@ function registerInventoryRoutes(app) {
       await storage.deleteInventoryItem(item.id);
       await audit(req, "delete", "inventory", item.id, `"${item.name}" katalogdan o'chirildi`);
       res.sendStatus(204);
+    })
+  );
+  app.get(
+    "/api/inventory/receipts",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const n = Number(stringParam(req.query.limit) ?? 200);
+      const limit = Number.isFinite(n) ? Math.min(Math.max(1, Math.trunc(n)), 500) : 200;
+      res.json(await storage.listReceipts({ limit }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/inventory/receipts/:id",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const receipt = await storage.getReceipt(req.params.id);
+      if (!receipt) return res.status(404).json({ message: "Kirim hujjati topilmadi" });
+      res.json(receipt);
+    })
+  );
+  app.post(
+    "/api/inventory/receipts",
+    requirePermission("inventory.receive"),
+    handle(async (req, res) => {
+      const input = createReceiptSchema.parse(req.body);
+      const today = clockNow().date;
+      if (input.receivedOn > today) return res.status(400).json({ message: "Kirim sanasi kelajakda bo'lishi mumkin emas" });
+      const items = new Map((await storage.listInventoryItems()).map((i) => [i.id, i]));
+      for (const [n, line] of input.lines.entries()) {
+        const problem = receiptLineProblem(items.get(line.itemId), line, today);
+        if (problem) return res.status(400).json({ message: `${n + 1}-qator: ${problem}` });
+      }
+      const dup = duplicateLine(input.lines);
+      if (dup !== null) {
+        return res.status(400).json({ message: `${dup + 1}-qator: bu mahsulot va LOT hujjatda allaqachon bor \u2014 miqdorini bitta qatorga yozing` });
+      }
+      const receipt = await storage.createReceipt(input, actorOf(req));
+      const names = receipt.lines.map((l) => `${l.itemName} ${l.quantity} ${l.unit}${l.lotNumber ? ` (LOT ${l.lotNumber})` : ""}`);
+      await audit(
+        req,
+        "create",
+        "inventory",
+        receipt.id,
+        `Kirim \u2116${receipt.number}: ${receipt.supplier}${receipt.documentNumber ? `, hujjat ${receipt.documentNumber}` : ""} \u2014 ${names.join("; ")}; jami ${receipt.total} so'm`
+      );
+      res.status(201).json(receipt);
+    })
+  );
+  app.post(
+    "/api/inventory/receipts/:id/cancel",
+    requirePermission("inventory.manage"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const receipt = await storage.cancelReceipt(req.params.id, reason, actorOf(req));
+      if (!receipt) return res.status(404).json({ message: "Kirim hujjati topilmadi" });
+      await audit(req, "void", "inventory", receipt.id, `Kirim \u2116${receipt.number} bekor qilindi (${receipt.supplier}): ${reason}`);
+      res.json(receipt);
     })
   );
 }

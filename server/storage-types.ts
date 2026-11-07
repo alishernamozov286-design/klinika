@@ -5,6 +5,13 @@ import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type {
+  CreateReceiptInput,
+  InventoryBatch,
+  InventoryItemView,
+  StockMovement,
+  StockReceipt,
+  StockReceiptDetail,
+  StockReceiptView,
   InsertInventoryItem,
   InventoryItem,
   UpdateInventoryItemInput,
@@ -810,11 +817,19 @@ export interface IStorage {
   voidEqa(id: string, reason: string, actor: Actor): Promise<EqaResult | undefined>;
 
   // ------------------------------------------------------ inventory (B5)
-  listInventoryItems(): Promise<InventoryItem[]>;
+  /** The catalogue with each item's stock on hand and nearest expiry. */
+  listInventoryItems(): Promise<InventoryItemView[]>;
   getInventoryItem(id: string): Promise<InventoryItem | undefined>;
   createInventoryItem(input: InsertInventoryItem, actor: Actor): Promise<InventoryItem>;
   updateInventoryItem(id: string, input: UpdateInventoryItemInput, actor: Actor): Promise<InventoryItem | undefined>;
+  /** Throws StorageConflict (ITEM_HAS_STOCK_HISTORY) once an item has any stock movement. */
   deleteInventoryItem(id: string): Promise<boolean>;
+  listReceipts(query?: { limit?: number }): Promise<StockReceiptView[]>;
+  getReceipt(id: string): Promise<StockReceiptDetail | undefined>;
+  /** Receipt, one batch per line and a +movement per batch, in one transaction. The route has checked the lines. */
+  createReceipt(input: CreateReceiptInput, actor: Actor): Promise<StockReceiptDetail>;
+  /** Cancels a receipt whose batches are untouched (StorageConflict otherwise). */
+  cancelReceipt(id: string, reason: string, actor: Actor): Promise<StockReceiptDetail | undefined>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

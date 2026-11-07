@@ -214,7 +214,12 @@ export const PERMISSIONS = {
   "inventory.manage": {
     group: "warehouse",
     label: "Katalogni boshqarish",
-    description: "Mahsulot qo'shish, tahrirlash, faolsizlantirish; birlik, minimal qoldiq va narx",
+    description: "Mahsulot qo'shish, tahrirlash, faolsizlantirish; birlik, minimal qoldiq va narx; kirimni bekor qilish",
+  },
+  "inventory.receive": {
+    group: "warehouse",
+    label: "Kirim",
+    description: "Kirim hujjatini rasmiylashtirish: yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (TZ §7.3)",
   },
 
   "finance.view": {
@@ -452,7 +457,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "omborchi",
     name: "Omborchi",
     description: "Ombor: kirim, chiqim va qoldiq",
-    permissions: ["inventory.read", "inventory.manage"],
+    permissions: ["inventory.read", "inventory.manage", "inventory.receive"],
   },
   {
     key: "hamshira",

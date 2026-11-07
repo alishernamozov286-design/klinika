@@ -81,3 +81,58 @@ export const inventoryKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g
 
 export const INVENTORY_NAME_TAKEN = "Bunday nomli mahsulot allaqachon bor";
 export const INVENTORY_CODE_TAKEN = "Bu artikul boshqa mahsulotga berilgan";
+
+// ------------------------------------------------------------ receipts (B5.2)
+
+/**
+ * Types whose batches are tracked by LOT and expiry: what a recall, an expiry
+ * warning (B5.4) or a QC record (B4.8) has to be able to name.
+ */
+export const LOT_TRACKED: readonly InventoryKind[] = ["reagent", "calibrator", "control", "medicine"];
+export const isLotTracked = (kind: InventoryKind) => LOT_TRACKED.includes(kind);
+
+export const MAX_RECEIPT_LINES = 100;
+
+/** A line's money, in whole so'm: quantity may be fractional (ml, l). */
+export const lineTotal = (quantity: number, price: number) => Math.round(quantity * price);
+
+type LineItem = { name: string; kind: InventoryKind; isActive: boolean };
+type ReceiptLine = { lotNumber?: string | null; expiresOn?: string | null; quantity: number };
+
+/**
+ * Why a receipt line cannot be accepted, in Uzbek, or null. `today` and
+ * `expiresOn` are calendar days (YYYY-MM-DD).
+ */
+export function receiptLineProblem(item: LineItem | undefined, line: ReceiptLine, today: string): string | null {
+  if (!item) return "Mahsulot topilmadi";
+  if (!item.isActive) return `"${item.name}" faolsizlantirilgan — avval katalogda faollashtiring`;
+  if (!(line.quantity > 0)) return `"${item.name}": miqdor musbat bo'lishi kerak`;
+  if (isLotTracked(item.kind)) {
+    if (!line.lotNumber) return `"${item.name}": LOT raqamini kiriting`;
+    if (!line.expiresOn) return `"${item.name}": yaroqlilik muddatini kiriting`;
+  }
+  if (line.expiresOn && line.expiresOn < today) return `"${item.name}": yaroqlilik muddati o'tgan (${line.expiresOn}) — qabul qilinmaydi`;
+  return null;
+}
+
+/** The same item and LOT twice on one receipt is a typing slip, not two batches. */
+export function duplicateLine(lines: { itemId: string; lotNumber?: string | null }[]): number | null {
+  const seen = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const key = `${lines[i].itemId}|${inventoryKey(lines[i].lotNumber ?? "")}`;
+    if (seen.has(key)) return i;
+    seen.add(key);
+  }
+  return null;
+}
+
+export const MOVEMENT_KINDS = ["receipt", "receipt_cancel"] as const;
+export type MovementKind = (typeof MOVEMENT_KINDS)[number];
+export const MOVEMENT_KIND_LABELS: Record<MovementKind, string> = {
+  receipt: "Kirim",
+  receipt_cancel: "Kirim bekor qilindi",
+};
+
+export const ITEM_HAS_STOCK_HISTORY = "Bu mahsulot bo'yicha kirim yoki chiqim bor, shuning uchun o'chirilmaydi. Uni faolsizlantiring.";
+export const RECEIPT_ALREADY_CANCELLED = "Bu kirim allaqachon bekor qilingan";
+export const RECEIPT_IN_USE = "Bu kirimdagi mahsulotdan foydalanilgan, shuning uchun bekor qilib bo'lmaydi. Ortiqchasini chiqim yoki inventarizatsiya orqali tuzating.";

@@ -1,5 +1,8 @@
 import type { ClinicLogo } from "@shared/branding";
 import type {
+  InventoryBatch,
+  StockMovement,
+  StockReceipt,
   InventoryItem,
   Calibration,
   DeviceMaintenanceEntry,
@@ -64,6 +67,9 @@ export type DbShape = {
   deviceMaintenance: DeviceMaintenanceEntry[];
   eqaResults: EqaResult[];
   inventoryItems: InventoryItem[];
+  stockReceipts: StockReceipt[];
+  inventoryBatches: InventoryBatch[];
+  stockMovements: StockMovement[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
   security: SecuritySettings | null;
@@ -83,7 +89,7 @@ export type DbShape = {
   telegramContacts: TelegramContact[];
   settings: LabSettings;
   /** Last number handed out for each human-facing sequence; next = value + 1. */
-  counters: { orderNumber: number; patientNumber: number; referralNumber: number };
+  counters: { orderNumber: number; patientNumber: number; referralNumber: number; receiptNumber: number };
 };
 
 /**
@@ -119,6 +125,9 @@ export const emptyDb = (): DbShape => ({
   deviceMaintenance: [],
   eqaResults: [],
   inventoryItems: [],
+  stockReceipts: [],
+  inventoryBatches: [],
+  stockMovements: [],
   icdUzNames: {},
   security: null,
   patients: [],
@@ -142,7 +151,7 @@ export const emptyDb = (): DbShape => ({
     director: null,
     licenseNumber: null,
   },
-  counters: { orderNumber: 1000, patientNumber: 0, referralNumber: 0 },
+  counters: { orderNumber: 1000, patientNumber: 0, referralNumber: 0, receiptNumber: 0 },
 });
 
 export function readDbSync(): DbShape {

@@ -104,7 +104,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-07. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 44.5 → ≈59%**.
+> Holat 2026-11-07. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 45.5 → ≈60%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -293,16 +293,24 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B4.10** Analizator integratsiyasi (`§6.4`): import API + lokal ko‘prik (D-4), namuna ID bo‘yicha moslashtirish, avtotekshiruv, takroriy natija nazorati, operator tasdig‘i. Protokol bo‘lmasa qo‘lda kiritish qoladi.
 - [x] **B4.11** Natijani bemorga elektron yetkazish (`§1`): Telegram bot.
 
-### Bosqich 5: Ombor (`§7`, `§15.5`) 14%
+### Bosqich 5: Ombor (`§7`, `§15.5`) 29%
 
 - [x] **B5.1** Mahsulotlar katalogi (`§7.2`, `inventory_items`): 8 tur, o‘lchov birligi, minimal qoldiq.
   - `inventory_items`: nomi, turi (TZ §7.2 dagi 8 tur: reagentlar, kalibratorlar, nazorat materiallari, probirkalar, shpritslar, sarf materiallari, dori vositalari, dezinfeksiya vositalari), artikul (ixtiyoriy), ishlab chiqaruvchi, o'lchov birligi (erkin, takliflar bilan; turga qarab standart taklif), minimal qoldiq (kasr ham, manfiy emas), sotuv yoki hisobdan chiqarish narxi (TZ §7.3, butun so'm, ixtiyoriy), faol, izoh, §10 ustunlari. Nom va artikul katta-kichik harf va bo'shliqqa qaramay takrorlanmaydi: route tekshiradi, Postgres'da `UQ_inventory_items_name` / `_code` oxirgi himoya (poygada ham 409). Qoidalar `shared/inventory.ts`.
   - Yangi ruxsat guruhi "Ombor": `inventory.read` (omborchi, lab mudiri, rahbar, buxgalter, auditor), `inventory.manage` (omborchi). Kirim/chiqim ruxsatlari o'z route'lari bilan (B5.2, B5.3). API `server/routes-inventory.ts`, audit (`inventory`).
-  - O'chirish hozircha ruxsat etilgan (hech narsa mahsulotga havola qilmaydi). **B5.2 da harakati bor mahsulot o'chirilmaydigan qilinadi**, faqat faolsizlantiriladi.
+  - Kirim yoki chiqimi bor mahsulot o'chirilmaydi (B5.2 dan, 409), faqat faolsizlantiriladi.
   - UI: Ish maydoni → Ombor (`/inventory`): ko'rsatkichlar (faol, turlar 8 dan, narxi belgilanmagan, faolsiz), qidiruv (nom, artikul, ishlab chiqaruvchi), tur chiplari (ikonkalar bilan), faolsizlarni ko'rsatish, jadval, joyida faol/faolsiz, dialog, Excel/PDF eksport. Keyingi bosqichlar shu sahifaga tab bo'lib qo'shiladi.
   - Migratsiya: `npm run db:inventory` (`db:upgrade` ichida): jadval, unique indekslar, CHECK'lar, tizim rollariga ruxsatlarni **faqat qo'shadi**. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-07): jadval, indekslar, 5 ta rolga ruxsatlar; qayta ishga tushirish hech narsani o'zgartirmadi.
   - Testlar: `shared/inventory.test.ts`, `storage-file.test.ts`, brauzerda omborchi, lab mudiri (faqat ko'radi) va registrator (ruxsat yo'q) yo'li (29 tekshiruv, telefon o'lchami bilan).
-- [ ] **B5.2** Kirim hujjati (`§7.3`): yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (`inventory_batches`, `stock_movements`).
+- [x] **B5.2** Kirim hujjati (`§7.3`): yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (`inventory_batches`, `stock_movements`).
+  - `stock_receipts`: raqam (identity, "Kirim №12"), yetkazib beruvchi (oldingilaridan taklif), uning hujjat raqami, sana (kelajak emas), izoh, jami, kim. **O'chirilmaydi**: partiyalaridan hech narsa ishlatilmagan bo'lsa sabab bilan bekor qilinadi (`inventory.manage`); ishlatilgan bo'lsa 409.
+  - Har bir qator — **partiya** (`inventory_batches`): mahsulot, LOT, yaroqlilik muddati, kelgan miqdor, `remaining`, xarid narxi. `stock_movements` — qoldiq daftari (+ kirim, − bekor qilish / keyin chiqim); `remaining` shu daftarning keshi, har bir harakat bilan bitta tranzaksiyada yangilanadi. CHECK: `0 ≤ remaining ≤ quantity`, miqdor > 0, harakat ≠ 0, narx ≥ 0.
+  - Qoidalar (`shared/inventory.ts` `receiptLineProblem`): reagent, kalibrator, nazorat materiali va dori uchun LOT va muddat majburiy; **muddati o'tgan mahsulot qabul qilinmaydi**; faolsiz mahsulot qabul qilinmaydi; bir hujjatda bir mahsulot+LOT ikki marta bo'lmaydi. Xato qator raqami bilan qaytadi ("2-qator: …").
+  - Katalog endi har bir mahsulotning **qoldig'ini** (tirik partiyalar yig'indisi) va eng yaqin muddatini ko'rsatadi; "kam qolgan" ko'rsatkichi. Jadvallar yo'q bazada katalog qoldiqni 0 deb ishlaydi.
+  - Ruxsat: `inventory.receive` (omborchi). Audit: kirim (yetkazib beruvchi, qatorlar, LOT, jami) va bekor qilish.
+  - UI: Ombor → "Kirim" tabi: oy bo'yicha jami, hujjatlar ro'yxati, yangi kirim (ko'p qatorli, telefonda har maydon nomi bilan, jami jonli hisoblanadi), hujjat ko'rinishi va **chop etish** (imzo joylari bilan), bekor qilingani muhr bilan.
+  - Migratsiya: `npm run db:stock` (`db:upgrade` ichida). Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi (CHECK'lar, identity, katalog so'rovi, bekor qilishda daftar nolga tushishi).
+  - Testlar: `shared/inventory.test.ts` (+4), `storage-file.test.ts` (2), brauzerda omborchi va lab mudiri yo'li (26 tekshiruv, telefon o'lchami bilan).
 - [ ] **B5.3** Chiqim va bo‘limlarga berish (`§7.1`): qaysi bo‘limga, kim oldi. FEFO (muddati yaqinini birinchi).
 - [ ] **B5.4** Qoldiq va yaroqlilik muddati (`§7.1`, `§7.3`): partiyalar bo‘yicha qoldiq, muddati yaqinlashganlar haqida ogohlantirish.
 - [ ] **B5.5** Inventarizatsiya (`§7.1`): hisoblangan va haqiqiy qoldiq farqi, tuzatish harakati.
@@ -390,6 +398,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-07 · B5.2 · Kirim hujjati: partiyalar (LOT, muddat, xarid narxi) va qoldiq daftari, muddati o'tgan mahsulot qabul qilinmaydi, kirimni faqat ishlatilmagan bo'lsa bekor qilish, katalogda qoldiq va eng yaqin muddat, hujjatni chop etish; harakati bor mahsulot o'chirilmaydi.
 - 2026-11-07 · B5.1 · Ombor mahsulotlari katalogi: TZ'dagi 8 tur, o'lchov birligi, minimal qoldiq, sotuv/hisobdan chiqarish narxi, artikul; takrorlanmas nom va artikul (poygada ham), yangi "Ombor" ruxsat guruhi, Ombor sahifasi.
 - 2026-11-07 · B4.8 · Sifat nazorati: nazorat materiallari (LOT, muddat) va seriyalar, Westgard bahosi natija bilan saqlanadi, Levey–Jennings kartasi, chora va bekor qilish, kalibratsiya tarixi, texnik xizmat jurnali (navbatdagi xizmatlar), tashqi nazorat (z, ISO 13528); muddati o'tgan material/reagent/kalibrator rad etiladi.
 - 2026-11-07 · B4.9 · Analizatorlar: qurilmalar (yo'nalish, ulanish usuli, holat), o'chirilmaydigan xatolar jurnali (daraja, kod, chora, hal qilish), nosoz qurilmani bir qadamda ishdan chiqqan deb belgilash, TZ §6.4 dagi 6 ta analizator namuna sifatida, uchta yangi ruxsat.

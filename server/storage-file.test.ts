@@ -1777,6 +1777,63 @@ describe("inventory catalogue (B5.1)", () => {
   });
 });
 
+describe("receipts and stock (B5.2)", () => {
+  const item = (name: string, kind: "reagent" | "tube" = "reagent") =>
+    storage.createInventoryItem({ name, kind, code: null, manufacturer: null, unit: kind === "tube" ? "dona" : "to'plam", minStock: 0, salePrice: null, isActive: true, notes: null }, ACTOR);
+
+  it("a receipt makes batches and movements; the catalogue shows what is on hand", async () => {
+    const glu = await item("Glyukoza reagenti");
+    const tube = await item("Probirka EDTA", "tube");
+    const r = await storage.createReceipt(
+      {
+        supplier: "MedTech Supply",
+        documentNumber: "INV-77",
+        receivedOn: "2026-11-07",
+        notes: null,
+        lines: [
+          { itemId: glu.id, lotNumber: "L-2", expiresOn: "2027-03-01", quantity: 2, purchasePrice: 180000 },
+          { itemId: glu.id, lotNumber: "L-1", expiresOn: "2026-12-31", quantity: 1, purchasePrice: 175000 },
+          { itemId: tube.id, lotNumber: null, expiresOn: null, quantity: 500, purchasePrice: 900 },
+        ],
+      },
+      ACTOR,
+    );
+    expect(r).toMatchObject({ number: 1, total: 2 * 180000 + 175000 + 500 * 900, createdByName: ACTOR.name });
+    expect(r.lines.map((l) => [l.itemName, l.quantity, l.remaining])).toEqual([
+      ["Glyukoza reagenti", 2, 2],
+      ["Glyukoza reagenti", 1, 1],
+      ["Probirka EDTA", 500, 500],
+    ]);
+    const list = await storage.listInventoryItems();
+    expect(list.find((i) => i.id === glu.id)).toMatchObject({ onHand: 3, nearestExpiry: "2026-12-31" });
+    expect(list.find((i) => i.id === tube.id)).toMatchObject({ onHand: 500, nearestExpiry: null });
+    expect((await storage.listReceipts())[0]).toMatchObject({ number: 1, lineCount: 3 });
+    // An item that moved is no longer deletable.
+    await expect(storage.deleteInventoryItem(glu.id)).rejects.toThrow(/faolsizlantiring/);
+  });
+
+  it("cancelling takes the stock back out, once, and leaves the record", async () => {
+    const glu = await item("Kreatinin reagenti");
+    const r = await storage.createReceipt(
+      { supplier: "Lab Trade", documentNumber: null, receivedOn: "2026-11-07", notes: null, lines: [{ itemId: glu.id, lotNumber: "K1", expiresOn: "2027-01-01", quantity: 4, purchasePrice: 50000 }] },
+      ACTOR,
+    );
+    const c = await storage.cancelReceipt(r.id, "Noto'g'ri yetkazib beruvchi", ACTOR);
+    expect(c).toMatchObject({ cancelReason: "Noto'g'ri yetkazib beruvchi", cancelledByName: ACTOR.name });
+    expect(c!.lines[0]).toMatchObject({ remaining: 0, quantity: 4 });
+    expect(c!.lines[0].cancelledAt).toBeTruthy();
+    expect((await storage.listInventoryItems()).find((i) => i.id === glu.id)!.onHand).toBe(0);
+    await expect(storage.cancelReceipt(r.id, "yana", ACTOR)).rejects.toThrow(/allaqachon/);
+    expect(await storage.cancelReceipt("missing", "x", ACTOR)).toBeUndefined();
+    // Numbers keep counting.
+    const r2 = await storage.createReceipt(
+      { supplier: "Lab Trade", documentNumber: null, receivedOn: "2026-11-07", notes: null, lines: [{ itemId: glu.id, lotNumber: "K2", expiresOn: "2027-01-01", quantity: 1, purchasePrice: 50000 }] },
+      ACTOR,
+    );
+    expect(r2.number).toBe(r.number + 1);
+  });
+});
+
 describe("quality control (B4.8)", () => {
   const setup = async () => {
     const material = await storage.createQcMaterial(

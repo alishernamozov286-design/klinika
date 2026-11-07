@@ -1,7 +1,7 @@
 /**
- * Ombor (Bosqich 5, TZ §7). B5.1: the product catalogue — the eight TZ §7.2
- * types, unit, minimum stock, sale / write-off price. Stock, receipts and
- * issues (B5.2+) build on these items. Rules: shared/inventory.ts.
+ * Ombor (Bosqich 5, TZ §7): the product catalogue with stock on hand (B5.1)
+ * and receipts (B5.2). Issues, counts and reports join as further tabs.
+ * Rules: shared/inventory.ts.
  */
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -23,7 +23,7 @@ import {
   Trash2,
   Warehouse,
 } from "lucide-react";
-import type { InventoryItem } from "@shared/schema";
+import type { InventoryItem, InventoryItemView } from "@shared/schema";
 import { insertInventoryItemSchema } from "@shared/schema";
 import {
   DEFAULT_UNIT,
@@ -43,6 +43,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Receipts } from "@/components/inventory/receipts";
 import { EmptyState, Money, PageHeader, StatCard, TableSkeleton } from "@/components/ui-kit";
 import { MoneyInput, SearchInput } from "@/components/inputs";
 import { ExportButtons } from "@/components/export-buttons";
@@ -52,6 +54,7 @@ import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/format";
 
 const KIND_ICONS: Record<InventoryKind, ComponentType<{ className?: string }>> = {
   reagent: FlaskConical,
@@ -76,12 +79,13 @@ const KIND_TONES: Record<InventoryKind, string> = {
 
 const qty = (n: number) => String(Number(n.toFixed(3)));
 
-const EXPORT_COLUMNS: ExportColumn<InventoryItem>[] = [
+const EXPORT_COLUMNS: ExportColumn<InventoryItemView>[] = [
   { header: "Nomi", value: (i) => i.name, width: 34 },
   { header: "Turi", value: (i) => INVENTORY_KIND_LABELS[i.kind], width: 24 },
   { header: "Artikul", value: (i) => i.code ?? "", width: 12 },
   { header: "Ishlab chiqaruvchi", value: (i) => i.manufacturer ?? "", width: 18 },
   { header: "Birlik", value: (i) => i.unit, width: 9 },
+  { header: "Qoldiq", value: (i) => i.onHand, type: "number", width: 10 },
   { header: "Minimal qoldiq", value: (i) => i.minStock, type: "number", width: 12 },
   { header: "Narx", value: (i) => i.salePrice ?? 0, type: "money", width: 13 },
   { header: "Holat", value: (i) => (i.isActive ? "Faol" : "Faolsiz"), width: 9 },
@@ -91,7 +95,8 @@ export default function Inventory() {
   const { can } = useAuth();
   const { toast } = useToast();
   const canManage = can("inventory.manage");
-  const { data: items = [], isLoading } = useQuery<InventoryItem[]>({ queryKey: ["/api/inventory/items"], refetchOnMount: "always" });
+  const { data: items = [], isLoading } = useQuery<InventoryItemView[]>({ queryKey: ["/api/inventory/items"], refetchOnMount: "always" });
+  const [tab, setTab] = useState<"items" | "receipts">(() => (new URLSearchParams(window.location.search).get("tab") === "receipts" ? "receipts" : "items"));
 
   const [kind, setKind] = useState<InventoryKind | "all">("all");
   const [search, setSearch] = useState("");
@@ -114,6 +119,7 @@ export default function Inventory() {
   const active = items.filter((i) => i.isActive);
   const kindsUsed = new Set(active.map((i) => i.kind)).size;
   const unpriced = active.filter((i) => i.salePrice === null).length;
+  const low = active.filter((i) => i.onHand <= i.minStock).length;
 
   const toggle = useMutation({
     mutationFn: async (i: InventoryItem) => {
@@ -186,146 +192,182 @@ export default function Inventory() {
           tone={unpriced > 0 ? "amber" : "emerald"}
           isLoading={isLoading}
         />
-        <StatCard index={3} label="Faolsiz" value={items.length - active.length} hint="Endi ishlatilmaydi" icon={Package} tone="primary" isLoading={isLoading} />
+        <StatCard
+          index={3}
+          label="Kam qolgan"
+          value={low}
+          hint={low > 0 ? "Qoldiq minimal darajada yoki undan kam" : "Hammasi yetarli"}
+          icon={Package}
+          tone={low > 0 ? "rose" : "emerald"}
+          isLoading={isLoading}
+        />
       </div>
 
-      <div className="card-premium flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between">
-        <SearchInput value={search} onChange={setSearch} placeholder="Nomi, artikul yoki ishlab chiqaruvchi…" className="lg:w-96" data-testid="input-search-inventory" />
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Switch checked={showInactive} onCheckedChange={setShowInactive} data-testid="switch-show-inactive" />
-          Faolsizlarni ham ko'rsatish
-        </label>
-      </div>
-
-      {/* TZ §7.2: the eight types as filter chips. */}
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Mahsulot turi">
-        {(["all", ...INVENTORY_KINDS] as const).map((k) => {
-          const count = k === "all" ? visible.length : (counts[k] ?? 0);
-          if (k !== "all" && count === 0 && kind !== k) return null;
-          const Icon = k === "all" ? Boxes : KIND_ICONS[k];
-          return (
-            <button
-              key={k}
-              type="button"
-              aria-pressed={kind === k}
-              onClick={() => setKind(k)}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                kind === k ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:border-primary/40",
-              )}
-              data-testid={`filter-kind-${k}`}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {k === "all" ? "Hammasi" : INVENTORY_KIND_LABELS[k]} <span className="tabular opacity-70">{count}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="card-premium overflow-hidden">
-        {isLoading ? (
-          <TableSkeleton />
-        ) : rows.length === 0 ? (
-          <EmptyState
-            icon={Warehouse}
-            title={items.length === 0 ? "Katalog bo'sh" : "Mos mahsulot topilmadi"}
-            description={
-              items.length === 0
-                ? "Ombordagi har bir mahsulotni turi, o'lchov birligi va minimal qoldig'i bilan kiriting. Kirim va qoldiq shu katalogga tayanadi."
-                : "Qidiruv so'zini yoki turini o'zgartiring."
-            }
-            action={
-              items.length === 0 && canManage ? (
-                <Button onClick={() => setDialog({ open: true, item: null })}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Birinchi mahsulot
-                </Button>
-              ) : undefined
-            }
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <Table className="table-premium">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Mahsulot</TableHead>
-                  <TableHead className="hidden md:table-cell">Turi</TableHead>
-                  <TableHead>Birlik</TableHead>
-                  <TableHead className="text-right">Minimal qoldiq</TableHead>
-                  <TableHead className="hidden text-right sm:table-cell">Narx</TableHead>
-                  <TableHead className="hidden w-20 lg:table-cell">Faol</TableHead>
-                  <TableHead className="w-12" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((i) => {
-                  const Icon = KIND_ICONS[i.kind];
-                  return (
-                    <TableRow key={i.id} className={cn(!i.isActive && "opacity-55")} data-testid={`row-item-${i.id}`}>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className={cn("icon-tile h-9 w-9 shrink-0", KIND_TONES[i.kind])}>
-                            <Icon className="h-4 w-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="truncate font-medium">{i.name}</p>
-                            <p className="truncate text-xs text-muted-foreground">
-                              {[i.code ? `Art. ${i.code}` : null, i.manufacturer].filter(Boolean).join(" · ") || (
-                                <span className="md:hidden">{INVENTORY_KIND_SHORT[i.kind]}</span>
-                              )}
-                            </p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden text-sm md:table-cell">{INVENTORY_KIND_LABELS[i.kind]}</TableCell>
-                      <TableCell className="text-sm">{i.unit}</TableCell>
-                      <TableCell className="text-right tabular">{qty(i.minStock)}</TableCell>
-                      <TableCell className="hidden text-right sm:table-cell">
-                        {i.salePrice === null ? <span className="text-xs text-muted-foreground">belgilanmagan</span> : <Money value={i.salePrice} />}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        <Switch
-                          checked={i.isActive}
-                          disabled={!canManage || toggle.isPending}
-                          onCheckedChange={() => toggle.mutate(i)}
-                          aria-label={i.isActive ? "Faolsizlantirish" : "Faollashtirish"}
-                          data-testid={`switch-item-${i.id}`}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        {canManage && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Amallar" data-testid={`menu-item-${i.id}`}>
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => setDialog({ open: true, item: i })}>
-                                <Pencil className="mr-2 h-4 w-4" />
-                                Tahrirlash
-                              </DropdownMenuItem>
-                              <DropdownMenuItem className="lg:hidden" onClick={() => toggle.mutate(i)}>
-                                <Package className="mr-2 h-4 w-4" />
-                                {i.isActive ? "Faolsizlantirish" : "Faollashtirish"}
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleting(i)}>
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                O'chirish
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "items" | "receipts")}>
+        <TabsList className="h-auto flex-wrap justify-start">
+          <TabsTrigger value="items" data-testid="tab-inventory-items">
+            Mahsulotlar
+          </TabsTrigger>
+          <TabsTrigger value="receipts" data-testid="tab-inventory-receipts">
+            Kirim
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="receipts" className="mt-4">
+          <Receipts items={items} />
+        </TabsContent>
+        <TabsContent value="items" className="mt-4 space-y-4">
+          <div className="card-premium flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between">
+            <SearchInput value={search} onChange={setSearch} placeholder="Nomi, artikul yoki ishlab chiqaruvchi…" className="lg:w-96" data-testid="input-search-inventory" />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Switch checked={showInactive} onCheckedChange={setShowInactive} data-testid="switch-show-inactive" />
+              Faolsizlarni ham ko'rsatish
+            </label>
           </div>
-        )}
-      </div>
+
+          {/* TZ §7.2: the eight types as filter chips. */}
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Mahsulot turi">
+            {(["all", ...INVENTORY_KINDS] as const).map((k) => {
+              const count = k === "all" ? visible.length : (counts[k] ?? 0);
+              if (k !== "all" && count === 0 && kind !== k) return null;
+              const Icon = k === "all" ? Boxes : KIND_ICONS[k];
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={kind === k}
+                  onClick={() => setKind(k)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    kind === k ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:border-primary/40",
+                  )}
+                  data-testid={`filter-kind-${k}`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {k === "all" ? "Hammasi" : INVENTORY_KIND_LABELS[k]} <span className="tabular opacity-70">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="card-premium overflow-hidden">
+            {isLoading ? (
+              <TableSkeleton />
+            ) : rows.length === 0 ? (
+              <EmptyState
+                icon={Warehouse}
+                title={items.length === 0 ? "Katalog bo'sh" : "Mos mahsulot topilmadi"}
+                description={
+                  items.length === 0
+                    ? "Ombordagi har bir mahsulotni turi, o'lchov birligi va minimal qoldig'i bilan kiriting. Kirim va qoldiq shu katalogga tayanadi."
+                    : "Qidiruv so'zini yoki turini o'zgartiring."
+                }
+                action={
+                  items.length === 0 && canManage ? (
+                    <Button onClick={() => setDialog({ open: true, item: null })}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Birinchi mahsulot
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table className="table-premium">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Mahsulot</TableHead>
+                      <TableHead className="hidden md:table-cell">Turi</TableHead>
+                      <TableHead className="text-right">Qoldiq</TableHead>
+                      <TableHead className="hidden text-right sm:table-cell">Minimal</TableHead>
+                      <TableHead className="hidden text-right sm:table-cell">Narx</TableHead>
+                      <TableHead className="hidden w-20 lg:table-cell">Faol</TableHead>
+                      <TableHead className="w-12" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((i) => {
+                      const Icon = KIND_ICONS[i.kind];
+                      return (
+                        <TableRow key={i.id} className={cn(!i.isActive && "opacity-55")} data-testid={`row-item-${i.id}`}>
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <div className={cn("icon-tile h-9 w-9 shrink-0", KIND_TONES[i.kind])}>
+                                <Icon className="h-4 w-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate font-medium">{i.name}</p>
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {[i.code ? `Art. ${i.code}` : null, i.manufacturer].filter(Boolean).join(" · ") || (
+                                    <span className="md:hidden">{INVENTORY_KIND_SHORT[i.kind]}</span>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden text-sm md:table-cell">{INVENTORY_KIND_LABELS[i.kind]}</TableCell>
+                          <TableCell className="text-right" data-testid={`cell-onhand-${i.id}`}>
+                            <span
+                              className={cn(
+                                "font-semibold tabular",
+                                i.isActive && i.onHand <= 0 && "text-rose-600 dark:text-rose-400",
+                                i.isActive && i.onHand > 0 && i.onHand <= i.minStock && "text-amber-700 dark:text-amber-300",
+                              )}
+                            >
+                              {qty(i.onHand)}
+                            </span>{" "}
+                            <span className="text-xs text-muted-foreground">{i.unit}</span>
+                            {i.nearestExpiry && <span className="block text-[11px] text-muted-foreground">muddat {formatDate(i.nearestExpiry)}</span>}
+                          </TableCell>
+                          <TableCell className="hidden text-right tabular text-muted-foreground sm:table-cell">{qty(i.minStock)}</TableCell>
+                          <TableCell className="hidden text-right sm:table-cell">
+                            {i.salePrice === null ? <span className="text-xs text-muted-foreground">belgilanmagan</span> : <Money value={i.salePrice} />}
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell">
+                            <Switch
+                              checked={i.isActive}
+                              disabled={!canManage || toggle.isPending}
+                              onCheckedChange={() => toggle.mutate(i)}
+                              aria-label={i.isActive ? "Faolsizlantirish" : "Faollashtirish"}
+                              data-testid={`switch-item-${i.id}`}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            {canManage && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Amallar" data-testid={`menu-item-${i.id}`}>
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => setDialog({ open: true, item: i })}>
+                                    <Pencil className="mr-2 h-4 w-4" />
+                                    Tahrirlash
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem className="lg:hidden" onClick={() => toggle.mutate(i)}>
+                                    <Package className="mr-2 h-4 w-4" />
+                                    {i.isActive ? "Faolsizlantirish" : "Faollashtirish"}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleting(i)}>
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    O'chirish
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+
+        </TabsContent>
+      </Tabs>
 
       <ItemDialog state={dialog} onClose={() => setDialog({ open: false, item: null })} />
       <ConfirmDialog

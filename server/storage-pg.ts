@@ -12,6 +12,9 @@ import {
   deviceMaintenance,
   eqaResults,
   inventoryItems,
+  stockReceipts,
+  inventoryBatches,
+  stockMovements,
   auditLog,
   departments,
   doctors,
@@ -122,7 +125,14 @@ import { referralStage } from "@shared/referral";
 import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, type LabBoard, type LabBoardCounts } from "@shared/lab-board";
 import { checkLogo, type ClinicLogo } from "@shared/branding";
-import { INVENTORY_CODE_TAKEN, INVENTORY_NAME_TAKEN } from "@shared/inventory";
+import {
+  INVENTORY_CODE_TAKEN,
+  INVENTORY_NAME_TAKEN,
+  ITEM_HAS_STOCK_HISTORY,
+  RECEIPT_ALREADY_CANCELLED,
+  RECEIPT_IN_USE,
+  lineTotal,
+} from "@shared/inventory";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
   QC_LOOKBACK,
@@ -135,6 +145,13 @@ import {
   zScore,
 } from "@shared/qc";
 import type {
+  CreateReceiptInput,
+  InventoryBatch,
+  InventoryItemView,
+  StockMovement,
+  StockReceipt,
+  StockReceiptDetail,
+  StockReceiptView,
   InsertInventoryItem,
   InventoryItem,
   UpdateInventoryItemInput,
@@ -3680,9 +3697,26 @@ export class PgStorage implements IStorage {
 
   // ------------------------------------------------------------ inventory (B5)
 
-  async listInventoryItems(): Promise<InventoryItem[]> {
-    const rows = await db.select().from(inventoryItems).orderBy(desc(inventoryItems.isActive), asc(inventoryItems.name));
-    return rows.map(mapInventoryItem);
+  async listInventoryItems(): Promise<InventoryItemView[]> {
+    const order = [desc(inventoryItems.isActive), asc(inventoryItems.name)];
+    try {
+      const rows = await db
+        .select({
+          item: inventoryItems,
+          onHand: sql<number>`(SELECT coalesce(sum(b.remaining), 0) FROM inventory_batches b
+                                WHERE b.item_id = "inventory_items"."id" AND b.cancelled_at IS NULL)`,
+          nearestExpiry: sql<string | null>`(SELECT min(b.expires_on) FROM inventory_batches b
+                                              WHERE b.item_id = "inventory_items"."id" AND b.cancelled_at IS NULL AND b.remaining > 0)`,
+        })
+        .from(inventoryItems)
+        .orderBy(...order);
+      return rows.map((r) => ({ ...mapInventoryItem(r.item), onHand: Number(r.onHand), nearestExpiry: r.nearestExpiry ?? null }));
+    } catch (err) {
+      // Before db:stock the catalogue still works, with nothing on the shelf.
+      if (!isMissingTable(err)) throw err;
+      const rows = await db.select().from(inventoryItems).orderBy(...order);
+      return rows.map((r) => ({ ...mapInventoryItem(r), onHand: 0, nearestExpiry: null }));
+    }
   }
 
   async getInventoryItem(id: string): Promise<InventoryItem | undefined> {
@@ -3720,8 +3754,124 @@ export class PgStorage implements IStorage {
   }
 
   async deleteInventoryItem(id: string): Promise<boolean> {
-    const rows = await db.delete(inventoryItems).where(eq(inventoryItems.id, id)).returning({ id: inventoryItems.id });
-    return rows.length > 0;
+    return db.transaction(async (tx) => {
+      const [item] = await tx.select({ id: inventoryItems.id }).from(inventoryItems).where(eq(inventoryItems.id, id)).for("update");
+      if (!item) return false;
+      const [moved] = await tx.select({ id: stockMovements.id }).from(stockMovements).where(eq(stockMovements.itemId, id)).limit(1);
+      if (moved) throw new StorageConflict(ITEM_HAS_STOCK_HISTORY);
+      await tx.delete(inventoryItems).where(eq(inventoryItems.id, id));
+      return true;
+    });
+  }
+
+  private async receiptDetail(exec: typeof db, receipt: StockReceipt): Promise<StockReceiptDetail> {
+    const rows = await exec
+      .select({ b: inventoryBatches, itemName: inventoryItems.name, unit: inventoryItems.unit, kind: inventoryItems.kind })
+      .from(inventoryBatches)
+      .leftJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId))
+      .where(eq(inventoryBatches.receiptId, receipt.id))
+      .orderBy(asc(inventoryBatches.createdAt), asc(inventoryItems.name));
+    return {
+      ...receipt,
+      lines: rows.map((r) => ({
+        ...r.b,
+        itemName: r.itemName ?? "—",
+        unit: r.unit ?? "",
+        kind: (r.kind ?? "consumable") as InventoryItem["kind"],
+      })),
+    };
+  }
+
+  async listReceipts(query: { limit?: number } = {}): Promise<StockReceiptView[]> {
+    const rows = await db
+      .select({
+        r: stockReceipts,
+        lineCount: sql<number>`(SELECT count(*)::int FROM inventory_batches b WHERE b.receipt_id = "stock_receipts"."id")`,
+      })
+      .from(stockReceipts)
+      .orderBy(desc(stockReceipts.number))
+      .limit(query.limit ?? 200);
+    return rows.map((x) => ({ ...x.r, lineCount: x.lineCount }));
+  }
+
+  async getReceipt(id: string): Promise<StockReceiptDetail | undefined> {
+    const [r] = await db.select().from(stockReceipts).where(eq(stockReceipts.id, id)).limit(1);
+    return r && this.receiptDetail(db, r);
+  }
+
+  async createReceipt(input: CreateReceiptInput, actor: Actor): Promise<StockReceiptDetail> {
+    return db.transaction(async (tx) => {
+      const [receipt] = await tx
+        .insert(stockReceipts)
+        .values({
+          supplier: input.supplier,
+          documentNumber: input.documentNumber ?? null,
+          receivedOn: input.receivedOn,
+          notes: input.notes ?? null,
+          total: input.lines.reduce((s, l) => s + lineTotal(l.quantity, l.purchasePrice), 0),
+          createdBy: actor.id,
+          createdByName: actor.name,
+        })
+        .returning();
+      const batches = await tx
+        .insert(inventoryBatches)
+        .values(
+          input.lines.map((l) => ({
+            itemId: l.itemId,
+            receiptId: receipt.id,
+            lotNumber: l.lotNumber ?? null,
+            expiresOn: l.expiresOn ?? null,
+            quantity: l.quantity,
+            remaining: l.quantity,
+            purchasePrice: l.purchasePrice,
+          })),
+        )
+        .returning();
+      await tx.insert(stockMovements).values(
+        batches.map((b) => ({
+          itemId: b.itemId,
+          batchId: b.id,
+          kind: "receipt",
+          quantity: b.quantity,
+          receiptId: receipt.id,
+          createdBy: actor.id,
+          createdByName: actor.name,
+        })),
+      );
+      return this.receiptDetail(tx as unknown as typeof db, receipt);
+    });
+  }
+
+  async cancelReceipt(id: string, reason: string, actor: Actor): Promise<StockReceiptDetail | undefined> {
+    return db.transaction(async (tx) => {
+      const [receipt] = await tx.select().from(stockReceipts).where(eq(stockReceipts.id, id)).for("update");
+      if (!receipt) return undefined;
+      if (receipt.cancelledAt) throw new StorageConflict(RECEIPT_ALREADY_CANCELLED);
+      const batches = await tx.select().from(inventoryBatches).where(eq(inventoryBatches.receiptId, id)).for("update");
+      if (batches.some((b) => Math.abs(b.remaining - b.quantity) > 1e-9)) throw new StorageConflict(RECEIPT_IN_USE);
+      const now = new Date().toISOString();
+      if (batches.length) {
+        await tx.insert(stockMovements).values(
+          batches.map((b) => ({
+            itemId: b.itemId,
+            batchId: b.id,
+            kind: "receipt_cancel",
+            quantity: -b.remaining,
+            receiptId: id,
+            note: reason,
+            createdBy: actor.id,
+            createdByName: actor.name,
+          })),
+        );
+        await tx.update(inventoryBatches).set({ remaining: 0, cancelledAt: now }).where(eq(inventoryBatches.receiptId, id));
+      }
+      const [updated] = await tx
+        .update(stockReceipts)
+        .set({ cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
+        .where(eq(stockReceipts.id, id))
+        .returning();
+      return this.receiptDetail(tx as unknown as typeof db, updated);
+    });
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {

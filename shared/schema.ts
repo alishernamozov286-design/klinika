@@ -24,7 +24,7 @@ import {
   type QcStatus,
   type WestgardRule,
 } from "./qc";
-import { INVENTORY_KINDS, type InventoryKind } from "./inventory";
+import { INVENTORY_KINDS, MAX_RECEIPT_LINES, type InventoryKind, type MovementKind } from "./inventory";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -1244,6 +1244,70 @@ export const inventoryItems = pgTable("inventory_items", {
   updatedBy: varchar("updated_by"),
 });
 
+/**
+ * Kirim hujjati (B5.2, TZ §7.3). Never deleted: cancelled with a reason, and
+ * only while none of its batches has been touched.
+ */
+export const stockReceipts = pgTable("stock_receipts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+  supplier: text("supplier").notNull(),
+  /** The supplier's own invoice / waybill number. */
+  documentNumber: text("document_number"),
+  /** YYYY-MM-DD. */
+  receivedOn: text("received_on").notNull(),
+  notes: text("notes"),
+  total: money("total").notNull().default(0),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
+  createdByName: text("created_by_name"),
+  cancelledAt: isoTimestamp("cancelled_at"),
+  cancelledBy: varchar("cancelled_by"),
+  cancelledByName: text("cancelled_by_name"),
+  cancelReason: text("cancel_reason"),
+});
+
+/**
+ * A batch: one item, one LOT, one expiry, from one receipt. `remaining` is a
+ * cache of the batch's movements, kept in the same transaction as each one.
+ */
+export const inventoryBatches = pgTable(
+  "inventory_batches",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    itemId: varchar("item_id").notNull(),
+    receiptId: varchar("receipt_id").notNull(),
+    lotNumber: text("lot_number"),
+    /** YYYY-MM-DD; null for goods without one. */
+    expiresOn: text("expires_on"),
+    quantity: doublePrecision("quantity").notNull(),
+    remaining: doublePrecision("remaining").notNull(),
+    /** Per unit, so'm. */
+    purchasePrice: money("purchase_price").notNull(),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    cancelledAt: isoTimestamp("cancelled_at"),
+  },
+  (t) => [index("IDX_inventory_batches_item").on(t.itemId), index("IDX_inventory_batches_receipt").on(t.receiptId)],
+);
+
+/** The stock ledger: every change of a batch's quantity, signed (+ in, − out). */
+export const stockMovements = pgTable(
+  "stock_movements",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    itemId: varchar("item_id").notNull(),
+    batchId: varchar("batch_id").notNull(),
+    kind: text("kind").notNull(),
+    quantity: doublePrecision("quantity").notNull(),
+    receiptId: varchar("receipt_id"),
+    note: text("note"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    createdByName: text("created_by_name"),
+  },
+  (t) => [index("IDX_stock_movements_item").on(t.itemId, t.createdAt)],
+);
+
 // ---------------------------------------------------------------- types
 
 export type User = typeof users.$inferSelect;
@@ -1515,6 +1579,14 @@ export type EqaResult = Omit<typeof eqaResults.$inferSelect, "evaluation"> & { e
 export type EqaResultView = EqaResult & { testName: string; deviceName: string | null };
 
 export type InventoryItem = Omit<typeof inventoryItems.$inferSelect, "kind"> & { kind: InventoryKind };
+/** A catalogue row with what is on the shelf: the sum of its live batches. */
+export type InventoryItemView = InventoryItem & { onHand: number; nearestExpiry: string | null };
+export type StockReceipt = typeof stockReceipts.$inferSelect;
+export type InventoryBatch = typeof inventoryBatches.$inferSelect;
+export type StockMovement = Omit<typeof stockMovements.$inferSelect, "kind"> & { kind: MovementKind };
+export type StockReceiptView = StockReceipt & { lineCount: number };
+export type StockReceiptLine = InventoryBatch & { itemName: string; unit: string; kind: InventoryKind };
+export type StockReceiptDetail = StockReceipt & { lines: StockReceiptLine[] };
 
 export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
   kind: ReferralKind;
@@ -2464,6 +2536,31 @@ export const insertInventoryItemSchema = z.object({
 export const updateInventoryItemSchema = insertInventoryItemSchema.partial();
 export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;
 export type UpdateInventoryItemInput = z.infer<typeof updateInventoryItemSchema>;
+
+export const receiptLineSchema = z.object({
+  itemId: z.string().min(1, "Mahsulotni tanlang"),
+  lotNumber: optionalText(40, "LOT"),
+  expiresOn: dayString.nullish().or(z.literal("")).transform((v) => (v ? v : null)),
+  quantity: z
+    .number({ invalid_type_error: "Miqdor: raqam kiriting", required_error: "Miqdorni kiriting" })
+    .finite("Miqdor: raqam kiriting")
+    .positive("Miqdor musbat bo'lishi kerak")
+    .max(1_000_000, "Miqdor juda katta"),
+  purchasePrice: z
+    .number({ invalid_type_error: "Xarid narxi: raqam kiriting", required_error: "Xarid narxini kiriting" })
+    .int("Narx butun so'mda bo'lsin")
+    .min(0, "Narx manfiy bo'lmasligi kerak")
+    .max(1_000_000_000, "Narx juda katta"),
+});
+export const createReceiptSchema = z.object({
+  supplier: z.string().trim().min(2, "Yetkazib beruvchini kiriting").max(160, "Juda uzun"),
+  documentNumber: optionalText(60, "Hujjat raqami"),
+  receivedOn: dayString,
+  notes: optionalText(1000, "Izoh"),
+  lines: z.array(receiptLineSchema).min(1, "Kamida bitta mahsulot qo'shing").max(MAX_RECEIPT_LINES, `Bir hujjatda ko'pi bilan ${MAX_RECEIPT_LINES} ta qator`),
+});
+export type ReceiptLineInput = z.infer<typeof receiptLineSchema>;
+export type CreateReceiptInput = z.infer<typeof createReceiptSchema>;
 
 // ------------------------------------------------------- quality control
 

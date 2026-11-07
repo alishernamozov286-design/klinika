@@ -86,7 +86,15 @@ import {
   roundZ,
   zScore,
 } from "@shared/qc";
+import { ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE, lineTotal } from "@shared/inventory";
 import type {
+  CreateReceiptInput,
+  InventoryBatch,
+  InventoryItemView,
+  StockMovement,
+  StockReceipt,
+  StockReceiptDetail,
+  StockReceiptView,
   InsertInventoryItem,
   InventoryItem,
   UpdateInventoryItemInput,
@@ -2931,10 +2939,18 @@ export class FileStorage implements IStorage {
 
   // ------------------------------------------------------------ inventory (B5)
 
-  async listInventoryItems(): Promise<InventoryItem[]> {
+  async listInventoryItems(): Promise<InventoryItemView[]> {
     return [...this.db.inventoryItems]
       .sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name))
-      .map((i) => ({ ...i }));
+      .map((i) => {
+        const live = this.db.inventoryBatches.filter((b) => b.itemId === i.id && !b.cancelledAt);
+        const expiries = live.filter((b) => b.remaining > 0 && b.expiresOn).map((b) => b.expiresOn!);
+        return {
+          ...i,
+          onHand: live.reduce((s, b) => s + b.remaining, 0),
+          nearestExpiry: expiries.length ? expiries.sort()[0] : null,
+        };
+      });
   }
 
   async getInventoryItem(id: string): Promise<InventoryItem | undefined> {
@@ -2974,11 +2990,112 @@ export class FileStorage implements IStorage {
   }
 
   async deleteInventoryItem(id: string): Promise<boolean> {
+    if (this.db.stockMovements.some((m) => m.itemId === id)) throw new StorageConflict(ITEM_HAS_STOCK_HISTORY);
     const n = this.db.inventoryItems.length;
     this.db.inventoryItems = this.db.inventoryItems.filter((x) => x.id !== id);
     if (this.db.inventoryItems.length === n) return false;
     await this.persist();
     return true;
+  }
+
+  private receiptDetail(r: StockReceipt): StockReceiptDetail {
+    const lines = this.db.inventoryBatches
+      .filter((b) => b.receiptId === r.id)
+      .map((b) => {
+        const item = this.db.inventoryItems.find((i) => i.id === b.itemId);
+        return { ...b, itemName: item?.name ?? "—", unit: item?.unit ?? "", kind: item?.kind ?? "consumable" };
+      });
+    return { ...r, lines };
+  }
+
+  async listReceipts(query: { limit?: number } = {}): Promise<StockReceiptView[]> {
+    return [...this.db.stockReceipts]
+      .sort((a, b) => b.number - a.number)
+      .slice(0, query.limit ?? 200)
+      .map((r) => ({ ...r, lineCount: this.db.inventoryBatches.filter((b) => b.receiptId === r.id).length }));
+  }
+
+  async getReceipt(id: string): Promise<StockReceiptDetail | undefined> {
+    const r = this.db.stockReceipts.find((x) => x.id === id);
+    return r && this.receiptDetail(r);
+  }
+
+  async createReceipt(input: CreateReceiptInput, actor: Actor): Promise<StockReceiptDetail> {
+    const now = new Date().toISOString();
+    this.db.counters.receiptNumber += 1;
+    const receipt: StockReceipt = {
+      id: randomUUID(),
+      number: this.db.counters.receiptNumber,
+      supplier: input.supplier,
+      documentNumber: input.documentNumber ?? null,
+      receivedOn: input.receivedOn,
+      notes: input.notes ?? null,
+      total: input.lines.reduce((s, l) => s + lineTotal(l.quantity, l.purchasePrice), 0),
+      createdAt: now,
+      createdBy: actor.id,
+      createdByName: actor.name,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancelledByName: null,
+      cancelReason: null,
+    };
+    this.db.stockReceipts.push(receipt);
+    for (const l of input.lines) {
+      const batch: InventoryBatch = {
+        id: randomUUID(),
+        itemId: l.itemId,
+        receiptId: receipt.id,
+        lotNumber: l.lotNumber ?? null,
+        expiresOn: l.expiresOn ?? null,
+        quantity: l.quantity,
+        remaining: l.quantity,
+        purchasePrice: l.purchasePrice,
+        createdAt: now,
+        cancelledAt: null,
+      };
+      this.db.inventoryBatches.push(batch);
+      this.db.stockMovements.push({
+        id: randomUUID(),
+        itemId: l.itemId,
+        batchId: batch.id,
+        kind: "receipt",
+        quantity: l.quantity,
+        receiptId: receipt.id,
+        note: null,
+        createdAt: now,
+        createdBy: actor.id,
+        createdByName: actor.name,
+      });
+    }
+    await this.persist();
+    return this.receiptDetail(receipt);
+  }
+
+  async cancelReceipt(id: string, reason: string, actor: Actor): Promise<StockReceiptDetail | undefined> {
+    const r = this.db.stockReceipts.find((x) => x.id === id);
+    if (!r) return undefined;
+    if (r.cancelledAt) throw new StorageConflict(RECEIPT_ALREADY_CANCELLED);
+    const batches = this.db.inventoryBatches.filter((b) => b.receiptId === id);
+    if (batches.some((b) => Math.abs(b.remaining - b.quantity) > 1e-9)) throw new StorageConflict(RECEIPT_IN_USE);
+    const now = new Date().toISOString();
+    for (const b of batches) {
+      this.db.stockMovements.push({
+        id: randomUUID(),
+        itemId: b.itemId,
+        batchId: b.id,
+        kind: "receipt_cancel",
+        quantity: -b.remaining,
+        receiptId: id,
+        note: reason,
+        createdAt: now,
+        createdBy: actor.id,
+        createdByName: actor.name,
+      });
+      Object.assign(b, { remaining: 0, cancelledAt: now });
+    }
+    Object.assign(r, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+    await this.persist();
+    return this.receiptDetail(r);
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {
