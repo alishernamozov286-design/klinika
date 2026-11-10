@@ -86,8 +86,22 @@ import {
   roundZ,
   zScore,
 } from "@shared/qc";
-import { ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE, lineTotal } from "@shared/inventory";
+import {
+  ISSUE_ALREADY_CANCELLED,
+  ITEM_HAS_STOCK_HISTORY,
+  QTY_EPSILON,
+  RECEIPT_ALREADY_CANCELLED,
+  RECEIPT_IN_USE,
+  lineTotal,
+  planIssue,
+} from "@shared/inventory";
 import type {
+  CreateIssueInput,
+  InventoryBatchView,
+  StockIssue,
+  StockIssueDetail,
+  StockIssueLine,
+  StockIssueView,
   CreateReceiptInput,
   InventoryBatch,
   InventoryItemView,
@@ -3061,6 +3075,7 @@ export class FileStorage implements IStorage {
         kind: "receipt",
         quantity: l.quantity,
         receiptId: receipt.id,
+        issueId: null,
         note: null,
         createdAt: now,
         createdBy: actor.id,
@@ -3086,6 +3101,7 @@ export class FileStorage implements IStorage {
         kind: "receipt_cancel",
         quantity: -b.remaining,
         receiptId: id,
+        issueId: null,
         note: reason,
         createdAt: now,
         createdBy: actor.id,
@@ -3096,6 +3112,143 @@ export class FileStorage implements IStorage {
     Object.assign(r, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
     await this.persist();
     return this.receiptDetail(r);
+  }
+
+  // ------------------------------------------------------------- issues (B5.3)
+
+  async listBatches(query: { itemId?: string } = {}): Promise<InventoryBatchView[]> {
+    const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
+    return this.db.inventoryBatches
+      .filter((b) => !b.cancelledAt && b.remaining > QTY_EPSILON && (!query.itemId || b.itemId === query.itemId))
+      .map((b) => {
+        const it = items.get(b.itemId);
+        return { ...b, itemName: it?.name ?? "—", unit: it?.unit ?? "", kind: it?.kind ?? "consumable" };
+      })
+      .sort(
+        (a, b) =>
+          a.itemName.localeCompare(b.itemName) ||
+          (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999") ||
+          a.createdAt.localeCompare(b.createdAt),
+      );
+  }
+
+  private issueView(i: StockIssue): StockIssueView {
+    return {
+      ...i,
+      departmentName: i.departmentId ? (this.db.departments.find((d) => d.id === i.departmentId)?.name ?? null) : null,
+      lineCount: this.db.stockMovements.filter((m) => m.issueId === i.id && (m.kind === "issue" || m.kind === "writeoff")).length,
+    };
+  }
+
+  private issueDetail(i: StockIssue): StockIssueDetail {
+    const lines: StockIssueLine[] = this.db.stockMovements
+      .filter((m) => m.issueId === i.id && (m.kind === "issue" || m.kind === "writeoff"))
+      .map((m) => {
+        const b = this.db.inventoryBatches.find((x) => x.id === m.batchId);
+        const it = this.db.inventoryItems.find((x) => x.id === m.itemId);
+        return {
+          movementId: m.id,
+          itemId: m.itemId,
+          itemName: it?.name ?? "—",
+          unit: it?.unit ?? "",
+          batchId: m.batchId,
+          lotNumber: b?.lotNumber ?? null,
+          expiresOn: b?.expiresOn ?? null,
+          quantity: -m.quantity,
+          purchasePrice: b?.purchasePrice ?? 0,
+        };
+      });
+    return { ...this.issueView(i), lines };
+  }
+
+  async listIssues(query: { limit?: number } = {}): Promise<StockIssueView[]> {
+    return [...this.db.stockIssues]
+      .sort((a, b) => b.number - a.number)
+      .slice(0, query.limit ?? 200)
+      .map((i) => this.issueView(i));
+  }
+
+  async getIssue(id: string): Promise<StockIssueDetail | undefined> {
+    const i = this.db.stockIssues.find((x) => x.id === id);
+    return i && this.issueDetail(i);
+  }
+
+  async createIssue(input: CreateIssueInput, today: string, actor: Actor): Promise<StockIssueDetail> {
+    const ids = new Set(input.lines.map((l) => l.itemId));
+    const items = new Map(this.db.inventoryItems.filter((i) => ids.has(i.id)).map((i) => [i.id, i]));
+    const batches = this.db.inventoryBatches.filter((b) => ids.has(b.itemId) && !b.cancelledAt);
+    const plan = planIssue(input.kind, input.lines, batches, items, today);
+    if (!plan.ok) throw new StorageConflict(plan.message);
+    const now = new Date().toISOString();
+    const byId = new Map(batches.map((b) => [b.id, b]));
+    this.db.counters.issueNumber += 1;
+    const issue: StockIssue = {
+      id: randomUUID(),
+      number: this.db.counters.issueNumber,
+      kind: input.kind,
+      departmentId: input.kind === "department" ? input.departmentId : null,
+      receivedBy: input.kind === "department" ? (input.receivedBy ?? null) : null,
+      reason: input.kind === "writeoff" ? input.reason : null,
+      issuedOn: input.issuedOn,
+      notes: input.notes ?? null,
+      total: plan.allocations.reduce((s, a) => s + lineTotal(a.quantity, byId.get(a.batchId)!.purchasePrice), 0),
+      createdAt: now,
+      createdBy: actor.id,
+      createdByName: actor.name,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancelledByName: null,
+      cancelReason: null,
+    };
+    this.db.stockIssues.push(issue);
+    for (const a of plan.allocations) {
+      const b = byId.get(a.batchId)!;
+      b.remaining = Math.max(0, b.remaining - a.quantity);
+      if (b.remaining < QTY_EPSILON) b.remaining = 0;
+      this.db.stockMovements.push({
+        id: randomUUID(),
+        itemId: a.itemId,
+        batchId: a.batchId,
+        kind: input.kind === "writeoff" ? "writeoff" : "issue",
+        quantity: -a.quantity,
+        receiptId: null,
+        issueId: issue.id,
+        note: null,
+        createdAt: now,
+        createdBy: actor.id,
+        createdByName: actor.name,
+      });
+    }
+    await this.persist();
+    return this.issueDetail(issue);
+  }
+
+  async cancelIssue(id: string, reason: string, actor: Actor): Promise<StockIssueDetail | undefined> {
+    const issue = this.db.stockIssues.find((x) => x.id === id);
+    if (!issue) return undefined;
+    if (issue.cancelledAt) throw new StorageConflict(ISSUE_ALREADY_CANCELLED);
+    const now = new Date().toISOString();
+    const out = this.db.stockMovements.filter((m) => m.issueId === id && (m.kind === "issue" || m.kind === "writeoff"));
+    for (const m of out) {
+      const b = this.db.inventoryBatches.find((x) => x.id === m.batchId);
+      if (b) b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+      this.db.stockMovements.push({
+        id: randomUUID(),
+        itemId: m.itemId,
+        batchId: m.batchId,
+        kind: "issue_cancel",
+        quantity: -m.quantity,
+        receiptId: null,
+        issueId: id,
+        note: reason,
+        createdAt: now,
+        createdBy: actor.id,
+        createdByName: actor.name,
+      });
+    }
+    Object.assign(issue, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+    await this.persist();
+    return this.issueDetail(issue);
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {

@@ -209,6 +209,11 @@ var init_permissions = __esm({
         label: "Katalogni boshqarish",
         description: "Mahsulot qo'shish, tahrirlash, faolsizlantirish; birlik, minimal qoldiq va narx; kirimni bekor qilish"
       },
+      "inventory.issue": {
+        group: "warehouse",
+        label: "Chiqim",
+        description: "Bo'limlarga berish (qaysi bo'limga, kim oldi) va hisobdan chiqarish; partiya muddati yaqinidan boshlab olinadi"
+      },
       "inventory.receive": {
         group: "warehouse",
         label: "Kirim",
@@ -407,7 +412,7 @@ var init_permissions = __esm({
         key: "omborchi",
         name: "Omborchi",
         description: "Ombor: kirim, chiqim va qoldiq",
-        permissions: ["inventory.read", "inventory.manage", "inventory.receive"]
+        permissions: ["inventory.read", "inventory.manage", "inventory.receive", "inventory.issue"]
       },
       {
         key: "hamshira",
@@ -766,7 +771,64 @@ function duplicateLine(lines) {
   }
   return null;
 }
-var INVENTORY_KINDS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN, LOT_TRACKED, isLotTracked, MAX_RECEIPT_LINES, lineTotal, ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE;
+function allocateFefo(batches, quantity, today, opts = {}) {
+  const usable = batches.filter((b) => !b.cancelledAt && b.remaining > QTY_EPSILON && (opts.allowExpired || !b.expiresOn || b.expiresOn >= today)).sort((a, b) => {
+    if (a.expiresOn && b.expiresOn && a.expiresOn !== b.expiresOn) return a.expiresOn < b.expiresOn ? -1 : 1;
+    if (a.expiresOn && !b.expiresOn) return -1;
+    if (!a.expiresOn && b.expiresOn) return 1;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+  const available = usable.reduce((s, b) => s + b.remaining, 0);
+  if (available + QTY_EPSILON < quantity) return { ok: false, available };
+  const allocations = [];
+  let left = quantity;
+  for (const b of usable) {
+    if (left <= QTY_EPSILON) break;
+    const take = Math.min(b.remaining, left);
+    allocations.push({ batchId: b.id, quantity: take });
+    left -= take;
+  }
+  return { ok: true, allocations };
+}
+function duplicateIssueLine(lines) {
+  const seen = /* @__PURE__ */ new Set();
+  for (let i = 0; i < lines.length; i++) {
+    const key = `${lines[i].itemId}|${lines[i].batchId ?? ""}`;
+    if (seen.has(key)) return i;
+    seen.add(key);
+  }
+  return null;
+}
+function planIssue(kind, lines, batches, items, today) {
+  const left = new Map(batches.map((b) => [b.id, b.remaining]));
+  const allowExpired = kind === "writeoff";
+  const out = [];
+  const order = lines.map((l, i) => ({ l, i })).sort((a, b) => Number(!a.l.batchId) - Number(!b.l.batchId));
+  for (const { l, i } of order) {
+    const item = items.get(l.itemId);
+    if (!item) return { ok: false, message: `${i + 1}-qator: mahsulot topilmadi` };
+    const own = batches.filter((b) => b.itemId === l.itemId).map((b) => ({ ...b, remaining: left.get(b.id) ?? 0 }));
+    let pool3 = own;
+    if (l.batchId) {
+      pool3 = own.filter((b) => b.id === l.batchId && !b.cancelledAt);
+      if (pool3.length === 0) return { ok: false, message: `${i + 1}-qator: ${ISSUE_BATCH_GONE}` };
+      if (!allowExpired && pool3[0].expiresOn && pool3[0].expiresOn < today) {
+        return { ok: false, message: `${i + 1}-qator: "${item.name}" bu partiyaning muddati o'tgan \u2014 bo'limga berilmaydi, hisobdan chiqaring` };
+      }
+    }
+    const r = allocateFefo(pool3, l.quantity, today, { allowExpired });
+    if (!r.ok) {
+      const expiredStock = !allowExpired && own.some((b) => b.expiresOn && b.expiresOn < today && b.remaining > QTY_EPSILON);
+      return { ok: false, message: `${i + 1}-qator: ${shortageMessage(item.name, item.unit, r.available, l.quantity, expiredStock)}` };
+    }
+    for (const a of r.allocations) {
+      left.set(a.batchId, (left.get(a.batchId) ?? 0) - a.quantity);
+      out.push({ ...a, itemId: l.itemId });
+    }
+  }
+  return { ok: true, allocations: out };
+}
+var INVENTORY_KINDS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN, LOT_TRACKED, isLotTracked, MAX_RECEIPT_LINES, lineTotal, ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE, ISSUE_KINDS, ISSUE_KIND_LABELS, WRITEOFF_REASONS, WRITEOFF_REASON_LABELS, MAX_ISSUE_LINES, QTY_EPSILON, shortageMessage, fmtQty, ISSUE_ALREADY_CANCELLED, ISSUE_BATCH_GONE;
 var init_inventory = __esm({
   "shared/inventory.ts"() {
     "use strict";
@@ -800,6 +862,23 @@ var init_inventory = __esm({
     ITEM_HAS_STOCK_HISTORY = "Bu mahsulot bo'yicha kirim yoki chiqim bor, shuning uchun o'chirilmaydi. Uni faolsizlantiring.";
     RECEIPT_ALREADY_CANCELLED = "Bu kirim allaqachon bekor qilingan";
     RECEIPT_IN_USE = "Bu kirimdagi mahsulotdan foydalanilgan, shuning uchun bekor qilib bo'lmaydi. Ortiqchasini chiqim yoki inventarizatsiya orqali tuzating.";
+    ISSUE_KINDS = ["department", "writeoff"];
+    ISSUE_KIND_LABELS = {
+      department: "Bo'limga berish",
+      writeoff: "Hisobdan chiqarish"
+    };
+    WRITEOFF_REASONS = ["expired", "damaged", "other"];
+    WRITEOFF_REASON_LABELS = {
+      expired: "Muddati o'tgan",
+      damaged: "Shikastlangan / yaroqsiz",
+      other: "Boshqa sabab"
+    };
+    MAX_ISSUE_LINES = 100;
+    QTY_EPSILON = 1e-9;
+    shortageMessage = (name, unit, available, requested, expiredOnly = false) => `"${name}": ${expiredOnly ? "muddati o'tmagan " : ""}qoldiq ${fmtQty(available)} ${unit}, so'ralgan ${fmtQty(requested)} ${unit}`;
+    fmtQty = (n) => String(Number(n.toFixed(3)));
+    ISSUE_ALREADY_CANCELLED = "Bu chiqim allaqachon bekor qilingan";
+    ISSUE_BATCH_GONE = "Partiya topilmadi yoki bekor qilingan";
   }
 });
 
@@ -852,6 +931,7 @@ __export(schema_exports, {
   cancelReferralSchema: () => cancelReferralSchema,
   changePasswordSchema: () => changePasswordSchema,
   createAppointmentSchema: () => createAppointmentSchema,
+  createIssueSchema: () => createIssueSchema,
   createOrderSchema: () => createOrderSchema,
   createPaymentSchema: () => createPaymentSchema,
   createReceiptSchema: () => createReceiptSchema,
@@ -885,6 +965,7 @@ __export(schema_exports, {
   insertUserSchema: () => insertUserSchema,
   inventoryBatches: () => inventoryBatches,
   inventoryItems: () => inventoryItems,
+  issueLineSchema: () => issueLineSchema,
   labDeviceErrors: () => labDeviceErrors,
   labDevices: () => labDevices,
   labSettings: () => labSettings,
@@ -927,6 +1008,7 @@ __export(schema_exports, {
   services: () => services,
   sessions: () => sessions,
   signRecordSchema: () => signRecordSchema,
+  stockIssues: () => stockIssues,
   stockMovements: () => stockMovements,
   stockReceipts: () => stockReceipts,
   telegramContacts: () => telegramContacts,
@@ -990,7 +1072,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockMovements, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1907,6 +1989,28 @@ var init_schema = __esm({
       },
       (t) => [index("IDX_inventory_batches_item").on(t.itemId), index("IDX_inventory_batches_receipt").on(t.receiptId)]
     );
+    stockIssues = pgTable("stock_issues", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+      kind: text("kind").notNull(),
+      departmentId: varchar("department_id"),
+      /** Who took it on the department's side. */
+      receivedBy: text("received_by"),
+      /** Write-offs only. */
+      reason: text("reason"),
+      /** YYYY-MM-DD. */
+      issuedOn: text("issued_on").notNull(),
+      notes: text("notes"),
+      /** Cost of what left, at purchase prices, so'm. */
+      total: money("total").notNull().default(0),
+      createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+      createdBy: varchar("created_by"),
+      createdByName: text("created_by_name"),
+      cancelledAt: isoTimestamp("cancelled_at"),
+      cancelledBy: varchar("cancelled_by"),
+      cancelledByName: text("cancelled_by_name"),
+      cancelReason: text("cancel_reason")
+    });
     stockMovements = pgTable(
       "stock_movements",
       {
@@ -1916,6 +2020,8 @@ var init_schema = __esm({
         kind: text("kind").notNull(),
         quantity: doublePrecision("quantity").notNull(),
         receiptId: varchar("receipt_id"),
+        /** B5.3: the issue document an outgoing movement belongs to. */
+        issueId: varchar("issue_id"),
         note: text("note"),
         createdAt: isoTimestamp("created_at").defaultNow().notNull(),
         createdBy: varchar("created_by"),
@@ -2293,6 +2399,21 @@ var init_schema = __esm({
       receivedOn: dayString,
       notes: optionalText(1e3, "Izoh"),
       lines: z.array(receiptLineSchema).min(1, "Kamida bitta mahsulot qo'shing").max(MAX_RECEIPT_LINES, `Bir hujjatda ko'pi bilan ${MAX_RECEIPT_LINES} ta qator`)
+    });
+    issueLineSchema = z.object({
+      itemId: z.string().min(1, "Mahsulotni tanlang"),
+      quantity: z.number({ invalid_type_error: "Miqdor: raqam kiriting", required_error: "Miqdorni kiriting" }).finite("Miqdor: raqam kiriting").positive("Miqdor musbat bo'lishi kerak").max(1e6, "Miqdor juda katta"),
+      /** Pinned batch; FEFO chooses when absent. */
+      batchId: z.string().min(1).nullish().transform((v) => v ?? null)
+    });
+    createIssueSchema = z.object({
+      kind: z.enum(ISSUE_KINDS, { errorMap: () => ({ message: "Chiqim turini tanlang" }) }),
+      departmentId: z.string().min(1).nullish().transform((v) => v ?? null),
+      receivedBy: optionalText(120, "Oluvchi"),
+      reason: z.enum(WRITEOFF_REASONS).nullish().transform((v) => v ?? null),
+      issuedOn: dayString,
+      notes: optionalText(1e3, "Izoh"),
+      lines: z.array(issueLineSchema).min(1, "Kamida bitta mahsulot qo'shing").max(MAX_ISSUE_LINES, `Bir hujjatda ko'pi bilan ${MAX_ISSUE_LINES} ta qator`)
     });
     qcNumber = (label) => z.number({ invalid_type_error: `${label}: raqam kiriting`, required_error: `${label}ni kiriting` }).finite(`${label}: raqam kiriting`);
     optionalDay = dayString.nullish().or(z.literal("")).transform((v) => v ? v : null);
@@ -5953,6 +6074,137 @@ var init_storage_pg = __esm({
           }))
         };
       }
+      // ------------------------------------------------------------- issues (B5.3)
+      async listBatches(query = {}) {
+        const where = [isNull(inventoryBatches.cancelledAt), sql2`${inventoryBatches.remaining} > ${QTY_EPSILON}`];
+        if (query.itemId) where.push(eq(inventoryBatches.itemId, query.itemId));
+        const rows = await db.select({ b: inventoryBatches, itemName: inventoryItems.name, unit: inventoryItems.unit, kind: inventoryItems.kind }).from(inventoryBatches).innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId)).where(and(...where)).orderBy(asc(inventoryItems.name), sql2`${inventoryBatches.expiresOn} ASC NULLS LAST`, asc(inventoryBatches.createdAt));
+        return rows.map((r) => ({ ...r.b, itemName: r.itemName, unit: r.unit, kind: r.kind }));
+      }
+      issueSelect(exec) {
+        return exec.select({
+          i: stockIssues,
+          departmentName: departments.name,
+          lineCount: sql2`(SELECT count(*)::int FROM stock_movements m
+                                 WHERE m.issue_id = "stock_issues"."id" AND m.kind IN ('issue', 'writeoff'))`
+        }).from(stockIssues).leftJoin(departments, eq(departments.id, stockIssues.departmentId));
+      }
+      mapIssue(r) {
+        return {
+          ...r.i,
+          kind: r.i.kind,
+          reason: r.i.reason,
+          departmentName: r.departmentName ?? null,
+          lineCount: r.lineCount
+        };
+      }
+      async issueDetail(exec, id) {
+        const [head] = await this.issueSelect(exec).where(eq(stockIssues.id, id)).limit(1);
+        if (!head) return void 0;
+        const rows = await exec.select({
+          m: stockMovements,
+          itemName: inventoryItems.name,
+          unit: inventoryItems.unit,
+          lotNumber: inventoryBatches.lotNumber,
+          expiresOn: inventoryBatches.expiresOn,
+          purchasePrice: inventoryBatches.purchasePrice
+        }).from(stockMovements).leftJoin(inventoryItems, eq(inventoryItems.id, stockMovements.itemId)).leftJoin(inventoryBatches, eq(inventoryBatches.id, stockMovements.batchId)).where(and(eq(stockMovements.issueId, id), inArray(stockMovements.kind, ["issue", "writeoff"]))).orderBy(asc(inventoryItems.name), sql2`${inventoryBatches.expiresOn} ASC NULLS LAST`);
+        const lines = rows.map((r) => ({
+          movementId: r.m.id,
+          itemId: r.m.itemId,
+          itemName: r.itemName ?? "\u2014",
+          unit: r.unit ?? "",
+          batchId: r.m.batchId,
+          lotNumber: r.lotNumber ?? null,
+          expiresOn: r.expiresOn ?? null,
+          quantity: -r.m.quantity,
+          purchasePrice: r.purchasePrice ?? 0
+        }));
+        return { ...this.mapIssue(head), lines };
+      }
+      async listIssues(query = {}) {
+        const rows = await this.issueSelect(db).orderBy(desc(stockIssues.number)).limit(query.limit ?? 200);
+        return rows.map((r) => this.mapIssue(r));
+      }
+      async getIssue(id) {
+        return this.issueDetail(db, id);
+      }
+      async createIssue(input, today, actor) {
+        return db.transaction(async (tx) => {
+          const ids = Array.from(new Set(input.lines.map((l) => l.itemId)));
+          const items = await tx.select().from(inventoryItems).where(inArray(inventoryItems.id, ids));
+          const batches = await tx.select().from(inventoryBatches).where(and(inArray(inventoryBatches.itemId, ids), isNull(inventoryBatches.cancelledAt))).orderBy(asc(inventoryBatches.id)).for("update");
+          const plan = planIssue(
+            input.kind,
+            input.lines,
+            batches,
+            new Map(items.map((i) => [i.id, i])),
+            today
+          );
+          if (!plan.ok) throw new StorageConflict(plan.message);
+          const byId = new Map(batches.map((b) => [b.id, b]));
+          const [issue] = await tx.insert(stockIssues).values({
+            kind: input.kind,
+            departmentId: input.kind === "department" ? input.departmentId : null,
+            receivedBy: input.kind === "department" ? input.receivedBy ?? null : null,
+            reason: input.kind === "writeoff" ? input.reason : null,
+            issuedOn: input.issuedOn,
+            notes: input.notes ?? null,
+            total: plan.allocations.reduce((s, a) => s + lineTotal(a.quantity, byId.get(a.batchId).purchasePrice), 0),
+            createdBy: actor.id,
+            createdByName: actor.name
+          }).returning();
+          await tx.insert(stockMovements).values(
+            plan.allocations.map((a) => ({
+              itemId: a.itemId,
+              batchId: a.batchId,
+              kind: input.kind === "writeoff" ? "writeoff" : "issue",
+              quantity: -a.quantity,
+              issueId: issue.id,
+              createdBy: actor.id,
+              createdByName: actor.name
+            }))
+          );
+          for (const a of plan.allocations) {
+            const next = byId.get(a.batchId).remaining - a.quantity;
+            await tx.update(inventoryBatches).set({ remaining: next < QTY_EPSILON ? 0 : next }).where(eq(inventoryBatches.id, a.batchId));
+          }
+          return await this.issueDetail(tx, issue.id);
+        });
+      }
+      async cancelIssue(id, reason, actor) {
+        return db.transaction(async (tx) => {
+          const [issue] = await tx.select().from(stockIssues).where(eq(stockIssues.id, id)).for("update");
+          if (!issue) return void 0;
+          if (issue.cancelledAt) throw new StorageConflict(ISSUE_ALREADY_CANCELLED);
+          const out = await tx.select().from(stockMovements).where(and(eq(stockMovements.issueId, id), inArray(stockMovements.kind, ["issue", "writeoff"])));
+          if (out.length) {
+            const batchIds = Array.from(new Set(out.map((m) => m.batchId)));
+            const batches = await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, batchIds)).orderBy(asc(inventoryBatches.id)).for("update");
+            const left = new Map(batches.map((b) => [b.id, b]));
+            for (const m of out) {
+              const b = left.get(m.batchId);
+              if (!b) continue;
+              b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+              await tx.update(inventoryBatches).set({ remaining: b.remaining }).where(eq(inventoryBatches.id, b.id));
+            }
+            await tx.insert(stockMovements).values(
+              out.map((m) => ({
+                itemId: m.itemId,
+                batchId: m.batchId,
+                kind: "issue_cancel",
+                quantity: -m.quantity,
+                issueId: id,
+                note: reason,
+                createdBy: actor.id,
+                createdByName: actor.name
+              }))
+            );
+          }
+          await tx.update(stockIssues).set({ cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason }).where(eq(stockIssues.id, id));
+          return this.issueDetail(tx, id);
+        });
+      }
       async listReceipts(query = {}) {
         const rows = await db.select({
           r: stockReceipts,
@@ -6319,6 +6571,7 @@ var init_db = __esm({
       stockReceipts: [],
       inventoryBatches: [],
       stockMovements: [],
+      stockIssues: [],
       icdUzNames: {},
       security: null,
       patients: [],
@@ -6342,7 +6595,7 @@ var init_db = __esm({
         director: null,
         licenseNumber: null
       },
-      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0 }
+      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0 }
     });
     queue = Promise.resolve();
   }
@@ -8785,6 +9038,7 @@ var init_storage_file = __esm({
             kind: "receipt",
             quantity: l.quantity,
             receiptId: receipt.id,
+            issueId: null,
             note: null,
             createdAt: now,
             createdBy: actor.id,
@@ -8809,6 +9063,7 @@ var init_storage_file = __esm({
             kind: "receipt_cancel",
             quantity: -b.remaining,
             receiptId: id,
+            issueId: null,
             note: reason,
             createdAt: now,
             createdBy: actor.id,
@@ -8819,6 +9074,124 @@ var init_storage_file = __esm({
         Object.assign(r, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
         await this.persist();
         return this.receiptDetail(r);
+      }
+      // ------------------------------------------------------------- issues (B5.3)
+      async listBatches(query = {}) {
+        const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
+        return this.db.inventoryBatches.filter((b) => !b.cancelledAt && b.remaining > QTY_EPSILON && (!query.itemId || b.itemId === query.itemId)).map((b) => {
+          const it = items.get(b.itemId);
+          return { ...b, itemName: it?.name ?? "\u2014", unit: it?.unit ?? "", kind: it?.kind ?? "consumable" };
+        }).sort(
+          (a, b) => a.itemName.localeCompare(b.itemName) || (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999") || a.createdAt.localeCompare(b.createdAt)
+        );
+      }
+      issueView(i) {
+        return {
+          ...i,
+          departmentName: i.departmentId ? this.db.departments.find((d) => d.id === i.departmentId)?.name ?? null : null,
+          lineCount: this.db.stockMovements.filter((m) => m.issueId === i.id && (m.kind === "issue" || m.kind === "writeoff")).length
+        };
+      }
+      issueDetail(i) {
+        const lines = this.db.stockMovements.filter((m) => m.issueId === i.id && (m.kind === "issue" || m.kind === "writeoff")).map((m) => {
+          const b = this.db.inventoryBatches.find((x) => x.id === m.batchId);
+          const it = this.db.inventoryItems.find((x) => x.id === m.itemId);
+          return {
+            movementId: m.id,
+            itemId: m.itemId,
+            itemName: it?.name ?? "\u2014",
+            unit: it?.unit ?? "",
+            batchId: m.batchId,
+            lotNumber: b?.lotNumber ?? null,
+            expiresOn: b?.expiresOn ?? null,
+            quantity: -m.quantity,
+            purchasePrice: b?.purchasePrice ?? 0
+          };
+        });
+        return { ...this.issueView(i), lines };
+      }
+      async listIssues(query = {}) {
+        return [...this.db.stockIssues].sort((a, b) => b.number - a.number).slice(0, query.limit ?? 200).map((i) => this.issueView(i));
+      }
+      async getIssue(id) {
+        const i = this.db.stockIssues.find((x) => x.id === id);
+        return i && this.issueDetail(i);
+      }
+      async createIssue(input, today, actor) {
+        const ids = new Set(input.lines.map((l) => l.itemId));
+        const items = new Map(this.db.inventoryItems.filter((i) => ids.has(i.id)).map((i) => [i.id, i]));
+        const batches = this.db.inventoryBatches.filter((b) => ids.has(b.itemId) && !b.cancelledAt);
+        const plan = planIssue(input.kind, input.lines, batches, items, today);
+        if (!plan.ok) throw new StorageConflict(plan.message);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const byId = new Map(batches.map((b) => [b.id, b]));
+        this.db.counters.issueNumber += 1;
+        const issue = {
+          id: randomUUID(),
+          number: this.db.counters.issueNumber,
+          kind: input.kind,
+          departmentId: input.kind === "department" ? input.departmentId : null,
+          receivedBy: input.kind === "department" ? input.receivedBy ?? null : null,
+          reason: input.kind === "writeoff" ? input.reason : null,
+          issuedOn: input.issuedOn,
+          notes: input.notes ?? null,
+          total: plan.allocations.reduce((s, a) => s + lineTotal(a.quantity, byId.get(a.batchId).purchasePrice), 0),
+          createdAt: now,
+          createdBy: actor.id,
+          createdByName: actor.name,
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelledByName: null,
+          cancelReason: null
+        };
+        this.db.stockIssues.push(issue);
+        for (const a of plan.allocations) {
+          const b = byId.get(a.batchId);
+          b.remaining = Math.max(0, b.remaining - a.quantity);
+          if (b.remaining < QTY_EPSILON) b.remaining = 0;
+          this.db.stockMovements.push({
+            id: randomUUID(),
+            itemId: a.itemId,
+            batchId: a.batchId,
+            kind: input.kind === "writeoff" ? "writeoff" : "issue",
+            quantity: -a.quantity,
+            receiptId: null,
+            issueId: issue.id,
+            note: null,
+            createdAt: now,
+            createdBy: actor.id,
+            createdByName: actor.name
+          });
+        }
+        await this.persist();
+        return this.issueDetail(issue);
+      }
+      async cancelIssue(id, reason, actor) {
+        const issue = this.db.stockIssues.find((x) => x.id === id);
+        if (!issue) return void 0;
+        if (issue.cancelledAt) throw new StorageConflict(ISSUE_ALREADY_CANCELLED);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const out = this.db.stockMovements.filter((m) => m.issueId === id && (m.kind === "issue" || m.kind === "writeoff"));
+        for (const m of out) {
+          const b = this.db.inventoryBatches.find((x) => x.id === m.batchId);
+          if (b) b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+          this.db.stockMovements.push({
+            id: randomUUID(),
+            itemId: m.itemId,
+            batchId: m.batchId,
+            kind: "issue_cancel",
+            quantity: -m.quantity,
+            receiptId: null,
+            issueId: id,
+            note: reason,
+            createdAt: now,
+            createdBy: actor.id,
+            createdByName: actor.name
+          });
+        }
+        Object.assign(issue, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+        await this.persist();
+        return this.issueDetail(issue);
       }
       async getLabBoard(day) {
         const all = this.db.orders.map((o) => this.hydrate(o));
@@ -11342,7 +11715,6 @@ function registerQcRoutes(app) {
 init_schema();
 init_inventory();
 init_appointment();
-var fmtQty = (n) => String(Math.round(n * 1e3) / 1e3);
 function registerInventoryRoutes(app) {
   async function clash(input, exceptId) {
     const items = await storage.listInventoryItems();
@@ -11467,6 +11839,74 @@ function registerInventoryRoutes(app) {
       if (!receipt) return res.status(404).json({ message: "Kirim hujjati topilmadi" });
       await audit(req, "void", "inventory", receipt.id, `Kirim \u2116${receipt.number} bekor qilindi (${receipt.supplier}): ${reason}`);
       res.json(receipt);
+    })
+  );
+  app.get(
+    "/api/inventory/batches",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      res.json(await storage.listBatches({ itemId: stringParam(req.query.itemId) }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/inventory/issues",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const n = Number(stringParam(req.query.limit) ?? 200);
+      const limit = Number.isFinite(n) ? Math.min(Math.max(1, Math.trunc(n)), 500) : 200;
+      res.json(await storage.listIssues({ limit }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/inventory/issues/:id",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const issue = await storage.getIssue(req.params.id);
+      if (!issue) return res.status(404).json({ message: "Chiqim hujjati topilmadi" });
+      res.json(issue);
+    })
+  );
+  app.post(
+    "/api/inventory/issues",
+    requirePermission("inventory.issue"),
+    handle(async (req, res) => {
+      const input = createIssueSchema.parse(req.body);
+      const today = clockNow().date;
+      if (input.issuedOn > today) return res.status(400).json({ message: "Chiqim sanasi kelajakda bo'lishi mumkin emas" });
+      if (input.kind === "department") {
+        if (!input.departmentId) return res.status(400).json({ message: "Bo'limni tanlang" });
+        const dept = (await storage.listDepartments()).find((d) => d.id === input.departmentId);
+        if (!dept) return res.status(400).json({ message: "Bo'lim topilmadi" });
+        if (!dept.isActive) return res.status(400).json({ message: `"${dept.name}" bo'limi yopilgan` });
+        if (!input.receivedBy || input.receivedBy.length < 2) return res.status(400).json({ message: "Kim olganini yozing" });
+      } else if (!input.reason) {
+        return res.status(400).json({ message: "Hisobdan chiqarish sababini tanlang" });
+      }
+      const dup = duplicateIssueLine(input.lines);
+      if (dup !== null) return res.status(400).json({ message: `${dup + 1}-qator: bu mahsulot hujjatda allaqachon bor \u2014 miqdorini bitta qatorga yozing` });
+      const issue = await storage.createIssue(input, today, actorOf(req));
+      const byItem = /* @__PURE__ */ new Map();
+      for (const l of issue.lines) {
+        const e = byItem.get(l.itemId) ?? { name: l.itemName, unit: l.unit, q: 0, lots: [] };
+        e.q += l.quantity;
+        if (l.lotNumber) e.lots.push(l.lotNumber);
+        byItem.set(l.itemId, e);
+      }
+      const what = Array.from(byItem.values()).map((e) => `${e.name} ${fmtQty(e.q)} ${e.unit}${e.lots.length ? ` (LOT ${e.lots.join(", ")})` : ""}`).join("; ");
+      const where = issue.kind === "department" ? `${issue.departmentName ?? "bo'lim"}, oldi: ${issue.receivedBy}` : `sabab: ${issue.reason ? WRITEOFF_REASON_LABELS[issue.reason] : "\u2014"}`;
+      await audit(req, "create", "inventory", issue.id, `Chiqim \u2116${issue.number} (${ISSUE_KIND_LABELS[issue.kind]}, ${where}) \u2014 ${what}; tannarx ${issue.total} so'm`);
+      res.status(201).json(issue);
+    })
+  );
+  app.post(
+    "/api/inventory/issues/:id/cancel",
+    requirePermission("inventory.manage"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const issue = await storage.cancelIssue(req.params.id, reason, actorOf(req));
+      if (!issue) return res.status(404).json({ message: "Chiqim hujjati topilmadi" });
+      await audit(req, "void", "inventory", issue.id, `Chiqim \u2116${issue.number} bekor qilindi, mahsulot partiyalariga qaytarildi: ${reason}`);
+      res.json(issue);
     })
   );
 }

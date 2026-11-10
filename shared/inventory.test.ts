@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_UNIT, INVENTORY_KINDS, INVENTORY_KIND_LABELS, INVENTORY_KIND_SHORT, duplicateLine, inventoryKey, isLotTracked, lineTotal, receiptLineProblem } from "./inventory";
+import { DEFAULT_UNIT, INVENTORY_KINDS, INVENTORY_KIND_LABELS, INVENTORY_KIND_SHORT, allocateFefo, duplicateIssueLine, duplicateLine, inventoryKey, isLotTracked, lineTotal, planIssue, receiptLineProblem } from "./inventory";
 import { insertInventoryItemSchema } from "./schema";
 
 describe("inventory catalogue (B5.1, TZ §7.2)", () => {
@@ -58,5 +58,85 @@ describe("receipt rules (B5.2, TZ §7.3)", () => {
     expect(lineTotal(3, 333.33 as number)).toBe(1000);
     expect(isLotTracked("medicine")).toBe(true);
     expect(isLotTracked("syringe")).toBe(false);
+  });
+});
+
+describe("FEFO issues (B5.3)", () => {
+  const today = "2026-11-10";
+  const b = (id: string, remaining: number, expiresOn: string | null, createdAt = "2026-11-01T00:00:00Z", itemId = "glu") => ({
+    id,
+    itemId,
+    remaining,
+    expiresOn,
+    createdAt,
+    cancelledAt: null as string | null,
+  });
+  const items = new Map([
+    ["glu", { id: "glu", name: "Glyukoza", unit: "to'plam" }],
+    ["tub", { id: "tub", name: "Probirka", unit: "dona" }],
+  ]);
+
+  it("takes the nearest expiry first, undated last, older receipt among equals", () => {
+    const r = allocateFefo(
+      [b("late", 5, "2027-06-01"), b("none", 5, null), b("soon", 2, "2026-12-01"), b("soon-new", 2, "2026-12-01", "2026-11-05T00:00:00Z")],
+      7,
+      today,
+    );
+    expect(r).toEqual({
+      ok: true,
+      allocations: [
+        { batchId: "soon", quantity: 2 },
+        { batchId: "soon-new", quantity: 2 },
+        { batchId: "late", quantity: 3 },
+      ],
+    });
+  });
+
+  it("never gives a department an expired batch; a write-off may take it", () => {
+    const batches = [b("old", 3, "2026-11-01"), b("ok", 1, "2027-01-01")];
+    expect(allocateFefo(batches, 2, today)).toEqual({ ok: false, available: 1 });
+    expect(allocateFefo(batches, 2, today, { allowExpired: true })).toEqual({ ok: true, allocations: [{ batchId: "old", quantity: 2 }] });
+    // Expiring today is still good today.
+    expect(allocateFefo([b("t", 1, today)], 1, today).ok).toBe(true);
+  });
+
+  it("plans several lines on one working copy, pinned batches first", () => {
+    const batches = [b("a", 3, "2026-12-01"), b("c", 4, "2027-03-01"), b("t1", 100, null, undefined, "tub")];
+    const plan = planIssue(
+      "department",
+      [
+        { itemId: "glu", quantity: 3 },
+        { itemId: "glu", quantity: 2, batchId: "a" },
+        { itemId: "tub", quantity: 40 },
+      ],
+      batches,
+      items,
+      today,
+    );
+    expect(plan).toEqual({
+      ok: true,
+      allocations: [
+        { batchId: "a", quantity: 2, itemId: "glu" },
+        { batchId: "a", quantity: 1, itemId: "glu" },
+        { batchId: "c", quantity: 2, itemId: "glu" },
+        { batchId: "t1", quantity: 40, itemId: "tub" },
+      ],
+    });
+  });
+
+  it("names the line and the shortage, and says when only expired stock is left", () => {
+    const short = planIssue("department", [{ itemId: "tub", quantity: 1 }, { itemId: "glu", quantity: 5 }], [b("a", 3, "2027-01-01"), b("t", 9, null, undefined, "tub")], items, today);
+    expect(short).toEqual({ ok: false, message: `2-qator: "Glyukoza": qoldiq 3 to'plam, so'ralgan 5 to'plam` });
+    const expired = planIssue("department", [{ itemId: "glu", quantity: 1 }], [b("x", 3, "2026-01-01")], items, today);
+    expect(!expired.ok && expired.message).toMatch(/muddati o'tmagan qoldiq 0/);
+    const pinnedExpired = planIssue("department", [{ itemId: "glu", quantity: 1, batchId: "x" }], [b("x", 3, "2026-01-01")], items, today);
+    expect(!pinnedExpired.ok && pinnedExpired.message).toMatch(/hisobdan chiqaring/);
+    const wrongBatch = planIssue("department", [{ itemId: "glu", quantity: 1, batchId: "t" }], [b("t", 9, null, undefined, "tub")], items, today);
+    expect(!wrongBatch.ok && wrongBatch.message).toMatch(/Partiya topilmadi/);
+  });
+
+  it("duplicate lines", () => {
+    expect(duplicateIssueLine([{ itemId: "a" }, { itemId: "a", batchId: null }])).toBe(1);
+    expect(duplicateIssueLine([{ itemId: "a" }, { itemId: "a", batchId: "b1" }])).toBeNull();
   });
 });

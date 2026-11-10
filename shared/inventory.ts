@@ -126,13 +126,152 @@ export function duplicateLine(lines: { itemId: string; lotNumber?: string | null
   return null;
 }
 
-export const MOVEMENT_KINDS = ["receipt", "receipt_cancel"] as const;
+export const MOVEMENT_KINDS = ["receipt", "receipt_cancel", "issue", "writeoff", "issue_cancel"] as const;
 export type MovementKind = (typeof MOVEMENT_KINDS)[number];
 export const MOVEMENT_KIND_LABELS: Record<MovementKind, string> = {
   receipt: "Kirim",
   receipt_cancel: "Kirim bekor qilindi",
+  issue: "Bo'limga berildi",
+  writeoff: "Hisobdan chiqarildi",
+  issue_cancel: "Chiqim bekor qilindi",
 };
 
 export const ITEM_HAS_STOCK_HISTORY = "Bu mahsulot bo'yicha kirim yoki chiqim bor, shuning uchun o'chirilmaydi. Uni faolsizlantiring.";
 export const RECEIPT_ALREADY_CANCELLED = "Bu kirim allaqachon bekor qilingan";
 export const RECEIPT_IN_USE = "Bu kirimdagi mahsulotdan foydalanilgan, shuning uchun bekor qilib bo'lmaydi. Ortiqchasini chiqim yoki inventarizatsiya orqali tuzating.";
+
+// -------------------------------------------------------------- issues (B5.3)
+
+/** TZ §7.1 "Chiqim" and "Bo'limlarga berish": where the stock went. */
+export const ISSUE_KINDS = ["department", "writeoff"] as const;
+export type IssueKind = (typeof ISSUE_KINDS)[number];
+export const ISSUE_KIND_LABELS: Record<IssueKind, string> = {
+  department: "Bo'limga berish",
+  writeoff: "Hisobdan chiqarish",
+};
+
+export const WRITEOFF_REASONS = ["expired", "damaged", "other"] as const;
+export type WriteoffReason = (typeof WRITEOFF_REASONS)[number];
+export const WRITEOFF_REASON_LABELS: Record<WriteoffReason, string> = {
+  expired: "Muddati o'tgan",
+  damaged: "Shikastlangan / yaroqsiz",
+  other: "Boshqa sabab",
+};
+
+export const MAX_ISSUE_LINES = 100;
+
+export type AllocatableBatch = {
+  id: string;
+  remaining: number;
+  expiresOn: string | null;
+  createdAt: string;
+  cancelledAt?: string | null;
+};
+export type Allocation = { batchId: string; quantity: number };
+
+/** Tolerance for fractional stock (ml, g): anything below this is "nothing left". */
+export const QTY_EPSILON = 1e-9;
+
+/**
+ * FEFO: first expiry, first out (TZ: "muddati yaqinini birinchi"). Batches
+ * with an expiry go before those without; among equals the older receipt
+ * goes first. Expired batches are never given to a department — they can
+ * only be written off — so they are skipped unless `allowExpired`.
+ *
+ * Returns the split across batches, or how much is available when the
+ * quantity cannot be covered.
+ */
+export function allocateFefo(
+  batches: AllocatableBatch[],
+  quantity: number,
+  today: string,
+  opts: { allowExpired?: boolean } = {},
+): { ok: true; allocations: Allocation[] } | { ok: false; available: number } {
+  const usable = batches
+    .filter((b) => !b.cancelledAt && b.remaining > QTY_EPSILON && (opts.allowExpired || !b.expiresOn || b.expiresOn >= today))
+    .sort((a, b) => {
+      if (a.expiresOn && b.expiresOn && a.expiresOn !== b.expiresOn) return a.expiresOn < b.expiresOn ? -1 : 1;
+      if (a.expiresOn && !b.expiresOn) return -1;
+      if (!a.expiresOn && b.expiresOn) return 1;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+  const available = usable.reduce((s, b) => s + b.remaining, 0);
+  if (available + QTY_EPSILON < quantity) return { ok: false, available };
+  const allocations: Allocation[] = [];
+  let left = quantity;
+  for (const b of usable) {
+    if (left <= QTY_EPSILON) break;
+    const take = Math.min(b.remaining, left);
+    allocations.push({ batchId: b.id, quantity: take });
+    left -= take;
+  }
+  return { ok: true, allocations };
+}
+
+/** The same item twice on one issue (without a pinned batch) is a slip. */
+export function duplicateIssueLine(lines: { itemId: string; batchId?: string | null }[]): number | null {
+  const seen = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const key = `${lines[i].itemId}|${lines[i].batchId ?? ""}`;
+    if (seen.has(key)) return i;
+    seen.add(key);
+  }
+  return null;
+}
+
+/** "Glyukoza reagenti: omborda 2 to'plam bor, 3 so'ralgan". */
+export const shortageMessage = (name: string, unit: string, available: number, requested: number, expiredOnly = false) =>
+  `"${name}": ${expiredOnly ? "muddati o'tmagan " : ""}qoldiq ${fmtQty(available)} ${unit}, so'ralgan ${fmtQty(requested)} ${unit}`;
+
+export const fmtQty = (n: number) => String(Number(n.toFixed(3)));
+
+export const ISSUE_ALREADY_CANCELLED = "Bu chiqim allaqachon bekor qilingan";
+export const ISSUE_BATCH_GONE = "Partiya topilmadi yoki bekor qilingan";
+
+type PlanItem = { id: string; name: string; unit: string };
+type PlanLine = { itemId: string; quantity: number; batchId?: string | null };
+type PlanBatch = AllocatableBatch & { itemId: string };
+
+/**
+ * Splits every line of an issue across batches in one pass, on a working copy
+ * of `remaining`, so two lines of the same item never count the same stock
+ * twice. A pinned batch must be the line's item and still live; a department
+ * never gets an expired batch, a write-off may take one. Both storages call
+ * this with the batches they have locked.
+ */
+export function planIssue(
+  kind: IssueKind,
+  lines: PlanLine[],
+  batches: PlanBatch[],
+  items: Map<string, PlanItem>,
+  today: string,
+): { ok: true; allocations: (Allocation & { itemId: string })[] } | { ok: false; message: string } {
+  const left = new Map(batches.map((b) => [b.id, b.remaining]));
+  const allowExpired = kind === "writeoff";
+  const out: (Allocation & { itemId: string })[] = [];
+  // Pinned lines first: they leave FEFO to work with what is left.
+  const order = lines.map((l, i) => ({ l, i })).sort((a, b) => Number(!a.l.batchId) - Number(!b.l.batchId));
+  for (const { l, i } of order) {
+    const item = items.get(l.itemId);
+    if (!item) return { ok: false, message: `${i + 1}-qator: mahsulot topilmadi` };
+    const own = batches.filter((b) => b.itemId === l.itemId).map((b) => ({ ...b, remaining: left.get(b.id) ?? 0 }));
+    let pool = own;
+    if (l.batchId) {
+      pool = own.filter((b) => b.id === l.batchId && !b.cancelledAt);
+      if (pool.length === 0) return { ok: false, message: `${i + 1}-qator: ${ISSUE_BATCH_GONE}` };
+      if (!allowExpired && pool[0].expiresOn && pool[0].expiresOn < today) {
+        return { ok: false, message: `${i + 1}-qator: "${item.name}" bu partiyaning muddati o'tgan — bo'limga berilmaydi, hisobdan chiqaring` };
+      }
+    }
+    const r = allocateFefo(pool, l.quantity, today, { allowExpired });
+    if (!r.ok) {
+      const expiredStock = !allowExpired && own.some((b) => b.expiresOn && b.expiresOn < today && b.remaining > QTY_EPSILON);
+      return { ok: false, message: `${i + 1}-qator: ${shortageMessage(item.name, item.unit, r.available, l.quantity, expiredStock)}` };
+    }
+    for (const a of r.allocations) {
+      left.set(a.batchId, (left.get(a.batchId) ?? 0) - a.quantity);
+      out.push({ ...a, itemId: l.itemId });
+    }
+  }
+  return { ok: true, allocations: out };
+}

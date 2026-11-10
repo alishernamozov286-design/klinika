@@ -15,6 +15,7 @@ import {
   stockReceipts,
   inventoryBatches,
   stockMovements,
+  stockIssues,
   auditLog,
   departments,
   doctors,
@@ -129,9 +130,12 @@ import {
   INVENTORY_CODE_TAKEN,
   INVENTORY_NAME_TAKEN,
   ITEM_HAS_STOCK_HISTORY,
+  ISSUE_ALREADY_CANCELLED,
+  QTY_EPSILON,
   RECEIPT_ALREADY_CANCELLED,
   RECEIPT_IN_USE,
   lineTotal,
+  planIssue,
 } from "@shared/inventory";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
@@ -145,6 +149,12 @@ import {
   zScore,
 } from "@shared/qc";
 import type {
+  CreateIssueInput,
+  InventoryBatchView,
+  StockIssue,
+  StockIssueDetail,
+  StockIssueLine,
+  StockIssueView,
   CreateReceiptInput,
   InventoryBatch,
   InventoryItemView,
@@ -3780,6 +3790,178 @@ export class PgStorage implements IStorage {
         kind: (r.kind ?? "consumable") as InventoryItem["kind"],
       })),
     };
+  }
+
+  // ------------------------------------------------------------- issues (B5.3)
+
+  async listBatches(query: { itemId?: string } = {}): Promise<InventoryBatchView[]> {
+    const where = [isNull(inventoryBatches.cancelledAt), sql`${inventoryBatches.remaining} > ${QTY_EPSILON}`];
+    if (query.itemId) where.push(eq(inventoryBatches.itemId, query.itemId));
+    const rows = await db
+      .select({ b: inventoryBatches, itemName: inventoryItems.name, unit: inventoryItems.unit, kind: inventoryItems.kind })
+      .from(inventoryBatches)
+      .innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId))
+      .where(and(...where))
+      .orderBy(asc(inventoryItems.name), sql`${inventoryBatches.expiresOn} ASC NULLS LAST`, asc(inventoryBatches.createdAt));
+    return rows.map((r) => ({ ...r.b, itemName: r.itemName, unit: r.unit, kind: r.kind as InventoryItem["kind"] }));
+  }
+
+  private issueSelect(exec: typeof db) {
+    return exec
+      .select({
+        i: stockIssues,
+        departmentName: departments.name,
+        lineCount: sql<number>`(SELECT count(*)::int FROM stock_movements m
+                                 WHERE m.issue_id = "stock_issues"."id" AND m.kind IN ('issue', 'writeoff'))`,
+      })
+      .from(stockIssues)
+      .leftJoin(departments, eq(departments.id, stockIssues.departmentId));
+  }
+
+  private mapIssue(r: { i: typeof stockIssues.$inferSelect; departmentName: string | null; lineCount: number }): StockIssueView {
+    return {
+      ...r.i,
+      kind: r.i.kind as StockIssue["kind"],
+      reason: r.i.reason as StockIssue["reason"],
+      departmentName: r.departmentName ?? null,
+      lineCount: r.lineCount,
+    };
+  }
+
+  private async issueDetail(exec: typeof db, id: string): Promise<StockIssueDetail | undefined> {
+    const [head] = await this.issueSelect(exec).where(eq(stockIssues.id, id)).limit(1);
+    if (!head) return undefined;
+    const rows = await exec
+      .select({
+        m: stockMovements,
+        itemName: inventoryItems.name,
+        unit: inventoryItems.unit,
+        lotNumber: inventoryBatches.lotNumber,
+        expiresOn: inventoryBatches.expiresOn,
+        purchasePrice: inventoryBatches.purchasePrice,
+      })
+      .from(stockMovements)
+      .leftJoin(inventoryItems, eq(inventoryItems.id, stockMovements.itemId))
+      .leftJoin(inventoryBatches, eq(inventoryBatches.id, stockMovements.batchId))
+      .where(and(eq(stockMovements.issueId, id), inArray(stockMovements.kind, ["issue", "writeoff"])))
+      .orderBy(asc(inventoryItems.name), sql`${inventoryBatches.expiresOn} ASC NULLS LAST`);
+    const lines: StockIssueLine[] = rows.map((r) => ({
+      movementId: r.m.id,
+      itemId: r.m.itemId,
+      itemName: r.itemName ?? "—",
+      unit: r.unit ?? "",
+      batchId: r.m.batchId,
+      lotNumber: r.lotNumber ?? null,
+      expiresOn: r.expiresOn ?? null,
+      quantity: -r.m.quantity,
+      purchasePrice: r.purchasePrice ?? 0,
+    }));
+    return { ...this.mapIssue(head), lines };
+  }
+
+  async listIssues(query: { limit?: number } = {}): Promise<StockIssueView[]> {
+    const rows = await this.issueSelect(db).orderBy(desc(stockIssues.number)).limit(query.limit ?? 200);
+    return rows.map((r) => this.mapIssue(r));
+  }
+
+  async getIssue(id: string): Promise<StockIssueDetail | undefined> {
+    return this.issueDetail(db, id);
+  }
+
+  async createIssue(input: CreateIssueInput, today: string, actor: Actor): Promise<StockIssueDetail> {
+    return db.transaction(async (tx) => {
+      const ids = Array.from(new Set(input.lines.map((l) => l.itemId)));
+      const items = await tx.select().from(inventoryItems).where(inArray(inventoryItems.id, ids));
+      // Locked in a fixed order so two issues of the same items cannot deadlock.
+      const batches = await tx
+        .select()
+        .from(inventoryBatches)
+        .where(and(inArray(inventoryBatches.itemId, ids), isNull(inventoryBatches.cancelledAt)))
+        .orderBy(asc(inventoryBatches.id))
+        .for("update");
+      const plan = planIssue(
+        input.kind,
+        input.lines,
+        batches,
+        new Map(items.map((i) => [i.id, i])),
+        today,
+      );
+      if (!plan.ok) throw new StorageConflict(plan.message);
+      const byId = new Map(batches.map((b) => [b.id, b]));
+      const [issue] = await tx
+        .insert(stockIssues)
+        .values({
+          kind: input.kind,
+          departmentId: input.kind === "department" ? input.departmentId : null,
+          receivedBy: input.kind === "department" ? (input.receivedBy ?? null) : null,
+          reason: input.kind === "writeoff" ? input.reason : null,
+          issuedOn: input.issuedOn,
+          notes: input.notes ?? null,
+          total: plan.allocations.reduce((s, a) => s + lineTotal(a.quantity, byId.get(a.batchId)!.purchasePrice), 0),
+          createdBy: actor.id,
+          createdByName: actor.name,
+        })
+        .returning();
+      await tx.insert(stockMovements).values(
+        plan.allocations.map((a) => ({
+          itemId: a.itemId,
+          batchId: a.batchId,
+          kind: input.kind === "writeoff" ? "writeoff" : "issue",
+          quantity: -a.quantity,
+          issueId: issue.id,
+          createdBy: actor.id,
+          createdByName: actor.name,
+        })),
+      );
+      for (const a of plan.allocations) {
+        const next = byId.get(a.batchId)!.remaining - a.quantity;
+        await tx
+          .update(inventoryBatches)
+          .set({ remaining: next < QTY_EPSILON ? 0 : next })
+          .where(eq(inventoryBatches.id, a.batchId));
+      }
+      return (await this.issueDetail(tx as unknown as typeof db, issue.id))!;
+    });
+  }
+
+  async cancelIssue(id: string, reason: string, actor: Actor): Promise<StockIssueDetail | undefined> {
+    return db.transaction(async (tx) => {
+      const [issue] = await tx.select().from(stockIssues).where(eq(stockIssues.id, id)).for("update");
+      if (!issue) return undefined;
+      if (issue.cancelledAt) throw new StorageConflict(ISSUE_ALREADY_CANCELLED);
+      const out = await tx
+        .select()
+        .from(stockMovements)
+        .where(and(eq(stockMovements.issueId, id), inArray(stockMovements.kind, ["issue", "writeoff"])));
+      if (out.length) {
+        const batchIds = Array.from(new Set(out.map((m) => m.batchId)));
+        const batches = await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, batchIds)).orderBy(asc(inventoryBatches.id)).for("update");
+        const left = new Map(batches.map((b) => [b.id, b]));
+        for (const m of out) {
+          const b = left.get(m.batchId);
+          if (!b) continue;
+          b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+          await tx.update(inventoryBatches).set({ remaining: b.remaining }).where(eq(inventoryBatches.id, b.id));
+        }
+        await tx.insert(stockMovements).values(
+          out.map((m) => ({
+            itemId: m.itemId,
+            batchId: m.batchId,
+            kind: "issue_cancel",
+            quantity: -m.quantity,
+            issueId: id,
+            note: reason,
+            createdBy: actor.id,
+            createdByName: actor.name,
+          })),
+        );
+      }
+      await tx
+        .update(stockIssues)
+        .set({ cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
+        .where(eq(stockIssues.id, id));
+      return this.issueDetail(tx as unknown as typeof db, id);
+    });
   }
 
   async listReceipts(query: { limit?: number } = {}): Promise<StockReceiptView[]> {

@@ -45,6 +45,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Receipts } from "@/components/inventory/receipts";
+import { Issues } from "@/components/inventory/issues";
 import { EmptyState, Money, PageHeader, StatCard, TableSkeleton } from "@/components/ui-kit";
 import { MoneyInput, SearchInput } from "@/components/inputs";
 import { ExportButtons } from "@/components/export-buttons";
@@ -91,12 +92,17 @@ const EXPORT_COLUMNS: ExportColumn<InventoryItemView>[] = [
   { header: "Holat", value: (i) => (i.isActive ? "Faol" : "Faolsiz"), width: 9 },
 ];
 
+type InventoryTab = "items" | "receipts" | "issues";
+
 export default function Inventory() {
   const { can } = useAuth();
   const { toast } = useToast();
   const canManage = can("inventory.manage");
   const { data: items = [], isLoading } = useQuery<InventoryItemView[]>({ queryKey: ["/api/inventory/items"], refetchOnMount: "always" });
-  const [tab, setTab] = useState<"items" | "receipts">(() => (new URLSearchParams(window.location.search).get("tab") === "receipts" ? "receipts" : "items"));
+  const [tab, setTab] = useState<InventoryTab>(() => {
+    const asked = new URLSearchParams(window.location.search).get("tab");
+    return asked === "receipts" || asked === "issues" ? asked : "items";
+  });
 
   const [kind, setKind] = useState<InventoryKind | "all">("all");
   const [search, setSearch] = useState("");
@@ -203,7 +209,7 @@ export default function Inventory() {
         />
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as "items" | "receipts")}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as InventoryTab)}>
         <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="items" data-testid="tab-inventory-items">
             Mahsulotlar
@@ -211,7 +217,13 @@ export default function Inventory() {
           <TabsTrigger value="receipts" data-testid="tab-inventory-receipts">
             Kirim
           </TabsTrigger>
+          <TabsTrigger value="issues" data-testid="tab-inventory-issues">
+            Chiqim
+          </TabsTrigger>
         </TabsList>
+        <TabsContent value="issues" className="mt-4">
+          <Issues items={items} />
+        </TabsContent>
         <TabsContent value="receipts" className="mt-4">
           <Receipts items={items} />
         </TabsContent>

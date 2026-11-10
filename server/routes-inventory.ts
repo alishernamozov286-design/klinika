@@ -4,23 +4,31 @@
  *   inventory.read     the catalogue (with stock on hand) and receipts
  *   inventory.manage   add, edit, deactivate, delete an item that never moved; cancel a receipt
  *   inventory.receive  record a receipt (B5.2)
+ *   inventory.issue    issue to a department or write off (B5.3)
  *
  * Rules and labels: shared/inventory.ts.
  */
 import type { Express } from "express";
 import {
+  createIssueSchema,
   createReceiptSchema,
   insertInventoryItemSchema,
   updateInventoryItemSchema,
   voidRecordSchema,
+  type InventoryBatchView,
   type InventoryItemView,
+  type StockIssueView,
   type StockReceiptView,
 } from "@shared/schema";
 import {
   INVENTORY_CODE_TAKEN,
   INVENTORY_KIND_SHORT,
   INVENTORY_NAME_TAKEN,
+  ISSUE_KIND_LABELS,
+  WRITEOFF_REASON_LABELS,
+  duplicateIssueLine,
   duplicateLine,
+  fmtQty,
   inventoryKey,
   receiptLineProblem,
 } from "@shared/inventory";
@@ -29,7 +37,6 @@ import { requirePermission } from "./rbac";
 import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
 import { storage } from "./storage";
 
-const fmtQty = (n: number) => String(Math.round(n * 1000) / 1000);
 
 export function registerInventoryRoutes(app: Express) {
   /** Name and code are unique without case or extra spaces; null codes never clash. */
@@ -169,6 +176,87 @@ export function registerInventoryRoutes(app: Express) {
       if (!receipt) return res.status(404).json({ message: "Kirim hujjati topilmadi" });
       await audit(req, "void", "inventory", receipt.id, `Kirim №${receipt.number} bekor qilindi (${receipt.supplier}): ${reason}`);
       res.json(receipt);
+    }),
+  );
+
+  // --------------------------------------------------------- issues (B5.3)
+
+  app.get(
+    "/api/inventory/batches",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      res.json(await storage.listBatches({ itemId: stringParam(req.query.itemId) }).catch((e) => emptyIfMissing(e, [] as InventoryBatchView[])));
+    }),
+  );
+
+  app.get(
+    "/api/inventory/issues",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const n = Number(stringParam(req.query.limit) ?? 200);
+      const limit = Number.isFinite(n) ? Math.min(Math.max(1, Math.trunc(n)), 500) : 200;
+      res.json(await storage.listIssues({ limit }).catch((e) => emptyIfMissing(e, [] as StockIssueView[])));
+    }),
+  );
+
+  app.get(
+    "/api/inventory/issues/:id",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const issue = await storage.getIssue(req.params.id);
+      if (!issue) return res.status(404).json({ message: "Chiqim hujjati topilmadi" });
+      res.json(issue);
+    }),
+  );
+
+  app.post(
+    "/api/inventory/issues",
+    requirePermission("inventory.issue"),
+    handle(async (req, res) => {
+      const input = createIssueSchema.parse(req.body);
+      const today = clockNow().date;
+      if (input.issuedOn > today) return res.status(400).json({ message: "Chiqim sanasi kelajakda bo'lishi mumkin emas" });
+      if (input.kind === "department") {
+        if (!input.departmentId) return res.status(400).json({ message: "Bo'limni tanlang" });
+        const dept = (await storage.listDepartments()).find((d) => d.id === input.departmentId);
+        if (!dept) return res.status(400).json({ message: "Bo'lim topilmadi" });
+        if (!dept.isActive) return res.status(400).json({ message: `"${dept.name}" bo'limi yopilgan` });
+        if (!input.receivedBy || input.receivedBy.length < 2) return res.status(400).json({ message: "Kim olganini yozing" });
+      } else if (!input.reason) {
+        return res.status(400).json({ message: "Hisobdan chiqarish sababini tanlang" });
+      }
+      const dup = duplicateIssueLine(input.lines);
+      if (dup !== null) return res.status(400).json({ message: `${dup + 1}-qator: bu mahsulot hujjatda allaqachon bor — miqdorini bitta qatorga yozing` });
+      // Stock is checked and split inside the storage, on locked batches (409 with the line).
+      const issue = await storage.createIssue(input, today, actorOf(req));
+      const byItem = new Map<string, { name: string; unit: string; q: number; lots: string[] }>();
+      for (const l of issue.lines) {
+        const e = byItem.get(l.itemId) ?? { name: l.itemName, unit: l.unit, q: 0, lots: [] };
+        e.q += l.quantity;
+        if (l.lotNumber) e.lots.push(l.lotNumber);
+        byItem.set(l.itemId, e);
+      }
+      const what = Array.from(byItem.values())
+        .map((e) => `${e.name} ${fmtQty(e.q)} ${e.unit}${e.lots.length ? ` (LOT ${e.lots.join(", ")})` : ""}`)
+        .join("; ");
+      const where =
+        issue.kind === "department"
+          ? `${issue.departmentName ?? "bo'lim"}, oldi: ${issue.receivedBy}`
+          : `sabab: ${issue.reason ? WRITEOFF_REASON_LABELS[issue.reason] : "—"}`;
+      await audit(req, "create", "inventory", issue.id, `Chiqim №${issue.number} (${ISSUE_KIND_LABELS[issue.kind]}, ${where}) — ${what}; tannarx ${issue.total} so'm`);
+      res.status(201).json(issue);
+    }),
+  );
+
+  app.post(
+    "/api/inventory/issues/:id/cancel",
+    requirePermission("inventory.manage"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const issue = await storage.cancelIssue(req.params.id, reason, actorOf(req));
+      if (!issue) return res.status(404).json({ message: "Chiqim hujjati topilmadi" });
+      await audit(req, "void", "inventory", issue.id, `Chiqim №${issue.number} bekor qilindi, mahsulot partiyalariga qaytarildi: ${reason}`);
+      res.json(issue);
     }),
   );
 }

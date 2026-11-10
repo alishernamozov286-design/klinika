@@ -1834,6 +1834,93 @@ describe("receipts and stock (B5.2)", () => {
   });
 });
 
+describe("issues to departments and write-offs (B5.3)", () => {
+  const setup = async () => {
+    const dept = await storage.createDepartment({ name: "Laboratoriya", kind: "laboratoriya", description: null, isActive: true }, ACTOR);
+    const glu = await storage.createInventoryItem(
+      { name: "Glyukoza reagenti", kind: "reagent", code: null, manufacturer: null, unit: "to'plam", minStock: 0, salePrice: null, isActive: true, notes: null },
+      ACTOR,
+    );
+    const r = await storage.createReceipt(
+      {
+        supplier: "MedTech",
+        documentNumber: null,
+        receivedOn: "2026-11-01",
+        notes: null,
+        lines: [
+          { itemId: glu.id, lotNumber: "LATE", expiresOn: "2027-06-01", quantity: 5, purchasePrice: 100000 },
+          { itemId: glu.id, lotNumber: "SOON", expiresOn: "2026-12-01", quantity: 2, purchasePrice: 90000 },
+          { itemId: glu.id, lotNumber: "OLD", expiresOn: "2026-11-05", quantity: 1, purchasePrice: 80000 },
+        ],
+      },
+      ACTOR,
+    );
+    return { dept, glu, r };
+  };
+  const today = "2026-11-10";
+
+  it("issues FEFO, skipping the expired batch, and lowers the shelf", async () => {
+    const { dept, glu } = await setup();
+    const issue = await storage.createIssue(
+      { kind: "department", departmentId: dept.id, receivedBy: "Laborant Aziz", reason: null, issuedOn: today, notes: null, lines: [{ itemId: glu.id, quantity: 3, batchId: null }] },
+      today,
+      ACTOR,
+    );
+    expect(issue).toMatchObject({ number: 1, kind: "department", departmentName: "Laboratoriya", receivedBy: "Laborant Aziz", lineCount: 2, total: 2 * 90000 + 100000 });
+    expect(issue.lines.map((l) => [l.lotNumber, l.quantity])).toEqual([
+      ["SOON", 2],
+      ["LATE", 1],
+    ]);
+    const batches = await storage.listBatches({ itemId: glu.id });
+    expect(batches.map((b) => [b.lotNumber, b.remaining])).toEqual([
+      ["OLD", 1],
+      ["LATE", 4],
+    ]);
+    expect((await storage.listInventoryItems()).find((i) => i.id === glu.id)!.onHand).toBe(5);
+    // A receipt that has been drawn from cannot be cancelled any more.
+    const [receipt] = await storage.listReceipts();
+    await expect(storage.cancelReceipt(receipt.id, "x", ACTOR)).rejects.toThrow(/foydalanilgan/);
+  });
+
+  it("refuses a shortage; a write-off takes the expired batch", async () => {
+    const { dept, glu } = await setup();
+    await expect(
+      storage.createIssue(
+        { kind: "department", departmentId: dept.id, receivedBy: "A", reason: null, issuedOn: today, notes: null, lines: [{ itemId: glu.id, quantity: 8, batchId: null }] },
+        today,
+        ACTOR,
+      ),
+    ).rejects.toThrow(/qoldiq 7 to'plam, so'ralgan 8/);
+    const old = (await storage.listBatches({ itemId: glu.id })).find((b) => b.lotNumber === "OLD")!;
+    const w = await storage.createIssue(
+      { kind: "writeoff", departmentId: null, receivedBy: null, reason: "expired", issuedOn: today, notes: null, lines: [{ itemId: glu.id, quantity: 1, batchId: old.id }] },
+      today,
+      ACTOR,
+    );
+    expect(w).toMatchObject({ kind: "writeoff", reason: "expired", total: 80000, departmentName: null });
+    expect((await storage.listBatches({ itemId: glu.id })).some((b) => b.lotNumber === "OLD")).toBe(false);
+  });
+
+  it("cancelling puts every quantity back on its own batch, once", async () => {
+    const { dept, glu } = await setup();
+    const issue = await storage.createIssue(
+      { kind: "department", departmentId: dept.id, receivedBy: "A", reason: null, issuedOn: today, notes: null, lines: [{ itemId: glu.id, quantity: 4, batchId: null }] },
+      today,
+      ACTOR,
+    );
+    const c = await storage.cancelIssue(issue.id, "Noto'g'ri bo'limga yozilgan", ACTOR);
+    expect(c).toMatchObject({ cancelReason: "Noto'g'ri bo'limga yozilgan", cancelledByName: ACTOR.name });
+    const batches = await storage.listBatches({ itemId: glu.id });
+    expect(batches.map((b) => [b.lotNumber, b.remaining])).toEqual([
+      ["OLD", 1],
+      ["SOON", 2],
+      ["LATE", 5],
+    ]);
+    await expect(storage.cancelIssue(issue.id, "yana", ACTOR)).rejects.toThrow(/allaqachon/);
+    expect((await storage.listIssues())[0]).toMatchObject({ number: 1, lineCount: 2 });
+  });
+});
+
 describe("quality control (B4.8)", () => {
   const setup = async () => {
     const material = await storage.createQcMaterial(

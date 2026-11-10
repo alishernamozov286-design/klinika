@@ -5,6 +5,12 @@ import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type {
+  CreateIssueInput,
+  InventoryBatchView,
+  StockIssue,
+  StockIssueDetail,
+  StockIssueLine,
+  StockIssueView,
   CreateReceiptInput,
   InventoryBatch,
   InventoryItemView,
@@ -830,6 +836,18 @@ export interface IStorage {
   createReceipt(input: CreateReceiptInput, actor: Actor): Promise<StockReceiptDetail>;
   /** Cancels a receipt whose batches are untouched (StorageConflict otherwise). */
   cancelReceipt(id: string, reason: string, actor: Actor): Promise<StockReceiptDetail | undefined>;
+  /** Live batches (not cancelled, something left), FEFO order. */
+  listBatches(query?: { itemId?: string }): Promise<InventoryBatchView[]>;
+  listIssues(query?: { limit?: number }): Promise<StockIssueView[]>;
+  getIssue(id: string): Promise<StockIssueDetail | undefined>;
+  /**
+   * Splits the lines across batches with planIssue (shared/inventory.ts) on
+   * locked batches, and writes the issue, its movements and the new
+   * `remaining` in one transaction. A shortage is a StorageConflict naming the line.
+   */
+  createIssue(input: CreateIssueInput, today: string, actor: Actor): Promise<StockIssueDetail>;
+  /** Puts every quantity back on the batch it came from; once (StorageConflict after). */
+  cancelIssue(id: string, reason: string, actor: Actor): Promise<StockIssueDetail | undefined>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

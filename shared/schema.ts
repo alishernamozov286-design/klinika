@@ -24,7 +24,17 @@ import {
   type QcStatus,
   type WestgardRule,
 } from "./qc";
-import { INVENTORY_KINDS, MAX_RECEIPT_LINES, type InventoryKind, type MovementKind } from "./inventory";
+import {
+  INVENTORY_KINDS,
+  ISSUE_KINDS,
+  MAX_ISSUE_LINES,
+  MAX_RECEIPT_LINES,
+  WRITEOFF_REASONS,
+  type InventoryKind,
+  type IssueKind,
+  type MovementKind,
+  type WriteoffReason,
+} from "./inventory";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -1290,6 +1300,34 @@ export const inventoryBatches = pgTable(
   (t) => [index("IDX_inventory_batches_item").on(t.itemId), index("IDX_inventory_batches_receipt").on(t.receiptId)],
 );
 
+/**
+ * Chiqim hujjati (B5.3, TZ §7.1, §7.3): to a department ("qaysi bo'limga,
+ * kim oldi") or written off with a reason. Its lines are the movements that
+ * carry its id, one per batch FEFO drew from. Cancelled, never deleted.
+ */
+export const stockIssues = pgTable("stock_issues", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+  kind: text("kind").notNull(),
+  departmentId: varchar("department_id"),
+  /** Who took it on the department's side. */
+  receivedBy: text("received_by"),
+  /** Write-offs only. */
+  reason: text("reason"),
+  /** YYYY-MM-DD. */
+  issuedOn: text("issued_on").notNull(),
+  notes: text("notes"),
+  /** Cost of what left, at purchase prices, so'm. */
+  total: money("total").notNull().default(0),
+  createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
+  createdByName: text("created_by_name"),
+  cancelledAt: isoTimestamp("cancelled_at"),
+  cancelledBy: varchar("cancelled_by"),
+  cancelledByName: text("cancelled_by_name"),
+  cancelReason: text("cancel_reason"),
+});
+
 /** The stock ledger: every change of a batch's quantity, signed (+ in, − out). */
 export const stockMovements = pgTable(
   "stock_movements",
@@ -1300,6 +1338,8 @@ export const stockMovements = pgTable(
     kind: text("kind").notNull(),
     quantity: doublePrecision("quantity").notNull(),
     receiptId: varchar("receipt_id"),
+    /** B5.3: the issue document an outgoing movement belongs to. */
+    issueId: varchar("issue_id"),
     note: text("note"),
     createdAt: isoTimestamp("created_at").defaultNow().notNull(),
     createdBy: varchar("created_by"),
@@ -1587,6 +1627,24 @@ export type StockMovement = Omit<typeof stockMovements.$inferSelect, "kind"> & {
 export type StockReceiptView = StockReceipt & { lineCount: number };
 export type StockReceiptLine = InventoryBatch & { itemName: string; unit: string; kind: InventoryKind };
 export type StockReceiptDetail = StockReceipt & { lines: StockReceiptLine[] };
+
+/** A live batch as the issue form and the stock view (B5.4) list it. */
+export type InventoryBatchView = InventoryBatch & { itemName: string; unit: string; kind: InventoryKind };
+export type StockIssue = Omit<typeof stockIssues.$inferSelect, "kind" | "reason"> & { kind: IssueKind; reason: WriteoffReason | null };
+export type StockIssueView = StockIssue & { departmentName: string | null; lineCount: number };
+/** One batch an issue drew from: the movement, made positive for reading. */
+export type StockIssueLine = {
+  movementId: string;
+  itemId: string;
+  itemName: string;
+  unit: string;
+  batchId: string;
+  lotNumber: string | null;
+  expiresOn: string | null;
+  quantity: number;
+  purchasePrice: number;
+};
+export type StockIssueDetail = StockIssueView & { lines: StockIssueLine[] };
 
 export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
   kind: ReferralKind;
@@ -2560,6 +2618,28 @@ export const createReceiptSchema = z.object({
   lines: z.array(receiptLineSchema).min(1, "Kamida bitta mahsulot qo'shing").max(MAX_RECEIPT_LINES, `Bir hujjatda ko'pi bilan ${MAX_RECEIPT_LINES} ta qator`),
 });
 export type ReceiptLineInput = z.infer<typeof receiptLineSchema>;
+
+export const issueLineSchema = z.object({
+  itemId: z.string().min(1, "Mahsulotni tanlang"),
+  quantity: z
+    .number({ invalid_type_error: "Miqdor: raqam kiriting", required_error: "Miqdorni kiriting" })
+    .finite("Miqdor: raqam kiriting")
+    .positive("Miqdor musbat bo'lishi kerak")
+    .max(1_000_000, "Miqdor juda katta"),
+  /** Pinned batch; FEFO chooses when absent. */
+  batchId: z.string().min(1).nullish().transform((v) => v ?? null),
+});
+export const createIssueSchema = z.object({
+  kind: z.enum(ISSUE_KINDS, { errorMap: () => ({ message: "Chiqim turini tanlang" }) }),
+  departmentId: z.string().min(1).nullish().transform((v) => v ?? null),
+  receivedBy: optionalText(120, "Oluvchi"),
+  reason: z.enum(WRITEOFF_REASONS).nullish().transform((v) => v ?? null),
+  issuedOn: dayString,
+  notes: optionalText(1000, "Izoh"),
+  lines: z.array(issueLineSchema).min(1, "Kamida bitta mahsulot qo'shing").max(MAX_ISSUE_LINES, `Bir hujjatda ko'pi bilan ${MAX_ISSUE_LINES} ta qator`),
+});
+export type IssueLineInput = z.infer<typeof issueLineSchema>;
+export type CreateIssueInput = z.infer<typeof createIssueSchema>;
 export type CreateReceiptInput = z.infer<typeof createReceiptSchema>;
 
 // ------------------------------------------------------- quality control
