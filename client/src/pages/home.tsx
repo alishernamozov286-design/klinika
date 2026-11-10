@@ -42,6 +42,7 @@ import { ResultsDialog } from "@/components/results-dialog";
 import { PrintDialog } from "@/components/print-dialog";
 import { ReceptionBoard } from "@/components/reception-board";
 import { LabBoard } from "@/components/lab-board";
+import { StockHomePanel } from "@/components/inventory/stock";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { formatDate, formatPhone, formatTime, formatWeekdayDate, money, timeAgo } from "@/lib/format";
@@ -78,6 +79,8 @@ export default function Home() {
   // The server withholds the money figures from roles without finance.view;
   // the cards follow the same rule rather than showing a misleading 0.
   const seesFinance = can("finance.view");
+  // The storekeeper's home (B5.4): stock warnings instead of lab counters.
+  const seesStock = can("inventory.read") && can("inventory.receive", "inventory.issue");
   // Laboratoriya bosh sahifasi (TZ §6.1.1) for whoever works the bench.
   const seesLab = can("orders.read") && can("samples.manage", "results.enter", "results.verify");
 
@@ -149,8 +152,16 @@ export default function Home() {
               Salom, {firstName}
             </h1>
             <p className="mt-2 max-w-xl text-[15px] text-foreground/85">
-              Bugun laboratoriyada {stats?.todayPatients ?? 0} ta bemor qabul qilindi
-              {seesFinance ? <> va {money(collected)} tushum yig'ildi.</> : "."}
+              {seesOrders ? (
+                <>
+                  Bugun laboratoriyada {stats?.todayPatients ?? 0} ta bemor qabul qilindi
+                  {seesFinance ? <> va {money(collected)} tushum yig'ildi.</> : "."}
+                </>
+              ) : seesStock ? (
+                "Ombor: muddat va qoldiq ogohlantirishlari pastda."
+              ) : (
+                "Xush kelibsiz."
+              )}
             </p>
           </div>
 
@@ -188,6 +199,10 @@ export default function Home() {
 
       {seesReception && <ReceptionBoard />}
       {seesLab && <LabBoard onOpenOrder={setDetail} />}
+      {/* The storekeeper's warnings (TZ §7.3). */}
+      {seesStock && (
+        <StockHomePanel onOpen={(w) => setLocation(w === "low" ? "/inventory?tab=stock" : `/inventory?tab=stock&window=${w}`)} />
+      )}
 
       {/* ----------------------------------------------------------- stats */}
       {/* Lab counters only mean something to roles that work with orders. */}
@@ -269,7 +284,7 @@ export default function Home() {
 
       {/* ------------------------------------------------- recent + actions */}
       <div className="grid gap-5 xl:grid-cols-3">
-        {!seesOrders && seesReception ? null : !seesOrders ? (
+        {!seesOrders && (seesReception || seesStock) ? null : !seesOrders ? (
           <SectionCard className="xl:col-span-3" icon={ShieldCheck} title="Sizning ish maydoningiz">
             <EmptyState
               icon={ShieldCheck}

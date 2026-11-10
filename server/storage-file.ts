@@ -3122,7 +3122,16 @@ export class FileStorage implements IStorage {
       .filter((b) => !b.cancelledAt && b.remaining > QTY_EPSILON && (!query.itemId || b.itemId === query.itemId))
       .map((b) => {
         const it = items.get(b.itemId);
-        return { ...b, itemName: it?.name ?? "—", unit: it?.unit ?? "", kind: it?.kind ?? "consumable" };
+        const r = this.db.stockReceipts.find((x) => x.id === b.receiptId);
+        return {
+          ...b,
+          itemName: it?.name ?? "—",
+          unit: it?.unit ?? "",
+          kind: it?.kind ?? "consumable",
+          receiptNumber: r?.number ?? null,
+          receivedOn: r?.receivedOn ?? null,
+          supplier: r?.supplier ?? null,
+        };
       })
       .sort(
         (a, b) =>

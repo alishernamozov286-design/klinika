@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_UNIT, INVENTORY_KINDS, INVENTORY_KIND_LABELS, INVENTORY_KIND_SHORT, allocateFefo, duplicateIssueLine, duplicateLine, inventoryKey, isLotTracked, lineTotal, planIssue, receiptLineProblem } from "./inventory";
+import { DEFAULT_UNIT, INVENTORY_KINDS, INVENTORY_KIND_LABELS, INVENTORY_KIND_SHORT, allocateFefo, duplicateIssueLine, duplicateLine, inventoryKey, isLotTracked, lineTotal, planIssue, receiptLineProblem, daysLeft, expiryState, summarizeStock } from "./inventory";
 import { insertInventoryItemSchema } from "./schema";
 
 describe("inventory catalogue (B5.1, TZ §7.2)", () => {
@@ -138,5 +138,40 @@ describe("FEFO issues (B5.3)", () => {
   it("duplicate lines", () => {
     expect(duplicateIssueLine([{ itemId: "a" }, { itemId: "a", batchId: null }])).toBe(1);
     expect(duplicateIssueLine([{ itemId: "a" }, { itemId: "a", batchId: "b1" }])).toBeNull();
+  });
+});
+
+describe("stock and expiry (B5.4)", () => {
+  const today = "2026-11-11";
+  it("expiry states", () => {
+    expect(expiryState("2026-11-10", today)).toBe("expired");
+    expect(expiryState(today, today)).toBe("soon");
+    expect(expiryState("2026-12-11", today)).toBe("soon");
+    expect(expiryState("2026-12-12", today)).toBe("watch");
+    expect(expiryState("2027-02-09", today)).toBe("watch");
+    expect(expiryState("2027-06-01", today)).toBe("ok");
+    expect(expiryState(null, today)).toBe("none");
+    expect(daysLeft("2026-11-21", today)).toBe(10);
+  });
+
+  it("summarises value, expiry warnings and low usable stock", () => {
+    const items = [
+      { id: "glu", name: "Glyukoza", unit: "to'plam", kind: "reagent" as const, minStock: 3, isActive: true },
+      { id: "tub", name: "Probirka", unit: "dona", kind: "tube" as const, minStock: 100, isActive: true },
+      { id: "off", name: "Eski", unit: "dona", kind: "tube" as const, minStock: 5, isActive: false },
+      { id: "nomin", name: "Bint", unit: "dona", kind: "consumable" as const, minStock: 0, isActive: true },
+    ];
+    const batches = [
+      { id: "a", itemId: "glu", remaining: 2, expiresOn: "2026-11-01", purchasePrice: 100 }, // expired
+      { id: "b", itemId: "glu", remaining: 2, expiresOn: "2026-11-20", purchasePrice: 100 }, // soon
+      { id: "c", itemId: "tub", remaining: 400, expiresOn: null, purchasePrice: 1 },
+      { id: "d", itemId: "tub", remaining: 0, expiresOn: null, purchasePrice: 1 },
+    ];
+    const s = summarizeStock(items, batches, today);
+    expect(s.value).toBe(200 + 200 + 400);
+    expect(s.expired).toEqual({ batches: 1, value: 200 });
+    expect(s.soon).toEqual({ batches: 1, value: 200 });
+    // 4 on the shelf, but only 2 usable against a minimum of 3.
+    expect(s.lowStock).toEqual([{ id: "glu", name: "Glyukoza", unit: "to'plam", kind: "reagent", usable: 2, minStock: 3 }]);
   });
 });

@@ -3798,12 +3798,29 @@ export class PgStorage implements IStorage {
     const where = [isNull(inventoryBatches.cancelledAt), sql`${inventoryBatches.remaining} > ${QTY_EPSILON}`];
     if (query.itemId) where.push(eq(inventoryBatches.itemId, query.itemId));
     const rows = await db
-      .select({ b: inventoryBatches, itemName: inventoryItems.name, unit: inventoryItems.unit, kind: inventoryItems.kind })
+      .select({
+        b: inventoryBatches,
+        itemName: inventoryItems.name,
+        unit: inventoryItems.unit,
+        kind: inventoryItems.kind,
+        receiptNumber: stockReceipts.number,
+        receivedOn: stockReceipts.receivedOn,
+        supplier: stockReceipts.supplier,
+      })
       .from(inventoryBatches)
       .innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId))
+      .leftJoin(stockReceipts, eq(stockReceipts.id, inventoryBatches.receiptId))
       .where(and(...where))
       .orderBy(asc(inventoryItems.name), sql`${inventoryBatches.expiresOn} ASC NULLS LAST`, asc(inventoryBatches.createdAt));
-    return rows.map((r) => ({ ...r.b, itemName: r.itemName, unit: r.unit, kind: r.kind as InventoryItem["kind"] }));
+    return rows.map((r) => ({
+      ...r.b,
+      itemName: r.itemName,
+      unit: r.unit,
+      kind: r.kind as InventoryItem["kind"],
+      receiptNumber: r.receiptNumber ?? null,
+      receivedOn: r.receivedOn ?? null,
+      supplier: r.supplier ?? null,
+    }));
   }
 
   private issueSelect(exec: typeof db) {

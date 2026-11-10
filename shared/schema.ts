@@ -1629,7 +1629,15 @@ export type StockReceiptLine = InventoryBatch & { itemName: string; unit: string
 export type StockReceiptDetail = StockReceipt & { lines: StockReceiptLine[] };
 
 /** A live batch as the issue form and the stock view (B5.4) list it. */
-export type InventoryBatchView = InventoryBatch & { itemName: string; unit: string; kind: InventoryKind };
+export type InventoryBatchView = InventoryBatch & {
+  itemName: string;
+  unit: string;
+  kind: InventoryKind;
+  /** Where it came from (B5.4): traceability for a recall or an expiry. */
+  receiptNumber: number | null;
+  receivedOn: string | null;
+  supplier: string | null;
+};
 export type StockIssue = Omit<typeof stockIssues.$inferSelect, "kind" | "reason"> & { kind: IssueKind; reason: WriteoffReason | null };
 export type StockIssueView = StockIssue & { departmentName: string | null; lineCount: number };
 /** One batch an issue drew from: the movement, made positive for reading. */

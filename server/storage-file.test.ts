@@ -1876,6 +1876,8 @@ describe("issues to departments and write-offs (B5.3)", () => {
       ["OLD", 1],
       ["LATE", 4],
     ]);
+    // B5.4: each batch says where it came from.
+    expect(batches[0]).toMatchObject({ receiptNumber: 1, receivedOn: "2026-11-01", supplier: "MedTech" });
     expect((await storage.listInventoryItems()).find((i) => i.id === glu.id)!.onHand).toBe(5);
     // A receipt that has been drawn from cannot be cancelled any more.
     const [receipt] = await storage.listReceipts();

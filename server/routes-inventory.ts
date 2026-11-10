@@ -29,6 +29,7 @@ import {
   duplicateIssueLine,
   duplicateLine,
   fmtQty,
+  summarizeStock,
   inventoryKey,
   receiptLineProblem,
 } from "@shared/inventory";
@@ -257,6 +258,22 @@ export function registerInventoryRoutes(app: Express) {
       if (!issue) return res.status(404).json({ message: "Chiqim hujjati topilmadi" });
       await audit(req, "void", "inventory", issue.id, `Chiqim №${issue.number} bekor qilindi, mahsulot partiyalariga qaytarildi: ${reason}`);
       res.json(issue);
+    }),
+  );
+
+  // ------------------------------------------------- stock & expiry (B5.4)
+
+  /** TZ §7.3: the warnings the warehouse acts on — expired, expiring, running low. */
+  app.get(
+    "/api/inventory/alerts",
+    requirePermission("inventory.read"),
+    handle(async (_req, res) => {
+      const today = clockNow().date;
+      const [items, batches] = await Promise.all([
+        storage.listInventoryItems().catch((e) => emptyIfMissing(e, [] as InventoryItemView[])),
+        storage.listBatches().catch((e) => emptyIfMissing(e, [] as InventoryBatchView[])),
+      ]);
+      res.json(summarizeStock(items, batches, today));
     }),
   );
 }

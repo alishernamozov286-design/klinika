@@ -104,7 +104,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-10. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 46.5 → ≈61%**.
+> Holat 2026-11-11. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 47.5 → ≈63%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -293,7 +293,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B4.10** Analizator integratsiyasi (`§6.4`): import API + lokal ko‘prik (D-4), namuna ID bo‘yicha moslashtirish, avtotekshiruv, takroriy natija nazorati, operator tasdig‘i. Protokol bo‘lmasa qo‘lda kiritish qoladi.
 - [x] **B4.11** Natijani bemorga elektron yetkazish (`§1`): Telegram bot.
 
-### Bosqich 5: Ombor (`§7`, `§15.5`) 43%
+### Bosqich 5: Ombor (`§7`, `§15.5`) 57%
 
 - [x] **B5.1** Mahsulotlar katalogi (`§7.2`, `inventory_items`): 8 tur, o‘lchov birligi, minimal qoldiq.
   - `inventory_items`: nomi, turi (TZ §7.2 dagi 8 tur: reagentlar, kalibratorlar, nazorat materiallari, probirkalar, shpritslar, sarf materiallari, dori vositalari, dezinfeksiya vositalari), artikul (ixtiyoriy), ishlab chiqaruvchi, o'lchov birligi (erkin, takliflar bilan; turga qarab standart taklif), minimal qoldiq (kasr ham, manfiy emas), sotuv yoki hisobdan chiqarish narxi (TZ §7.3, butun so'm, ixtiyoriy), faol, izoh, §10 ustunlari. Nom va artikul katta-kichik harf va bo'shliqqa qaramay takrorlanmaydi: route tekshiradi, Postgres'da `UQ_inventory_items_name` / `_code` oxirgi himoya (poygada ham 409). Qoidalar `shared/inventory.ts`.
@@ -319,7 +319,12 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - UI: Ombor → "Chiqim" tabi: oy bo'yicha bo'limlarga va hisobdan chiqarilgan jami, ro'yxat, "Bo'limga berish" / "Hisobdan chiqarish" dialogi (har qatorda qoldiq, ixtiyoriy partiya, **saqlashdan oldin qaysi partiyadan qancha olinishi** — server bilan bir xil qoida; yetishmasa darhol ko'rinadi; tannarx jonli), chop etiladigan hujjat (bo'limga berish yoki hisobdan chiqarish dalolatnomasi, imzo joylari), bekor qilish.
   - Migratsiya: `npm run db:issues` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart**: har bir harakat yozuvi (kirim ham) `issue_id` ni nomlaydi. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi (mavjud jadvalga ustun, CHECK'lar, FEFO oqimi qulflangan qatorlarda, ro'yxat va tafsilot so'rovlari, daftar = qoldiq), so'ng bajarildi (2026-11-11): jadval, ustun, indeks, omborchiga ruxsat; qayta ishga tushirish hech narsani o'zgartirmadi.
   - Testlar: `shared/inventory.test.ts` (+5: FEFO tartibi, muddati o'tgan, rejalash, xabarlar), `storage-file.test.ts` (3), brauzerda omborchi va lab mudiri yo'li (31 tekshiruv, telefon o'lchami bilan).
-- [ ] **B5.4** Qoldiq va yaroqlilik muddati (`§7.1`, `§7.3`): partiyalar bo‘yicha qoldiq, muddati yaqinlashganlar haqida ogohlantirish.
+- [x] **B5.4** Qoldiq va yaroqlilik muddati (`§7.1`, `§7.3`): partiyalar bo‘yicha qoldiq, muddati yaqinlashganlar haqida ogohlantirish.
+  - Qoidalar `shared/inventory.ts`: `expiryState` (o'tgan / 30 kun ichida / 90 kun ichida / yetarli / muddatsiz), `summarizeStock` — ombor qiymati (xarid narxlarida), muddati o'tgan va 30 kun ichida tugaydigan partiyalar (soni, qiymati), **kam qolgan** mahsulotlar. "Kam qolgan" faqat **yaroqli** (muddati o'tmagan) qoldiqni hisoblaydi: tokchadagi muddati o'tgan quti ertangi tahlilni qoplamaydi. Katalog, banner, bosh sahifa va qoldiq ko'rinishi shu bitta qoidadan.
+  - `GET /api/inventory/alerts` (`inventory.read`): ikkala ro'yxat parallel, xulosa umumiy funksiyada. Partiya ko'rinishi endi kelib chiqishini ham beradi: kirim raqami, sanasi, yetkazib beruvchi (JOIN, migratsiya yo'q).
+  - UI: Ombor sahifasi tepasida ogohlantirish banneri (har bir tabda; bosilsa tegishli filtr ochiladi). "Qoldiq va muddat" tabi: ko'rsatkichlar (ombor qiymati, muddati o'tgan, 30 kun ichida, kam qolgan), muddat filtrlari (hammasi / o'tgan / 30 / 90 kun), qidiruv (mahsulot, LOT, yetkazib beruvchi), partiyalar jadvali muddat bo'yicha (holat belgisi va "N kun qoldi", qoldiq/kelgan, qiymat, kirim), Excel/PDF eksport (R.2 "ombor qoldig'i"), kam qolganlar ro'yxati. Muddati o'tgan partiyani **shu yerning o'zidan** hisobdan chiqarish: chiqim dialogi partiya, miqdor va sabab bilan to'ldirilib ochiladi. Omborchining bosh sahifasida "Ombor" paneli (eski "tayyorlanmoqda" yozuvi o'rniga).
+  - Ogohlantirish ilova ichida (sahifa va bosh sahifa). Bildirishnoma yoki Telegram orqali jadval bo'yicha eslatma kerak bo'lsa — rejalashtiruvchi bilan birga (B8.1 / B8.3).
+  - Testlar: `shared/inventory.test.ts` (+2), `storage-file.test.ts` (partiya kelib chiqishi), brauzerda omborchi va rahbar yo'li (29 tekshiruv; muddati o'tgan partiya fayl omborida sanani surib yaratildi), real Neon'da o'qish rejimida.
 - [ ] **B5.5** Inventarizatsiya (`§7.1`): hisoblangan va haqiqiy qoldiq farqi, tuzatish harakati.
 - [ ] **B5.6** Reagent sarfini avtomatik hisoblash (`§7.3`, `§11` Lab→Ombor): tahlil uchun tasdiqlangan sarf normasi bo‘yicha (normani tahlil katalogida belgilash ham shu yerda, B4.6 dan ko'chirildi), real sarfni tuzatish imkoni bilan.
 - [ ] **B5.7** Ombor bosh sahifasi va hisobotlari (`§7.1`).
@@ -349,7 +354,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 ### Hisobotlar va rahbariyat paneli (`§13`) 32%
 
 - [~] **R.1** Rahbariyat boshqaruv paneli: hozirgi bosh sahifa statistikasi asos.
-- [~] **R.2** Kunlik bemorlar soni · [ ] shifokorlar faoliyati · [~] lab tahlillari soni · [ ] eng ko‘p buyuriladigan tahlillar · [ ] reagent sarfi · [ ] ombor qoldig‘i · [ ] statsionar bandligi · [x] kunlik/oylik tushum · [ ] xizmatlar daromadi · [~] qarzdorlik · [x] xarajatlar.
+- [~] **R.2** Kunlik bemorlar soni · [ ] shifokorlar faoliyati · [~] lab tahlillari soni · [ ] eng ko‘p buyuriladigan tahlillar · [ ] reagent sarfi · [x] ombor qoldig‘i · [ ] statsionar bandligi · [x] kunlik/oylik tushum · [ ] xizmatlar daromadi · [~] qarzdorlik · [x] xarajatlar.
 - [~] **R.3** PDF va Excel eksport: bor. Har yangi hisobotga qo‘shiladi.
 
 ### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 11%
@@ -405,6 +410,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-11 · B5.4 · Qoldiq va muddat: partiyalar bo'yicha qoldiq va kelib chiqishi, muddat holati va filtrlari, ombor qiymati, yaroqli qoldiq bo'yicha "kam qolgan", ogohlantirish banneri va omborchining bosh sahifa paneli, muddati o'tgan partiyani bir bosishda hisobdan chiqarish, eksport. Yo'l-yo'lakay: katalogdagi "kam qolgan" endi ogohlantirish bilan bir xil qoida, omborchiga "bo'lim tayyorlanmoqda" yozuvi chiqmaydi.
 - 2026-11-10 · B5.3 · Chiqim: bo'limga berish (kim oldi) va hisobdan chiqarish (sabab), FEFO taqsimlash (muddati o'tgan partiya bo'limga berilmaydi), aniq partiya tanlash, saqlashdan oldin taqsimot ko'rinishi, bekor qilishda partiyalarga qaytarish, chop etiladigan hujjat.
 - 2026-11-07 · B5.2 · Kirim hujjati: partiyalar (LOT, muddat, xarid narxi) va qoldiq daftari, muddati o'tgan mahsulot qabul qilinmaydi, kirimni faqat ishlatilmagan bo'lsa bekor qilish, katalogda qoldiq va eng yaqin muddat, hujjatni chop etish; harakati bor mahsulot o'chirilmaydi.
 - 2026-11-07 · B5.1 · Ombor mahsulotlari katalogi: TZ'dagi 8 tur, o'lchov birligi, minimal qoldiq, sotuv/hisobdan chiqarish narxi, artikul; takrorlanmas nom va artikul (poygada ham), yangi "Ombor" ruxsat guruhi, Ombor sahifasi.

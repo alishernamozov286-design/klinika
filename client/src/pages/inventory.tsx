@@ -46,6 +46,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Receipts } from "@/components/inventory/receipts";
 import { Issues } from "@/components/inventory/issues";
+import { StockAlertsBanner, StockView, type StockWindow } from "@/components/inventory/stock";
+import type { StockAlerts } from "@shared/inventory";
 import { EmptyState, Money, PageHeader, StatCard, TableSkeleton } from "@/components/ui-kit";
 import { MoneyInput, SearchInput } from "@/components/inputs";
 import { ExportButtons } from "@/components/export-buttons";
@@ -92,17 +94,28 @@ const EXPORT_COLUMNS: ExportColumn<InventoryItemView>[] = [
   { header: "Holat", value: (i) => (i.isActive ? "Faol" : "Faolsiz"), width: 9 },
 ];
 
-type InventoryTab = "items" | "receipts" | "issues";
+type InventoryTab = "items" | "stock" | "receipts" | "issues";
 
 export default function Inventory() {
   const { can } = useAuth();
   const { toast } = useToast();
   const canManage = can("inventory.manage");
   const { data: items = [], isLoading } = useQuery<InventoryItemView[]>({ queryKey: ["/api/inventory/items"], refetchOnMount: "always" });
+  // TZ §7.3: the warnings sit above every tab.
+  const { data: alerts } = useQuery<StockAlerts>({ queryKey: ["/api/inventory/alerts"], refetchOnMount: "always" });
   const [tab, setTab] = useState<InventoryTab>(() => {
     const asked = new URLSearchParams(window.location.search).get("tab");
-    return asked === "receipts" || asked === "issues" ? asked : "items";
+    return asked === "receipts" || asked === "issues" || asked === "stock" ? asked : "items";
   });
+  const [stockWindow, setStockWindow] = useState<StockWindow>(() => {
+    const w = new URLSearchParams(window.location.search).get("window");
+    return w === "expired" || w === "soon" || w === "watch" ? w : "all";
+  });
+  const openStock = (w: StockWindow | "low") => {
+    setStockWindow(w === "low" ? "all" : w);
+    setTab("stock");
+    if (w === "low") setTimeout(() => document.getElementById("low-stock")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+  };
 
   const [kind, setKind] = useState<InventoryKind | "all">("all");
   const [search, setSearch] = useState("");
@@ -125,7 +138,9 @@ export default function Inventory() {
   const active = items.filter((i) => i.isActive);
   const kindsUsed = new Set(active.map((i) => i.kind)).size;
   const unpriced = active.filter((i) => i.salePrice === null).length;
-  const low = active.filter((i) => i.onHand <= i.minStock).length;
+  // One rule for "kam qolgan" everywhere: usable (unexpired) stock, from the server (shared/inventory.ts summarizeStock).
+  const lowIds = new Set((alerts?.lowStock ?? []).map((l) => l.id));
+  const low = lowIds.size;
 
   const toggle = useMutation({
     mutationFn: async (i: InventoryItem) => {
@@ -157,7 +172,7 @@ export default function Inventory() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Ombor"
-        title="Mahsulotlar katalogi"
+        title="Ombor"
         description="Reagentlar, kalibratorlar, nazorat materiallari, sarf materiallari va dori vositalari (TZ §7.2)"
         actions={
           <div className="flex items-center gap-2">
@@ -202,17 +217,22 @@ export default function Inventory() {
           index={3}
           label="Kam qolgan"
           value={low}
-          hint={low > 0 ? "Qoldiq minimal darajada yoki undan kam" : "Hammasi yetarli"}
+          hint={low > 0 ? "Yaroqli qoldiq minimaldan kam" : "Hammasi yetarli"}
           icon={Package}
           tone={low > 0 ? "rose" : "emerald"}
           isLoading={isLoading}
         />
       </div>
 
+      <StockAlertsBanner alerts={alerts} onOpen={openStock} />
+
       <Tabs value={tab} onValueChange={(v) => setTab(v as InventoryTab)}>
         <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="items" data-testid="tab-inventory-items">
             Mahsulotlar
+          </TabsTrigger>
+          <TabsTrigger value="stock" data-testid="tab-inventory-stock">
+            Qoldiq va muddat
           </TabsTrigger>
           <TabsTrigger value="receipts" data-testid="tab-inventory-receipts">
             Kirim
@@ -221,6 +241,9 @@ export default function Inventory() {
             Chiqim
           </TabsTrigger>
         </TabsList>
+        <TabsContent value="stock" className="mt-4">
+          <StockView key={stockWindow} items={items} initialWindow={stockWindow} />
+        </TabsContent>
         <TabsContent value="issues" className="mt-4">
           <Issues items={items} />
         </TabsContent>
@@ -322,7 +345,7 @@ export default function Inventory() {
                               className={cn(
                                 "font-semibold tabular",
                                 i.isActive && i.onHand <= 0 && "text-rose-600 dark:text-rose-400",
-                                i.isActive && i.onHand > 0 && i.onHand <= i.minStock && "text-amber-700 dark:text-amber-300",
+                                i.isActive && i.onHand > 0 && lowIds.has(i.id) && "text-amber-700 dark:text-amber-300",
                               )}
                             >
                               {qty(i.onHand)}

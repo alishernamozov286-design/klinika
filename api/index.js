@@ -828,7 +828,45 @@ function planIssue(kind, lines, batches, items, today) {
   }
   return { ok: true, allocations: out };
 }
-var INVENTORY_KINDS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN, LOT_TRACKED, isLotTracked, MAX_RECEIPT_LINES, lineTotal, ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE, ISSUE_KINDS, ISSUE_KIND_LABELS, WRITEOFF_REASONS, WRITEOFF_REASON_LABELS, MAX_ISSUE_LINES, QTY_EPSILON, shortageMessage, fmtQty, ISSUE_ALREADY_CANCELLED, ISSUE_BATCH_GONE;
+function daysLeft(day, today) {
+  return Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 864e5);
+}
+function expiryState(expiresOn, today) {
+  if (!expiresOn) return "none";
+  const d = daysLeft(expiresOn, today);
+  if (d < 0) return "expired";
+  if (d <= EXPIRY_SOON_DAYS) return "soon";
+  if (d <= EXPIRY_WATCH_DAYS) return "watch";
+  return "ok";
+}
+function summarizeStock(items, batches, today) {
+  const out = { date: today, value: 0, expired: { batches: 0, value: 0 }, soon: { batches: 0, value: 0 }, watch: { batches: 0 }, lowStock: [] };
+  const usable = /* @__PURE__ */ new Map();
+  for (const b of batches) {
+    if (b.remaining <= QTY_EPSILON) continue;
+    const v = lineTotal(b.remaining, b.purchasePrice);
+    out.value += v;
+    const st = expiryState(b.expiresOn, today);
+    if (st === "expired") {
+      out.expired.batches += 1;
+      out.expired.value += v;
+      continue;
+    }
+    if (st === "soon") {
+      out.soon.batches += 1;
+      out.soon.value += v;
+    } else if (st === "watch") out.watch.batches += 1;
+    usable.set(b.itemId, (usable.get(b.itemId) ?? 0) + b.remaining);
+  }
+  for (const i of items) {
+    if (!i.isActive || !(i.minStock > 0)) continue;
+    const u = usable.get(i.id) ?? 0;
+    if (u <= i.minStock + QTY_EPSILON) out.lowStock.push({ id: i.id, name: i.name, unit: i.unit, kind: i.kind, usable: u, minStock: i.minStock });
+  }
+  out.lowStock.sort((a, b) => a.usable / a.minStock - b.usable / b.minStock || a.name.localeCompare(b.name));
+  return out;
+}
+var INVENTORY_KINDS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN, LOT_TRACKED, isLotTracked, MAX_RECEIPT_LINES, lineTotal, ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE, ISSUE_KINDS, ISSUE_KIND_LABELS, WRITEOFF_REASONS, WRITEOFF_REASON_LABELS, MAX_ISSUE_LINES, QTY_EPSILON, shortageMessage, fmtQty, ISSUE_ALREADY_CANCELLED, ISSUE_BATCH_GONE, EXPIRY_SOON_DAYS, EXPIRY_WATCH_DAYS, EXPIRY_STATE_LABELS;
 var init_inventory = __esm({
   "shared/inventory.ts"() {
     "use strict";
@@ -879,6 +917,15 @@ var init_inventory = __esm({
     fmtQty = (n) => String(Number(n.toFixed(3)));
     ISSUE_ALREADY_CANCELLED = "Bu chiqim allaqachon bekor qilingan";
     ISSUE_BATCH_GONE = "Partiya topilmadi yoki bekor qilingan";
+    EXPIRY_SOON_DAYS = 30;
+    EXPIRY_WATCH_DAYS = 90;
+    EXPIRY_STATE_LABELS = {
+      expired: "Muddati o'tgan",
+      soon: `${EXPIRY_SOON_DAYS} kun ichida tugaydi`,
+      watch: `${EXPIRY_WATCH_DAYS} kun ichida tugaydi`,
+      ok: "Muddati yetarli",
+      none: "Muddatsiz"
+    };
   }
 });
 
@@ -6078,8 +6125,24 @@ var init_storage_pg = __esm({
       async listBatches(query = {}) {
         const where = [isNull(inventoryBatches.cancelledAt), sql2`${inventoryBatches.remaining} > ${QTY_EPSILON}`];
         if (query.itemId) where.push(eq(inventoryBatches.itemId, query.itemId));
-        const rows = await db.select({ b: inventoryBatches, itemName: inventoryItems.name, unit: inventoryItems.unit, kind: inventoryItems.kind }).from(inventoryBatches).innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId)).where(and(...where)).orderBy(asc(inventoryItems.name), sql2`${inventoryBatches.expiresOn} ASC NULLS LAST`, asc(inventoryBatches.createdAt));
-        return rows.map((r) => ({ ...r.b, itemName: r.itemName, unit: r.unit, kind: r.kind }));
+        const rows = await db.select({
+          b: inventoryBatches,
+          itemName: inventoryItems.name,
+          unit: inventoryItems.unit,
+          kind: inventoryItems.kind,
+          receiptNumber: stockReceipts.number,
+          receivedOn: stockReceipts.receivedOn,
+          supplier: stockReceipts.supplier
+        }).from(inventoryBatches).innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId)).leftJoin(stockReceipts, eq(stockReceipts.id, inventoryBatches.receiptId)).where(and(...where)).orderBy(asc(inventoryItems.name), sql2`${inventoryBatches.expiresOn} ASC NULLS LAST`, asc(inventoryBatches.createdAt));
+        return rows.map((r) => ({
+          ...r.b,
+          itemName: r.itemName,
+          unit: r.unit,
+          kind: r.kind,
+          receiptNumber: r.receiptNumber ?? null,
+          receivedOn: r.receivedOn ?? null,
+          supplier: r.supplier ?? null
+        }));
       }
       issueSelect(exec) {
         return exec.select({
@@ -9080,7 +9143,16 @@ var init_storage_file = __esm({
         const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
         return this.db.inventoryBatches.filter((b) => !b.cancelledAt && b.remaining > QTY_EPSILON && (!query.itemId || b.itemId === query.itemId)).map((b) => {
           const it = items.get(b.itemId);
-          return { ...b, itemName: it?.name ?? "\u2014", unit: it?.unit ?? "", kind: it?.kind ?? "consumable" };
+          const r = this.db.stockReceipts.find((x) => x.id === b.receiptId);
+          return {
+            ...b,
+            itemName: it?.name ?? "\u2014",
+            unit: it?.unit ?? "",
+            kind: it?.kind ?? "consumable",
+            receiptNumber: r?.number ?? null,
+            receivedOn: r?.receivedOn ?? null,
+            supplier: r?.supplier ?? null
+          };
         }).sort(
           (a, b) => a.itemName.localeCompare(b.itemName) || (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999") || a.createdAt.localeCompare(b.createdAt)
         );
@@ -11907,6 +11979,18 @@ function registerInventoryRoutes(app) {
       if (!issue) return res.status(404).json({ message: "Chiqim hujjati topilmadi" });
       await audit(req, "void", "inventory", issue.id, `Chiqim \u2116${issue.number} bekor qilindi, mahsulot partiyalariga qaytarildi: ${reason}`);
       res.json(issue);
+    })
+  );
+  app.get(
+    "/api/inventory/alerts",
+    requirePermission("inventory.read"),
+    handle(async (_req, res) => {
+      const today = clockNow().date;
+      const [items, batches] = await Promise.all([
+        storage.listInventoryItems().catch((e) => emptyIfMissing(e, [])),
+        storage.listBatches().catch((e) => emptyIfMissing(e, []))
+      ]);
+      res.json(summarizeStock(items, batches, today));
     })
   );
 }

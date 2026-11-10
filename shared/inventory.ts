@@ -275,3 +275,85 @@ export function planIssue(
   }
   return { ok: true, allocations: out };
 }
+
+// ------------------------------------------------------- stock & expiry (B5.4)
+
+/**
+ * TZ §7.3 "Tizim muddati yaqinlashayotgan mahsulotlar haqida ogohlantiradi".
+ * A batch is expired after its expiry day; "soon" within 30 days is the
+ * warning, 90 days is the watch list. Expired stock stays on the shelf (and
+ * in the count) until it is written off, but it is not usable.
+ */
+export const EXPIRY_SOON_DAYS = 30;
+export const EXPIRY_WATCH_DAYS = 90;
+
+export type ExpiryState = "expired" | "soon" | "watch" | "ok" | "none";
+export const EXPIRY_STATE_LABELS: Record<ExpiryState, string> = {
+  expired: "Muddati o'tgan",
+  soon: `${EXPIRY_SOON_DAYS} kun ichida tugaydi`,
+  watch: `${EXPIRY_WATCH_DAYS} kun ichida tugaydi`,
+  ok: "Muddati yetarli",
+  none: "Muddatsiz",
+};
+
+/** Whole days from `today` to `day` (both YYYY-MM-DD); negative when past. */
+export function daysLeft(day: string, today: string): number {
+  return Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+}
+
+export function expiryState(expiresOn: string | null | undefined, today: string): ExpiryState {
+  if (!expiresOn) return "none";
+  const d = daysLeft(expiresOn, today);
+  if (d < 0) return "expired";
+  if (d <= EXPIRY_SOON_DAYS) return "soon";
+  if (d <= EXPIRY_WATCH_DAYS) return "watch";
+  return "ok";
+}
+
+type StockItem = { id: string; name: string; unit: string; kind: InventoryKind; minStock: number; isActive: boolean };
+type StockBatch = { id: string; itemId: string; remaining: number; expiresOn: string | null; purchasePrice: number };
+
+export type LowStockItem = { id: string; name: string; unit: string; kind: InventoryKind; usable: number; minStock: number };
+export type StockAlerts = {
+  date: string;
+  /** Value of everything on the shelf at purchase prices, so'm. */
+  value: number;
+  expired: { batches: number; value: number };
+  soon: { batches: number; value: number };
+  watch: { batches: number };
+  /** Active items with a minimum whose usable (unexpired) stock is at or below it. */
+  lowStock: LowStockItem[];
+};
+
+/**
+ * The warehouse's warnings in one place, computed from live batches. "Kam
+ * qolgan" counts only usable stock: an expired box on the shelf does not
+ * cover tomorrow's tests.
+ */
+export function summarizeStock(items: StockItem[], batches: StockBatch[], today: string): StockAlerts {
+  const out: StockAlerts = { date: today, value: 0, expired: { batches: 0, value: 0 }, soon: { batches: 0, value: 0 }, watch: { batches: 0 }, lowStock: [] };
+  const usable = new Map<string, number>();
+  for (const b of batches) {
+    if (b.remaining <= QTY_EPSILON) continue;
+    const v = lineTotal(b.remaining, b.purchasePrice);
+    out.value += v;
+    const st = expiryState(b.expiresOn, today);
+    if (st === "expired") {
+      out.expired.batches += 1;
+      out.expired.value += v;
+      continue;
+    }
+    if (st === "soon") {
+      out.soon.batches += 1;
+      out.soon.value += v;
+    } else if (st === "watch") out.watch.batches += 1;
+    usable.set(b.itemId, (usable.get(b.itemId) ?? 0) + b.remaining);
+  }
+  for (const i of items) {
+    if (!i.isActive || !(i.minStock > 0)) continue;
+    const u = usable.get(i.id) ?? 0;
+    if (u <= i.minStock + QTY_EPSILON) out.lowStock.push({ id: i.id, name: i.name, unit: i.unit, kind: i.kind, usable: u, minStock: i.minStock });
+  }
+  out.lowStock.sort((a, b) => a.usable / a.minStock - b.usable / b.minStock || a.name.localeCompare(b.name));
+  return out;
+}

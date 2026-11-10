@@ -155,16 +155,21 @@ function Field({ label, children, className }: { label: string; children: ReactN
   );
 }
 
-function NewIssueDialog({
+/** A line to start the form with, e.g. "write off this expired batch" from the stock view (B5.4). */
+export type IssuePreset = { itemId: string; batchId: string; quantity: number; reason?: WriteoffReason };
+
+export function NewIssueDialog({
   kind: initialKind,
   onClose,
   items,
   onCreated,
+  preset,
 }: {
   kind: IssueKind | null;
   onClose: () => void;
   items: InventoryItemView[];
-  onCreated: (id: string) => void;
+  onCreated?: (id: string) => void;
+  preset?: IssuePreset | null;
 }) {
   const { toast } = useToast();
   const open = initialKind !== null;
@@ -185,11 +190,12 @@ function NewIssueDialog({
     setKind(initialKind!);
     setDepartmentId("");
     setReceivedBy("");
-    setReason("expired");
+    setReason(preset?.reason ?? "expired");
     setIssuedOn(todayLocal());
     setNotes("");
-    setLines([blank()]);
+    setLines(preset ? [{ ...blank(), itemId: preset.itemId, batchId: preset.batchId, quantity: fmtQty(preset.quantity) }] : [blank()]);
     setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialKind]);
   useEffect(() => setError(null), [kind, departmentId, receivedBy, reason, issuedOn, lines]);
 
@@ -236,7 +242,7 @@ function NewIssueDialog({
       invalidateApi("/api/inventory");
       toast({ title: `Chiqim №${i.number} saqlandi`, description: `${i.lines.length} ta partiyadan olindi` });
       onClose();
-      onCreated(i.id);
+      onCreated?.(i.id);
     },
     onError: (err: Error) => setError(err.message),
   });
