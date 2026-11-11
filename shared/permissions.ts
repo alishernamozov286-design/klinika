@@ -226,6 +226,12 @@ export const PERMISSIONS = {
     label: "Kirim",
     description: "Kirim hujjatini rasmiylashtirish: yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (TZ §7.3)",
   },
+  "inventory.count": {
+    group: "warehouse",
+    label: "Inventarizatsiya",
+    description: "Sanoqni boshlash, haqiqiy qoldiqni kiritish va tasdiqlash; farq qoldiqqa tuzatish bo'lib yoziladi (TZ §7.1)",
+    sensitive: true,
+  },
 
   "finance.view": {
     group: "finance",
@@ -462,7 +468,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "omborchi",
     name: "Omborchi",
     description: "Ombor: kirim, chiqim va qoldiq",
-    permissions: ["inventory.read", "inventory.manage", "inventory.receive", "inventory.issue"],
+    permissions: ["inventory.read", "inventory.manage", "inventory.receive", "inventory.issue", "inventory.count"],
   },
   {
     key: "hamshira",

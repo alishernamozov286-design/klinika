@@ -1,6 +1,6 @@
 /**
- * Ombor (Bosqich 5, TZ §7): the product catalogue with stock on hand (B5.1)
- * and receipts (B5.2). Issues, counts and reports join as further tabs.
+ * Ombor (Bosqich 5, TZ §7): the product catalogue with stock on hand (B5.1),
+ * receipts (B5.2), issues (B5.3), stock and expiry (B5.4) and counts (B5.5).
  * Rules: shared/inventory.ts.
  */
 import { useEffect, useMemo, useState, type ComponentType } from "react";
@@ -23,7 +23,7 @@ import {
   Trash2,
   Warehouse,
 } from "lucide-react";
-import type { InventoryItem, InventoryItemView } from "@shared/schema";
+import type { InventoryItem, InventoryItemView, StockCountView } from "@shared/schema";
 import { insertInventoryItemSchema } from "@shared/schema";
 import {
   DEFAULT_UNIT,
@@ -46,6 +46,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Receipts } from "@/components/inventory/receipts";
 import { Issues } from "@/components/inventory/issues";
+import { Counts } from "@/components/inventory/counts";
 import { StockAlertsBanner, StockView, type StockWindow } from "@/components/inventory/stock";
 import type { StockAlerts } from "@shared/inventory";
 import { EmptyState, Money, PageHeader, StatCard, TableSkeleton } from "@/components/ui-kit";
@@ -94,7 +95,7 @@ const EXPORT_COLUMNS: ExportColumn<InventoryItemView>[] = [
   { header: "Holat", value: (i) => (i.isActive ? "Faol" : "Faolsiz"), width: 9 },
 ];
 
-type InventoryTab = "items" | "stock" | "receipts" | "issues";
+type InventoryTab = "items" | "stock" | "receipts" | "issues" | "counts";
 
 export default function Inventory() {
   const { can } = useAuth();
@@ -103,9 +104,12 @@ export default function Inventory() {
   const { data: items = [], isLoading } = useQuery<InventoryItemView[]>({ queryKey: ["/api/inventory/items"], refetchOnMount: "always" });
   // TZ §7.3: the warnings sit above every tab.
   const { data: alerts } = useQuery<StockAlerts>({ queryKey: ["/api/inventory/alerts"], refetchOnMount: "always" });
+  // An open count is marked on its tab, so it is not forgotten half-done.
+  const { data: stockCounts = [] } = useQuery<StockCountView[]>({ queryKey: ["/api/inventory/counts"], refetchOnMount: "always" });
+  const openCount = stockCounts.find((c) => c.status === "open");
   const [tab, setTab] = useState<InventoryTab>(() => {
     const asked = new URLSearchParams(window.location.search).get("tab");
-    return asked === "receipts" || asked === "issues" || asked === "stock" ? asked : "items";
+    return asked === "receipts" || asked === "issues" || asked === "stock" || asked === "counts" ? asked : "items";
   });
   const [stockWindow, setStockWindow] = useState<StockWindow>(() => {
     const w = new URLSearchParams(window.location.search).get("window");
@@ -240,7 +244,18 @@ export default function Inventory() {
           <TabsTrigger value="issues" data-testid="tab-inventory-issues">
             Chiqim
           </TabsTrigger>
+          <TabsTrigger value="counts" className="gap-1.5" data-testid="tab-inventory-counts">
+            Inventarizatsiya
+            {openCount && (
+              <span className="rounded-full bg-sky-500/15 px-1.5 text-[10px] font-semibold tabular text-sky-700 dark:text-sky-300" title="Sanoq davom etmoqda" data-testid="badge-open-count">
+                {openCount.countedCount}/{openCount.lineCount}
+              </span>
+            )}
+          </TabsTrigger>
         </TabsList>
+        <TabsContent value="counts" className="mt-4">
+          <Counts />
+        </TabsContent>
         <TabsContent value="stock" className="mt-4">
           <StockView key={stockWindow} items={items} initialWindow={stockWindow} />
         </TabsContent>

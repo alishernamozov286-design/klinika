@@ -27,9 +27,11 @@ import {
 import {
   INVENTORY_KINDS,
   ISSUE_KINDS,
+  MAX_COUNT_ENTRIES,
   MAX_ISSUE_LINES,
   MAX_RECEIPT_LINES,
   WRITEOFF_REASONS,
+  type CountStatus,
   type InventoryKind,
   type IssueKind,
   type MovementKind,
@@ -1340,12 +1342,68 @@ export const stockMovements = pgTable(
     receiptId: varchar("receipt_id"),
     /** B5.3: the issue document an outgoing movement belongs to. */
     issueId: varchar("issue_id"),
+    /** B5.5: the stock count a correcting movement comes from. */
+    countId: varchar("count_id"),
     note: text("note"),
     createdAt: isoTimestamp("created_at").defaultNow().notNull(),
     createdBy: varchar("created_by"),
     createdByName: text("created_by_name"),
   },
   (t) => [index("IDX_stock_movements_item").on(t.itemId, t.createdAt)],
+);
+
+/**
+ * Inventarizatsiya (B5.5, TZ §7.1). Opened over the live batches of some (or
+ * all) types, counted line by line, then posted: each difference becomes a
+ * `count` movement. Never deleted; an open count may be cancelled with a
+ * reason, a posted one is final. One open count at a time (UQ_stock_counts_open).
+ */
+export const stockCounts = pgTable(
+  "stock_counts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+    status: text("status").notNull().default("open"),
+    /** TZ §7.2 types counted; null = the whole warehouse. */
+    kinds: text("kinds").array(),
+    /** YYYY-MM-DD, the date on the act. */
+    countedOn: text("counted_on").notNull(),
+    notes: text("notes"),
+    /** Set when posted, at purchase prices, so'm. */
+    shortageValue: money("shortage_value").notNull().default(0),
+    surplusValue: money("surplus_value").notNull().default(0),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    createdByName: text("created_by_name"),
+    postedAt: isoTimestamp("posted_at"),
+    postedBy: varchar("posted_by"),
+    postedByName: text("posted_by_name"),
+    cancelledAt: isoTimestamp("cancelled_at"),
+    cancelledBy: varchar("cancelled_by"),
+    cancelledByName: text("cancelled_by_name"),
+    cancelReason: text("cancel_reason"),
+  },
+  (t) => [uniqueIndex("UQ_stock_counts_open").on(t.status).where(sql`status = 'open'`)],
+);
+
+/** One batch of a count: what the ledger said when it was counted, and what was found. */
+export const stockCountLines = pgTable(
+  "stock_count_lines",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    countId: varchar("count_id").notNull(),
+    itemId: varchar("item_id").notNull(),
+    batchId: varchar("batch_id").notNull(),
+    /** The batch's remaining when the line was last counted (when the count opened, until then). */
+    expected: doublePrecision("expected").notNull(),
+    /** Null until counted. */
+    counted: doublePrecision("counted"),
+    note: text("note"),
+    countedAt: isoTimestamp("counted_at"),
+    countedBy: varchar("counted_by"),
+    countedByName: text("counted_by_name"),
+  },
+  (t) => [uniqueIndex("UQ_stock_count_lines_batch").on(t.countId, t.batchId), index("IDX_stock_count_lines_batch").on(t.batchId)],
 );
 
 // ---------------------------------------------------------------- types
@@ -1653,6 +1711,24 @@ export type StockIssueLine = {
   purchasePrice: number;
 };
 export type StockIssueDetail = StockIssueView & { lines: StockIssueLine[] };
+export type StockCount = Omit<typeof stockCounts.$inferSelect, "status" | "kinds"> & { status: CountStatus; kinds: InventoryKind[] | null };
+export type StockCountView = StockCount & { lineCount: number; countedCount: number; diffCount: number };
+/** A count line with its batch: the act's row, and what the batch holds now. */
+export type StockCountLineRow = typeof stockCountLines.$inferSelect;
+export type StockCountLine = StockCountLineRow & {
+  itemName: string;
+  unit: string;
+  kind: InventoryKind;
+  lotNumber: string | null;
+  expiresOn: string | null;
+  purchasePrice: number;
+  /** What arrived with the batch: the most a count may find. */
+  quantity: number;
+  /** The batch's remaining right now (live while the count is open). */
+  remaining: number;
+  batchCancelled: boolean;
+};
+export type StockCountDetail = StockCountView & { lines: StockCountLine[] };
 
 export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
   kind: ReferralKind;
@@ -2649,6 +2725,33 @@ export const createIssueSchema = z.object({
 export type IssueLineInput = z.infer<typeof issueLineSchema>;
 export type CreateIssueInput = z.infer<typeof createIssueSchema>;
 export type CreateReceiptInput = z.infer<typeof createReceiptSchema>;
+
+export const createCountSchema = z.object({
+  countedOn: dayString,
+  /** Empty or null: the whole warehouse. */
+  kinds: z
+    .array(z.enum(INVENTORY_KINDS, { errorMap: () => ({ message: "Mahsulot turi noto'g'ri" }) }))
+    .max(INVENTORY_KINDS.length)
+    .nullish()
+    .transform((v) => (v && v.length > 0 && v.length < INVENTORY_KINDS.length ? Array.from(new Set(v)) : null)),
+  notes: optionalText(1000, "Izoh"),
+});
+export const countEntrySchema = z.object({
+  lineId: z.string().min(1),
+  /** Null clears a line that was counted by mistake. */
+  counted: z
+    .number({ invalid_type_error: "Sanalgan miqdor: raqam kiriting" })
+    .finite("Sanalgan miqdor: raqam kiriting")
+    .min(0, "Sanalgan miqdor manfiy bo'lmasligi kerak")
+    .max(1_000_000, "Miqdor juda katta")
+    .nullable(),
+  note: optionalText(300, "Izoh"),
+});
+export const saveCountEntriesSchema = z.object({
+  entries: z.array(countEntrySchema).min(1, "Hech narsa yuborilmadi").max(MAX_COUNT_ENTRIES, `Bir so'rovda ko'pi bilan ${MAX_COUNT_ENTRIES} ta qator`),
+});
+export type CreateCountInput = z.infer<typeof createCountSchema>;
+export type CountEntryInput = z.infer<typeof countEntrySchema>;
 
 // ------------------------------------------------------- quality control
 

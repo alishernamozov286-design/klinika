@@ -219,6 +219,12 @@ var init_permissions = __esm({
         label: "Kirim",
         description: "Kirim hujjatini rasmiylashtirish: yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (TZ \xA77.3)"
       },
+      "inventory.count": {
+        group: "warehouse",
+        label: "Inventarizatsiya",
+        description: "Sanoqni boshlash, haqiqiy qoldiqni kiritish va tasdiqlash; farq qoldiqqa tuzatish bo'lib yoziladi (TZ \xA77.1)",
+        sensitive: true
+      },
       "finance.view": {
         group: "finance",
         label: "Moliyaviy ko'rsatkichlar",
@@ -412,7 +418,7 @@ var init_permissions = __esm({
         key: "omborchi",
         name: "Omborchi",
         description: "Ombor: kirim, chiqim va qoldiq",
-        permissions: ["inventory.read", "inventory.manage", "inventory.receive", "inventory.issue"]
+        permissions: ["inventory.read", "inventory.manage", "inventory.receive", "inventory.issue", "inventory.count"]
       },
       {
         key: "hamshira",
@@ -866,7 +872,71 @@ function summarizeStock(items, batches, today) {
   out.lowStock.sort((a, b) => a.usable / a.minStock - b.usable / b.minStock || a.name.localeCompare(b.name));
   return out;
 }
-var INVENTORY_KINDS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN, LOT_TRACKED, isLotTracked, MAX_RECEIPT_LINES, lineTotal, ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE, ISSUE_KINDS, ISSUE_KIND_LABELS, WRITEOFF_REASONS, WRITEOFF_REASON_LABELS, MAX_ISSUE_LINES, QTY_EPSILON, shortageMessage, fmtQty, ISSUE_ALREADY_CANCELLED, ISSUE_BATCH_GONE, EXPIRY_SOON_DAYS, EXPIRY_WATCH_DAYS, EXPIRY_STATE_LABELS;
+function countedProblem(counted, batch, item) {
+  if (!Number.isFinite(counted) || counted < 0) return `"${item.name}": sanalgan miqdor manfiy bo'lmasligi kerak`;
+  if (batch.cancelledAt) return `"${item.name}" (${lotLabel(batch.lotNumber)}): partiya bekor qilingan \u2014 sanalmaydi`;
+  if (counted > batch.quantity + QTY_EPSILON) {
+    return `"${item.name}" (${lotLabel(batch.lotNumber)}): sanalgan ${fmtQty(counted)} ${item.unit} partiyaga kelgan ${fmtQty(batch.quantity)} ${item.unit} dan ko'p \u2014 ortiqcha mahsulotni kirim hujjati bilan qabul qiling`;
+  }
+  return null;
+}
+function countDelta(line) {
+  if (line.counted === null) return 0;
+  const d = line.counted - line.expected;
+  return Math.abs(d) <= QTY_EPSILON ? 0 : Number(d.toFixed(6));
+}
+function summarizeCount(lines) {
+  const s = { lines: lines.length, counted: 0, uncounted: 0, matched: 0, shortage: { lines: 0, value: 0 }, surplus: { lines: 0, value: 0 } };
+  for (const l of lines) {
+    if (l.batchCancelled) continue;
+    if (l.counted === null) {
+      s.uncounted += 1;
+      continue;
+    }
+    s.counted += 1;
+    const d = countDelta(l);
+    if (d === 0) s.matched += 1;
+    else if (d < 0) {
+      s.shortage.lines += 1;
+      s.shortage.value += lineTotal(-d, l.purchasePrice);
+    } else {
+      s.surplus.lines += 1;
+      s.surplus.value += lineTotal(d, l.purchasePrice);
+    }
+  }
+  return s;
+}
+function planCountPost(lines, batches) {
+  const live = lines.filter((l) => {
+    const b = batches.get(l.batchId);
+    return b && !b.cancelledAt;
+  });
+  const waiting = live.filter((l) => l.counted === null).length;
+  if (waiting > 0) return { ok: false, message: `${waiting} ta partiya hali sanalmagan \u2014 hammasini sanab, keyin tasdiqlang` };
+  const adjustments = [];
+  for (const l of live) {
+    const d = countDelta(l);
+    if (d === 0) continue;
+    const b = batches.get(l.batchId);
+    const next = b.remaining + d;
+    const where = `"${l.itemName}" (${lotLabel(b.lotNumber)})`;
+    if (next < -QTY_EPSILON) {
+      return {
+        ok: false,
+        message: `${where}: sanoqdan keyin partiyadan chiqim bo'lgan, hisobda ${fmtQty(b.remaining)} ${l.unit} qoldi \u2014 ${fmtQty(-d)} ${l.unit} kamomadni qo'llab bo'lmaydi. Shu partiyani qayta sanang.`
+      };
+    }
+    if (next > b.quantity + QTY_EPSILON) {
+      return {
+        ok: false,
+        message: `${where}: sanoqdan keyin partiyaga qaytarilgan, ${fmtQty(d)} ${l.unit} ortiqcha bilan kelgan miqdordan oshadi. Shu partiyani qayta sanang.`
+      };
+    }
+    adjustments.push({ lineId: l.id, batchId: l.batchId, delta: d, next: Math.abs(next) <= QTY_EPSILON ? 0 : Math.min(next, b.quantity) });
+  }
+  return { ok: true, adjustments };
+}
+var INVENTORY_KINDS, INVENTORY_KIND_LABELS, INVENTORY_KIND_SHORT, inventoryKey, INVENTORY_NAME_TAKEN, INVENTORY_CODE_TAKEN, LOT_TRACKED, isLotTracked, MAX_RECEIPT_LINES, lineTotal, ITEM_HAS_STOCK_HISTORY, RECEIPT_ALREADY_CANCELLED, RECEIPT_IN_USE, ISSUE_KINDS, ISSUE_KIND_LABELS, WRITEOFF_REASONS, WRITEOFF_REASON_LABELS, MAX_ISSUE_LINES, QTY_EPSILON, shortageMessage, fmtQty, ISSUE_ALREADY_CANCELLED, ISSUE_BATCH_GONE, EXPIRY_SOON_DAYS, EXPIRY_WATCH_DAYS, EXPIRY_STATE_LABELS, MAX_COUNT_ENTRIES, COUNT_ALREADY_OPEN, COUNT_NOT_OPEN, COUNT_POSTED_FINAL, COUNT_NOTHING, COUNT_LINE_MISSING, COUNTED_AFTER_DOCUMENT, lotLabel, countScopeLabel;
 var init_inventory = __esm({
   "shared/inventory.ts"() {
     "use strict";
@@ -880,6 +950,16 @@ var init_inventory = __esm({
       "medicine",
       "disinfectant"
     ];
+    INVENTORY_KIND_LABELS = {
+      reagent: "Laboratoriya reagentlari",
+      calibrator: "Kalibratorlar",
+      control: "Nazorat materiallari",
+      tube: "Probirkalar",
+      syringe: "Shpritslar",
+      consumable: "Tibbiy sarf materiallari",
+      medicine: "Dori vositalari",
+      disinfectant: "Dezinfeksiya vositalari"
+    };
     INVENTORY_KIND_SHORT = {
       reagent: "Reagent",
       calibrator: "Kalibrator",
@@ -926,6 +1006,15 @@ var init_inventory = __esm({
       ok: "Muddati yetarli",
       none: "Muddatsiz"
     };
+    MAX_COUNT_ENTRIES = 500;
+    COUNT_ALREADY_OPEN = "Ochiq inventarizatsiya bor \u2014 avval uni tasdiqlang yoki bekor qiling";
+    COUNT_NOT_OPEN = "Bu inventarizatsiya yopilgan: tasdiqlangan yoki bekor qilingan";
+    COUNT_POSTED_FINAL = "Tasdiqlangan inventarizatsiya bekor qilinmaydi \u2014 farqni yangi inventarizatsiya bilan tuzating";
+    COUNT_NOTHING = "Tanlangan turlarda qoldig'i bor partiya yo'q \u2014 sanaladigan narsa yo'q";
+    COUNT_LINE_MISSING = "Sanoq qatori topilmadi \u2014 sahifani yangilang";
+    COUNTED_AFTER_DOCUMENT = "Bu hujjatdan keyin uning partiyalari inventarizatsiyada sanalgan, shuning uchun bekor qilib bo'lmaydi. Farqni yangi hujjat yoki inventarizatsiya bilan tuzating.";
+    lotLabel = (lot) => lot ? `LOT ${lot}` : "LOT yo'q";
+    countScopeLabel = (kinds) => !kinds || kinds.length === 0 || kinds.length === INVENTORY_KINDS.length ? "Butun ombor" : kinds.map((k) => INVENTORY_KIND_LABELS[k]).join(", ");
   }
 });
 
@@ -977,7 +1066,9 @@ __export(schema_exports, {
   cancelExpenseSchema: () => cancelExpenseSchema,
   cancelReferralSchema: () => cancelReferralSchema,
   changePasswordSchema: () => changePasswordSchema,
+  countEntrySchema: () => countEntrySchema,
   createAppointmentSchema: () => createAppointmentSchema,
+  createCountSchema: () => createCountSchema,
   createIssueSchema: () => createIssueSchema,
   createOrderSchema: () => createOrderSchema,
   createPaymentSchema: () => createPaymentSchema,
@@ -1048,6 +1139,7 @@ __export(schema_exports, {
   reviewQcResultSchema: () => reviewQcResultSchema,
   roles: () => roles,
   samples: () => samples,
+  saveCountEntriesSchema: () => saveCountEntriesSchema,
   saveRecordSchema: () => saveRecordSchema,
   saveResultsSchema: () => saveResultsSchema,
   scheduleSchema: () => scheduleSchema,
@@ -1055,6 +1147,8 @@ __export(schema_exports, {
   services: () => services,
   sessions: () => sessions,
   signRecordSchema: () => signRecordSchema,
+  stockCountLines: () => stockCountLines,
+  stockCounts: () => stockCounts,
   stockIssues: () => stockIssues,
   stockMovements: () => stockMovements,
   stockReceipts: () => stockReceipts,
@@ -1119,7 +1213,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -2069,12 +2163,59 @@ var init_schema = __esm({
         receiptId: varchar("receipt_id"),
         /** B5.3: the issue document an outgoing movement belongs to. */
         issueId: varchar("issue_id"),
+        /** B5.5: the stock count a correcting movement comes from. */
+        countId: varchar("count_id"),
         note: text("note"),
         createdAt: isoTimestamp("created_at").defaultNow().notNull(),
         createdBy: varchar("created_by"),
         createdByName: text("created_by_name")
       },
       (t) => [index("IDX_stock_movements_item").on(t.itemId, t.createdAt)]
+    );
+    stockCounts = pgTable(
+      "stock_counts",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+        status: text("status").notNull().default("open"),
+        /** TZ §7.2 types counted; null = the whole warehouse. */
+        kinds: text("kinds").array(),
+        /** YYYY-MM-DD, the date on the act. */
+        countedOn: text("counted_on").notNull(),
+        notes: text("notes"),
+        /** Set when posted, at purchase prices, so'm. */
+        shortageValue: money("shortage_value").notNull().default(0),
+        surplusValue: money("surplus_value").notNull().default(0),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        createdByName: text("created_by_name"),
+        postedAt: isoTimestamp("posted_at"),
+        postedBy: varchar("posted_by"),
+        postedByName: text("posted_by_name"),
+        cancelledAt: isoTimestamp("cancelled_at"),
+        cancelledBy: varchar("cancelled_by"),
+        cancelledByName: text("cancelled_by_name"),
+        cancelReason: text("cancel_reason")
+      },
+      (t) => [uniqueIndex("UQ_stock_counts_open").on(t.status).where(sql`status = 'open'`)]
+    );
+    stockCountLines = pgTable(
+      "stock_count_lines",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        countId: varchar("count_id").notNull(),
+        itemId: varchar("item_id").notNull(),
+        batchId: varchar("batch_id").notNull(),
+        /** The batch's remaining when the line was last counted (when the count opened, until then). */
+        expected: doublePrecision("expected").notNull(),
+        /** Null until counted. */
+        counted: doublePrecision("counted"),
+        note: text("note"),
+        countedAt: isoTimestamp("counted_at"),
+        countedBy: varchar("counted_by"),
+        countedByName: text("counted_by_name")
+      },
+      (t) => [uniqueIndex("UQ_stock_count_lines_batch").on(t.countId, t.batchId), index("IDX_stock_count_lines_batch").on(t.batchId)]
     );
     NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"];
     birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
@@ -2461,6 +2602,21 @@ var init_schema = __esm({
       issuedOn: dayString,
       notes: optionalText(1e3, "Izoh"),
       lines: z.array(issueLineSchema).min(1, "Kamida bitta mahsulot qo'shing").max(MAX_ISSUE_LINES, `Bir hujjatda ko'pi bilan ${MAX_ISSUE_LINES} ta qator`)
+    });
+    createCountSchema = z.object({
+      countedOn: dayString,
+      /** Empty or null: the whole warehouse. */
+      kinds: z.array(z.enum(INVENTORY_KINDS, { errorMap: () => ({ message: "Mahsulot turi noto'g'ri" }) })).max(INVENTORY_KINDS.length).nullish().transform((v) => v && v.length > 0 && v.length < INVENTORY_KINDS.length ? Array.from(new Set(v)) : null),
+      notes: optionalText(1e3, "Izoh")
+    });
+    countEntrySchema = z.object({
+      lineId: z.string().min(1),
+      /** Null clears a line that was counted by mistake. */
+      counted: z.number({ invalid_type_error: "Sanalgan miqdor: raqam kiriting" }).finite("Sanalgan miqdor: raqam kiriting").min(0, "Sanalgan miqdor manfiy bo'lmasligi kerak").max(1e6, "Miqdor juda katta").nullable(),
+      note: optionalText(300, "Izoh")
+    });
+    saveCountEntriesSchema = z.object({
+      entries: z.array(countEntrySchema).min(1, "Hech narsa yuborilmadi").max(MAX_COUNT_ENTRIES, `Bir so'rovda ko'pi bilan ${MAX_COUNT_ENTRIES} ta qator`)
     });
     qcNumber = (label) => z.number({ invalid_type_error: `${label}: raqam kiriting`, required_error: `${label}ni kiriting` }).finite(`${label}: raqam kiriting`);
     optionalDay = dayString.nullish().or(z.literal("")).transform((v) => v ? v : null);
@@ -3593,7 +3749,7 @@ __export(storage_pg_exports, {
   isMissingTable: () => isMissingTable,
   referralSelect: () => referralSelect
 });
-import { and, asc, desc, eq, gte, inArray, isNull, lte, notInArray, or, sql as sql2 } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, notInArray, or, sql as sql2 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 async function uniqueAsConflict(run) {
   try {
@@ -6241,6 +6397,9 @@ var init_storage_pg = __esm({
           if (!issue) return void 0;
           if (issue.cancelledAt) throw new StorageConflict(ISSUE_ALREADY_CANCELLED);
           const out = await tx.select().from(stockMovements).where(and(eq(stockMovements.issueId, id), inArray(stockMovements.kind, ["issue", "writeoff"])));
+          if (await this.countedSince(tx, out.map((m) => m.batchId), issue.createdAt)) {
+            throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+          }
           if (out.length) {
             const batchIds = Array.from(new Set(out.map((m) => m.batchId)));
             const batches = await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, batchIds)).orderBy(asc(inventoryBatches.id)).for("update");
@@ -6266,6 +6425,177 @@ var init_storage_pg = __esm({
           }
           await tx.update(stockIssues).set({ cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason }).where(eq(stockIssues.id, id));
           return this.issueDetail(tx, id);
+        });
+      }
+      // ------------------------------------------------------------- counts (B5.5)
+      /**
+       * Has any of these batches been counted, in a count that was not cancelled,
+       * after `since`? Then the shelf was reconciled past that document, and
+       * undoing it would put back (or take out) stock the count already settled.
+       */
+      async countedSince(exec, batchIds, since) {
+        const ids = Array.from(new Set(batchIds));
+        if (ids.length === 0) return false;
+        const [hit] = await exec.select({ id: stockCountLines.id }).from(stockCountLines).innerJoin(stockCounts, eq(stockCounts.id, stockCountLines.countId)).where(and(inArray(stockCountLines.batchId, ids), gt(stockCountLines.countedAt, since), ne(stockCounts.status, "cancelled"))).limit(1);
+        return Boolean(hit);
+      }
+      countSelect(exec) {
+        return exec.select({
+          c: stockCounts,
+          lineCount: sql2`(SELECT count(*)::int FROM stock_count_lines l WHERE l.count_id = "stock_counts"."id")`,
+          countedCount: sql2`(SELECT count(*)::int FROM stock_count_lines l
+                                    WHERE l.count_id = "stock_counts"."id" AND l.counted IS NOT NULL)`,
+          diffCount: sql2`(SELECT count(*)::int FROM stock_count_lines l
+                                 WHERE l.count_id = "stock_counts"."id" AND l.counted IS NOT NULL AND abs(l.counted - l.expected) > 1e-9)`
+        }).from(stockCounts);
+      }
+      mapCount(r) {
+        return {
+          ...r.c,
+          status: r.c.status,
+          kinds: r.c.kinds ?? null,
+          lineCount: r.lineCount,
+          countedCount: r.countedCount,
+          diffCount: r.diffCount
+        };
+      }
+      async countDetail(exec, id) {
+        const [head] = await this.countSelect(exec).where(eq(stockCounts.id, id)).limit(1);
+        if (!head) return void 0;
+        const rows = await exec.select({ l: stockCountLines, itemName: inventoryItems.name, unit: inventoryItems.unit, kind: inventoryItems.kind, b: inventoryBatches }).from(stockCountLines).leftJoin(inventoryItems, eq(inventoryItems.id, stockCountLines.itemId)).leftJoin(inventoryBatches, eq(inventoryBatches.id, stockCountLines.batchId)).where(eq(stockCountLines.countId, id)).orderBy(asc(inventoryItems.name), sql2`${inventoryBatches.expiresOn} ASC NULLS LAST`, asc(inventoryBatches.createdAt));
+        const lines = rows.map((r) => ({
+          ...r.l,
+          itemName: r.itemName ?? "\u2014",
+          unit: r.unit ?? "",
+          kind: r.kind ?? "consumable",
+          lotNumber: r.b?.lotNumber ?? null,
+          expiresOn: r.b?.expiresOn ?? null,
+          purchasePrice: r.b?.purchasePrice ?? 0,
+          quantity: r.b?.quantity ?? 0,
+          remaining: r.b?.remaining ?? 0,
+          batchCancelled: !r.b || Boolean(r.b.cancelledAt)
+        }));
+        return { ...this.mapCount(head), lines };
+      }
+      async listCounts(query = {}) {
+        const rows = await this.countSelect(db).orderBy(desc(stockCounts.number)).limit(query.limit ?? 100);
+        return rows.map((r) => this.mapCount(r));
+      }
+      async getCount(id) {
+        return this.countDetail(db, id);
+      }
+      async createCount(input, actor) {
+        return db.transaction(async (tx) => {
+          const [open] = await tx.select({ id: stockCounts.id }).from(stockCounts).where(eq(stockCounts.status, "open")).limit(1);
+          if (open) throw new StorageConflict(COUNT_ALREADY_OPEN);
+          const where = [isNull(inventoryBatches.cancelledAt), sql2`${inventoryBatches.remaining} > ${QTY_EPSILON}`];
+          if (input.kinds) where.push(inArray(inventoryItems.kind, input.kinds));
+          const batches = await tx.select({ id: inventoryBatches.id, itemId: inventoryBatches.itemId, remaining: inventoryBatches.remaining }).from(inventoryBatches).innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId)).where(and(...where));
+          if (batches.length === 0) throw new StorageConflict(COUNT_NOTHING);
+          let count;
+          try {
+            [count] = await tx.insert(stockCounts).values({
+              status: "open",
+              kinds: input.kinds,
+              countedOn: input.countedOn,
+              notes: input.notes ?? null,
+              createdBy: actor.id,
+              createdByName: actor.name
+            }).returning();
+          } catch (err) {
+            const e = err;
+            if (e?.code === "23505" && e.constraint === "UQ_stock_counts_open") throw new StorageConflict(COUNT_ALREADY_OPEN);
+            throw err;
+          }
+          await tx.insert(stockCountLines).values(batches.map((b) => ({ countId: count.id, itemId: b.itemId, batchId: b.id, expected: b.remaining })));
+          return await this.countDetail(tx, count.id);
+        });
+      }
+      async saveCountEntries(id, entries, actor) {
+        return db.transaction(async (tx) => {
+          const [count] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
+          if (!count) return void 0;
+          if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+          const latest = Array.from(new Map(entries.map((e) => [e.lineId, e])).values());
+          const lines = await tx.select().from(stockCountLines).where(and(eq(stockCountLines.countId, id), inArray(stockCountLines.id, latest.map((e) => e.lineId))));
+          if (lines.length !== latest.length) throw new StorageConflict(COUNT_LINE_MISSING);
+          const byLine = new Map(lines.map((l) => [l.id, l]));
+          const batches = await tx.select({ b: inventoryBatches, name: inventoryItems.name, unit: inventoryItems.unit }).from(inventoryBatches).innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId)).where(inArray(inventoryBatches.id, Array.from(new Set(lines.map((l) => l.batchId))))).orderBy(asc(inventoryBatches.id)).for("update", { of: inventoryBatches });
+          const byBatch = new Map(batches.map((r) => [r.b.id, r]));
+          const rows = latest.map((e) => {
+            const r = byBatch.get(byLine.get(e.lineId).batchId);
+            if (!r) throw new StorageConflict(ISSUE_BATCH_GONE);
+            if (e.counted !== null) {
+              const problem = countedProblem(e.counted, r.b, { name: r.name, unit: r.unit });
+              if (problem) throw new StorageConflict(problem);
+            }
+            return { id: e.lineId, counted: e.counted, expected: r.b.remaining, note: e.note ?? null };
+          });
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          await tx.execute(sql2`
+        UPDATE stock_count_lines AS l
+           SET counted = v.counted,
+               expected = v.expected,
+               note = v.note,
+               counted_at = CASE WHEN v.counted IS NULL THEN NULL ELSE ${now}::timestamptz END,
+               counted_by = CASE WHEN v.counted IS NULL THEN NULL ELSE ${actor.id}::text END,
+               counted_by_name = CASE WHEN v.counted IS NULL THEN NULL ELSE ${actor.name}::text END
+          FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS v(id varchar, counted double precision, expected double precision, note text)
+         WHERE l.id = v.id AND l.count_id = ${id}`);
+          return this.countDetail(tx, id);
+        });
+      }
+      async postCount(id, actor) {
+        return db.transaction(async (tx) => {
+          const [count] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
+          if (!count) return void 0;
+          if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+          const lines = await tx.select({ l: stockCountLines, itemName: inventoryItems.name, unit: inventoryItems.unit }).from(stockCountLines).leftJoin(inventoryItems, eq(inventoryItems.id, stockCountLines.itemId)).where(eq(stockCountLines.countId, id));
+          const batchIds = Array.from(new Set(lines.map((r) => r.l.batchId)));
+          const batches = batchIds.length ? await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, batchIds)).orderBy(asc(inventoryBatches.id)).for("update") : [];
+          const byBatch = new Map(batches.map((b) => [b.id, b]));
+          const plan = planCountPost(
+            lines.map((r) => ({ id: r.l.id, batchId: r.l.batchId, expected: r.l.expected, counted: r.l.counted, itemName: r.itemName ?? "\u2014", unit: r.unit ?? "" })),
+            byBatch
+          );
+          if (!plan.ok) throw new StorageConflict(plan.message);
+          let shortageValue = 0;
+          let surplusValue = 0;
+          for (const a of plan.adjustments) {
+            const v = lineTotal(Math.abs(a.delta), byBatch.get(a.batchId).purchasePrice);
+            if (a.delta < 0) shortageValue += v;
+            else surplusValue += v;
+          }
+          if (plan.adjustments.length) {
+            const itemOf = new Map(lines.map((r) => [r.l.id, r.l.itemId]));
+            await tx.insert(stockMovements).values(
+              plan.adjustments.map((a) => ({
+                itemId: itemOf.get(a.lineId),
+                batchId: a.batchId,
+                kind: "count",
+                quantity: a.delta,
+                countId: id,
+                note: `Inventarizatsiya \u2116${count.number}`,
+                createdBy: actor.id,
+                createdByName: actor.name
+              }))
+            );
+            for (const a of plan.adjustments) {
+              await tx.update(inventoryBatches).set({ remaining: a.next }).where(eq(inventoryBatches.id, a.batchId));
+            }
+          }
+          await tx.update(stockCounts).set({ status: "posted", postedAt: (/* @__PURE__ */ new Date()).toISOString(), postedBy: actor.id, postedByName: actor.name, shortageValue, surplusValue }).where(eq(stockCounts.id, id));
+          return this.countDetail(tx, id);
+        });
+      }
+      async cancelCount(id, reason, actor) {
+        return db.transaction(async (tx) => {
+          const [count] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
+          if (!count) return void 0;
+          if (count.status === "posted") throw new StorageConflict(COUNT_POSTED_FINAL);
+          if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+          await tx.update(stockCounts).set({ status: "cancelled", cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason }).where(eq(stockCounts.id, id));
+          return this.countDetail(tx, id);
         });
       }
       async listReceipts(query = {}) {
@@ -6322,6 +6652,9 @@ var init_storage_pg = __esm({
           if (receipt.cancelledAt) throw new StorageConflict(RECEIPT_ALREADY_CANCELLED);
           const batches = await tx.select().from(inventoryBatches).where(eq(inventoryBatches.receiptId, id)).for("update");
           if (batches.some((b) => Math.abs(b.remaining - b.quantity) > 1e-9)) throw new StorageConflict(RECEIPT_IN_USE);
+          if (await this.countedSince(tx, batches.map((b) => b.id), receipt.createdAt)) {
+            throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+          }
           const now = (/* @__PURE__ */ new Date()).toISOString();
           if (batches.length) {
             await tx.insert(stockMovements).values(
@@ -6635,6 +6968,8 @@ var init_db = __esm({
       inventoryBatches: [],
       stockMovements: [],
       stockIssues: [],
+      stockCounts: [],
+      stockCountLines: [],
       icdUzNames: {},
       security: null,
       patients: [],
@@ -6658,7 +6993,7 @@ var init_db = __esm({
         director: null,
         licenseNumber: null
       },
-      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0 }
+      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0 }
     });
     queue = Promise.resolve();
   }
@@ -9102,6 +9437,7 @@ var init_storage_file = __esm({
             quantity: l.quantity,
             receiptId: receipt.id,
             issueId: null,
+            countId: null,
             note: null,
             createdAt: now,
             createdBy: actor.id,
@@ -9117,6 +9453,7 @@ var init_storage_file = __esm({
         if (r.cancelledAt) throw new StorageConflict(RECEIPT_ALREADY_CANCELLED);
         const batches = this.db.inventoryBatches.filter((b) => b.receiptId === id);
         if (batches.some((b) => Math.abs(b.remaining - b.quantity) > 1e-9)) throw new StorageConflict(RECEIPT_IN_USE);
+        if (this.countedSince(batches.map((b) => b.id), r.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
         const now = (/* @__PURE__ */ new Date()).toISOString();
         for (const b of batches) {
           this.db.stockMovements.push({
@@ -9127,6 +9464,7 @@ var init_storage_file = __esm({
             quantity: -b.remaining,
             receiptId: id,
             issueId: null,
+            countId: null,
             note: reason,
             createdAt: now,
             createdBy: actor.id,
@@ -9229,6 +9567,7 @@ var init_storage_file = __esm({
             quantity: -a.quantity,
             receiptId: null,
             issueId: issue.id,
+            countId: null,
             note: null,
             createdAt: now,
             createdBy: actor.id,
@@ -9244,6 +9583,7 @@ var init_storage_file = __esm({
         if (issue.cancelledAt) throw new StorageConflict(ISSUE_ALREADY_CANCELLED);
         const now = (/* @__PURE__ */ new Date()).toISOString();
         const out = this.db.stockMovements.filter((m) => m.issueId === id && (m.kind === "issue" || m.kind === "writeoff"));
+        if (this.countedSince(out.map((m) => m.batchId), issue.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
         for (const m of out) {
           const b = this.db.inventoryBatches.find((x) => x.id === m.batchId);
           if (b) b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
@@ -9255,6 +9595,7 @@ var init_storage_file = __esm({
             quantity: -m.quantity,
             receiptId: null,
             issueId: id,
+            countId: null,
             note: reason,
             createdAt: now,
             createdBy: actor.id,
@@ -9264,6 +9605,185 @@ var init_storage_file = __esm({
         Object.assign(issue, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
         await this.persist();
         return this.issueDetail(issue);
+      }
+      // ------------------------------------------------------------- counts (B5.5)
+      /** As on Postgres: a live count reconciled these batches after `since`. */
+      countedSince(batchIds, since) {
+        const ids = new Set(batchIds);
+        if (ids.size === 0) return false;
+        const live = new Set(this.db.stockCounts.filter((c) => c.status !== "cancelled").map((c) => c.id));
+        return this.db.stockCountLines.some((l) => ids.has(l.batchId) && live.has(l.countId) && !!l.countedAt && l.countedAt > since);
+      }
+      countView(c) {
+        const lines = this.db.stockCountLines.filter((l) => l.countId === c.id);
+        const counted = lines.filter((l) => l.counted !== null);
+        return {
+          ...c,
+          kinds: c.kinds ? [...c.kinds] : null,
+          lineCount: lines.length,
+          countedCount: counted.length,
+          diffCount: counted.filter((l) => Math.abs(l.counted - l.expected) > 1e-9).length
+        };
+      }
+      countDetail(c) {
+        const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
+        const batches = new Map(this.db.inventoryBatches.map((b) => [b.id, b]));
+        const lines = this.db.stockCountLines.filter((l) => l.countId === c.id).map((l) => {
+          const it = items.get(l.itemId);
+          const b = batches.get(l.batchId);
+          return {
+            ...l,
+            itemName: it?.name ?? "\u2014",
+            unit: it?.unit ?? "",
+            kind: it?.kind ?? "consumable",
+            lotNumber: b?.lotNumber ?? null,
+            expiresOn: b?.expiresOn ?? null,
+            purchasePrice: b?.purchasePrice ?? 0,
+            quantity: b?.quantity ?? 0,
+            remaining: b?.remaining ?? 0,
+            batchCancelled: !b || Boolean(b.cancelledAt),
+            createdAtOfBatch: b?.createdAt ?? ""
+          };
+        }).sort(
+          (a, b) => a.itemName.localeCompare(b.itemName) || (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999") || a.createdAtOfBatch.localeCompare(b.createdAtOfBatch)
+        ).map(({ createdAtOfBatch: _, ...l }) => l);
+        return { ...this.countView(c), lines };
+      }
+      async listCounts(query = {}) {
+        return [...this.db.stockCounts].sort((a, b) => b.number - a.number).slice(0, query.limit ?? 100).map((c) => this.countView(c));
+      }
+      async getCount(id) {
+        const c = this.db.stockCounts.find((x) => x.id === id);
+        return c && this.countDetail(c);
+      }
+      async createCount(input, actor) {
+        if (this.db.stockCounts.some((c) => c.status === "open")) throw new StorageConflict(COUNT_ALREADY_OPEN);
+        const kinds = input.kinds ? new Set(input.kinds) : null;
+        const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
+        const batches = this.db.inventoryBatches.filter((b) => {
+          const it = items.get(b.itemId);
+          return it && !b.cancelledAt && b.remaining > QTY_EPSILON && (!kinds || kinds.has(it.kind));
+        });
+        if (batches.length === 0) throw new StorageConflict(COUNT_NOTHING);
+        this.db.counters.countNumber += 1;
+        const count = {
+          id: randomUUID(),
+          number: this.db.counters.countNumber,
+          status: "open",
+          kinds: input.kinds,
+          countedOn: input.countedOn,
+          notes: input.notes ?? null,
+          shortageValue: 0,
+          surplusValue: 0,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          createdByName: actor.name,
+          postedAt: null,
+          postedBy: null,
+          postedByName: null,
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelledByName: null,
+          cancelReason: null
+        };
+        this.db.stockCounts.push(count);
+        for (const b of batches) {
+          this.db.stockCountLines.push({
+            id: randomUUID(),
+            countId: count.id,
+            itemId: b.itemId,
+            batchId: b.id,
+            expected: b.remaining,
+            counted: null,
+            note: null,
+            countedAt: null,
+            countedBy: null,
+            countedByName: null
+          });
+        }
+        await this.persist();
+        return this.countDetail(count);
+      }
+      async saveCountEntries(id, entries, actor) {
+        const count = this.db.stockCounts.find((x) => x.id === id);
+        if (!count) return void 0;
+        if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+        const latest = Array.from(new Map(entries.map((e) => [e.lineId, e])).values());
+        const lines = latest.map((e) => this.db.stockCountLines.find((l) => l.id === e.lineId && l.countId === id));
+        if (lines.some((l) => !l)) throw new StorageConflict(COUNT_LINE_MISSING);
+        const planned = latest.map((e, n) => {
+          const line = lines[n];
+          const b = this.db.inventoryBatches.find((x) => x.id === line.batchId);
+          if (!b) throw new StorageConflict(ISSUE_BATCH_GONE);
+          const it = this.db.inventoryItems.find((x) => x.id === line.itemId);
+          if (e.counted !== null) {
+            const problem = countedProblem(e.counted, b, { name: it?.name ?? "\u2014", unit: it?.unit ?? "" });
+            if (problem) throw new StorageConflict(problem);
+          }
+          return { line, e, expected: b.remaining };
+        });
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const { line, e, expected } of planned) {
+          Object.assign(line, {
+            counted: e.counted,
+            expected,
+            note: e.note ?? null,
+            countedAt: e.counted === null ? null : now,
+            countedBy: e.counted === null ? null : actor.id,
+            countedByName: e.counted === null ? null : actor.name
+          });
+        }
+        await this.persist();
+        return this.countDetail(count);
+      }
+      async postCount(id, actor) {
+        const count = this.db.stockCounts.find((x) => x.id === id);
+        if (!count) return void 0;
+        if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+        const lines = this.db.stockCountLines.filter((l) => l.countId === id);
+        const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
+        const batches = new Map(this.db.inventoryBatches.filter((b) => lines.some((l) => l.batchId === b.id)).map((b) => [b.id, b]));
+        const plan = planCountPost(
+          lines.map((l) => ({ ...l, itemName: items.get(l.itemId)?.name ?? "\u2014", unit: items.get(l.itemId)?.unit ?? "" })),
+          batches
+        );
+        if (!plan.ok) throw new StorageConflict(plan.message);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        let shortageValue = 0;
+        let surplusValue = 0;
+        for (const a of plan.adjustments) {
+          const b = batches.get(a.batchId);
+          const v = lineTotal(Math.abs(a.delta), b.purchasePrice);
+          if (a.delta < 0) shortageValue += v;
+          else surplusValue += v;
+          b.remaining = a.next;
+          this.db.stockMovements.push({
+            id: randomUUID(),
+            itemId: b.itemId,
+            batchId: b.id,
+            kind: "count",
+            quantity: a.delta,
+            receiptId: null,
+            issueId: null,
+            countId: id,
+            note: `Inventarizatsiya \u2116${count.number}`,
+            createdAt: now,
+            createdBy: actor.id,
+            createdByName: actor.name
+          });
+        }
+        Object.assign(count, { status: "posted", postedAt: now, postedBy: actor.id, postedByName: actor.name, shortageValue, surplusValue });
+        await this.persist();
+        return this.countDetail(count);
+      }
+      async cancelCount(id, reason, actor) {
+        const count = this.db.stockCounts.find((x) => x.id === id);
+        if (!count) return void 0;
+        if (count.status === "posted") throw new StorageConflict(COUNT_POSTED_FINAL);
+        if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+        Object.assign(count, { status: "cancelled", cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+        await this.persist();
+        return this.countDetail(count);
       }
       async getLabBoard(day) {
         const all = this.db.orders.map((o) => this.hydrate(o));
@@ -11991,6 +12511,87 @@ function registerInventoryRoutes(app) {
         storage.listBatches().catch((e) => emptyIfMissing(e, []))
       ]);
       res.json(summarizeStock(items, batches, today));
+    })
+  );
+  app.get(
+    "/api/inventory/counts",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const n = Number(stringParam(req.query.limit) ?? 100);
+      const limit = Number.isFinite(n) ? Math.min(Math.max(1, Math.trunc(n)), 500) : 100;
+      res.json(await storage.listCounts({ limit }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/inventory/counts/:id",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const count = await storage.getCount(req.params.id);
+      if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
+      res.json(count);
+    })
+  );
+  app.post(
+    "/api/inventory/counts",
+    requirePermission("inventory.count"),
+    handle(async (req, res) => {
+      const input = createCountSchema.parse(req.body);
+      if (input.countedOn > clockNow().date) return res.status(400).json({ message: "Inventarizatsiya sanasi kelajakda bo'lishi mumkin emas" });
+      const count = await storage.createCount(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "inventory",
+        count.id,
+        `Inventarizatsiya \u2116${count.number} boshlandi (${countScopeLabel(count.kinds)}, ${count.countedOn}): ${count.lineCount} ta partiya sanaladi`
+      );
+      res.status(201).json(count);
+    })
+  );
+  app.put(
+    "/api/inventory/counts/:id/lines",
+    requirePermission("inventory.count"),
+    handle(async (req, res) => {
+      const { entries } = saveCountEntriesSchema.parse(req.body);
+      const count = await storage.saveCountEntries(req.params.id, entries, actorOf(req));
+      if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
+      const byId = new Map(count.lines.map((l) => [l.id, l]));
+      const what = entries.map((e) => {
+        const l = byId.get(e.lineId);
+        if (!l) return null;
+        const lot = l.lotNumber ? ` LOT ${l.lotNumber}` : "";
+        return e.counted === null ? `${l.itemName}${lot}: sanoq o'chirildi` : `${l.itemName}${lot}: sanaldi ${fmtQty(e.counted)}, hisobda ${fmtQty(l.expected)} ${l.unit}`;
+      }).filter(Boolean);
+      await audit(req, "update", "inventory", count.id, `Inventarizatsiya \u2116${count.number}: ${what.slice(0, 20).join("; ")}${what.length > 20 ? ` va yana ${what.length - 20} ta` : ""}`);
+      res.json(count);
+    })
+  );
+  app.post(
+    "/api/inventory/counts/:id/post",
+    requirePermission("inventory.count"),
+    handle(async (req, res) => {
+      const count = await storage.postCount(req.params.id, actorOf(req));
+      if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
+      const s = summarizeCount(count.lines);
+      await audit(
+        req,
+        "verify",
+        "inventory",
+        count.id,
+        `Inventarizatsiya \u2116${count.number} tasdiqlandi: ${s.counted} ta partiya sanaldi, ${s.matched} tasi mos; kamomad ${s.shortage.lines} ta (${count.shortageValue} so'm), ortiqcha ${s.surplus.lines} ta (${count.surplusValue} so'm) \u2014 qoldiq tuzatildi`
+      );
+      res.json(count);
+    })
+  );
+  app.post(
+    "/api/inventory/counts/:id/cancel",
+    requirePermission("inventory.count"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const count = await storage.cancelCount(req.params.id, reason, actorOf(req));
+      if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
+      await audit(req, "void", "inventory", count.id, `Inventarizatsiya \u2116${count.number} bekor qilindi, qoldiq o'zgarmadi: ${reason}`);
+      res.json(count);
     })
   );
 }

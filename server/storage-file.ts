@@ -87,15 +87,30 @@ import {
   zScore,
 } from "@shared/qc";
 import {
+  COUNTED_AFTER_DOCUMENT,
+  COUNT_ALREADY_OPEN,
+  COUNT_LINE_MISSING,
+  COUNT_NOTHING,
+  COUNT_NOT_OPEN,
+  COUNT_POSTED_FINAL,
   ISSUE_ALREADY_CANCELLED,
+  ISSUE_BATCH_GONE,
   ITEM_HAS_STOCK_HISTORY,
   QTY_EPSILON,
   RECEIPT_ALREADY_CANCELLED,
   RECEIPT_IN_USE,
+  countedProblem,
   lineTotal,
+  planCountPost,
   planIssue,
 } from "@shared/inventory";
 import type {
+  CountEntryInput,
+  CreateCountInput,
+  StockCount,
+  StockCountDetail,
+  StockCountLine,
+  StockCountView,
   CreateIssueInput,
   InventoryBatchView,
   StockIssue,
@@ -3076,6 +3091,7 @@ export class FileStorage implements IStorage {
         quantity: l.quantity,
         receiptId: receipt.id,
         issueId: null,
+        countId: null,
         note: null,
         createdAt: now,
         createdBy: actor.id,
@@ -3092,6 +3108,7 @@ export class FileStorage implements IStorage {
     if (r.cancelledAt) throw new StorageConflict(RECEIPT_ALREADY_CANCELLED);
     const batches = this.db.inventoryBatches.filter((b) => b.receiptId === id);
     if (batches.some((b) => Math.abs(b.remaining - b.quantity) > 1e-9)) throw new StorageConflict(RECEIPT_IN_USE);
+    if (this.countedSince(batches.map((b) => b.id), r.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
     const now = new Date().toISOString();
     for (const b of batches) {
       this.db.stockMovements.push({
@@ -3102,6 +3119,7 @@ export class FileStorage implements IStorage {
         quantity: -b.remaining,
         receiptId: id,
         issueId: null,
+        countId: null,
         note: reason,
         createdAt: now,
         createdBy: actor.id,
@@ -3222,6 +3240,7 @@ export class FileStorage implements IStorage {
         quantity: -a.quantity,
         receiptId: null,
         issueId: issue.id,
+        countId: null,
         note: null,
         createdAt: now,
         createdBy: actor.id,
@@ -3238,6 +3257,7 @@ export class FileStorage implements IStorage {
     if (issue.cancelledAt) throw new StorageConflict(ISSUE_ALREADY_CANCELLED);
     const now = new Date().toISOString();
     const out = this.db.stockMovements.filter((m) => m.issueId === id && (m.kind === "issue" || m.kind === "writeoff"));
+    if (this.countedSince(out.map((m) => m.batchId), issue.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
     for (const m of out) {
       const b = this.db.inventoryBatches.find((x) => x.id === m.batchId);
       if (b) b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
@@ -3249,6 +3269,7 @@ export class FileStorage implements IStorage {
         quantity: -m.quantity,
         receiptId: null,
         issueId: id,
+        countId: null,
         note: reason,
         createdAt: now,
         createdBy: actor.id,
@@ -3258,6 +3279,206 @@ export class FileStorage implements IStorage {
     Object.assign(issue, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
     await this.persist();
     return this.issueDetail(issue);
+  }
+
+  // ------------------------------------------------------------- counts (B5.5)
+
+  /** As on Postgres: a live count reconciled these batches after `since`. */
+  private countedSince(batchIds: string[], since: string): boolean {
+    const ids = new Set(batchIds);
+    if (ids.size === 0) return false;
+    const live = new Set(this.db.stockCounts.filter((c) => c.status !== "cancelled").map((c) => c.id));
+    return this.db.stockCountLines.some((l) => ids.has(l.batchId) && live.has(l.countId) && !!l.countedAt && l.countedAt > since);
+  }
+
+  private countView(c: StockCount): StockCountView {
+    const lines = this.db.stockCountLines.filter((l) => l.countId === c.id);
+    const counted = lines.filter((l) => l.counted !== null);
+    return {
+      ...c,
+      kinds: c.kinds ? [...c.kinds] : null,
+      lineCount: lines.length,
+      countedCount: counted.length,
+      diffCount: counted.filter((l) => Math.abs(l.counted! - l.expected) > 1e-9).length,
+    };
+  }
+
+  private countDetail(c: StockCount): StockCountDetail {
+    const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
+    const batches = new Map(this.db.inventoryBatches.map((b) => [b.id, b]));
+    const lines: StockCountLine[] = this.db.stockCountLines
+      .filter((l) => l.countId === c.id)
+      .map((l) => {
+        const it = items.get(l.itemId);
+        const b = batches.get(l.batchId);
+        return {
+          ...l,
+          itemName: it?.name ?? "—",
+          unit: it?.unit ?? "",
+          kind: it?.kind ?? "consumable",
+          lotNumber: b?.lotNumber ?? null,
+          expiresOn: b?.expiresOn ?? null,
+          purchasePrice: b?.purchasePrice ?? 0,
+          quantity: b?.quantity ?? 0,
+          remaining: b?.remaining ?? 0,
+          batchCancelled: !b || Boolean(b.cancelledAt),
+          createdAtOfBatch: b?.createdAt ?? "",
+        };
+      })
+      .sort(
+        (a, b) =>
+          a.itemName.localeCompare(b.itemName) ||
+          (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999") ||
+          a.createdAtOfBatch.localeCompare(b.createdAtOfBatch),
+      )
+      .map(({ createdAtOfBatch: _, ...l }) => l);
+    return { ...this.countView(c), lines };
+  }
+
+  async listCounts(query: { limit?: number } = {}): Promise<StockCountView[]> {
+    return [...this.db.stockCounts]
+      .sort((a, b) => b.number - a.number)
+      .slice(0, query.limit ?? 100)
+      .map((c) => this.countView(c));
+  }
+
+  async getCount(id: string): Promise<StockCountDetail | undefined> {
+    const c = this.db.stockCounts.find((x) => x.id === id);
+    return c && this.countDetail(c);
+  }
+
+  async createCount(input: CreateCountInput, actor: Actor): Promise<StockCountDetail> {
+    if (this.db.stockCounts.some((c) => c.status === "open")) throw new StorageConflict(COUNT_ALREADY_OPEN);
+    const kinds = input.kinds ? new Set<string>(input.kinds) : null;
+    const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
+    const batches = this.db.inventoryBatches.filter((b) => {
+      const it = items.get(b.itemId);
+      return it && !b.cancelledAt && b.remaining > QTY_EPSILON && (!kinds || kinds.has(it.kind));
+    });
+    if (batches.length === 0) throw new StorageConflict(COUNT_NOTHING);
+    this.db.counters.countNumber += 1;
+    const count: StockCount = {
+      id: randomUUID(),
+      number: this.db.counters.countNumber,
+      status: "open",
+      kinds: input.kinds,
+      countedOn: input.countedOn,
+      notes: input.notes ?? null,
+      shortageValue: 0,
+      surplusValue: 0,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      createdByName: actor.name,
+      postedAt: null,
+      postedBy: null,
+      postedByName: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancelledByName: null,
+      cancelReason: null,
+    };
+    this.db.stockCounts.push(count);
+    for (const b of batches) {
+      this.db.stockCountLines.push({
+        id: randomUUID(),
+        countId: count.id,
+        itemId: b.itemId,
+        batchId: b.id,
+        expected: b.remaining,
+        counted: null,
+        note: null,
+        countedAt: null,
+        countedBy: null,
+        countedByName: null,
+      });
+    }
+    await this.persist();
+    return this.countDetail(count);
+  }
+
+  async saveCountEntries(id: string, entries: CountEntryInput[], actor: Actor): Promise<StockCountDetail | undefined> {
+    const count = this.db.stockCounts.find((x) => x.id === id);
+    if (!count) return undefined;
+    if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+    const latest = Array.from(new Map(entries.map((e) => [e.lineId, e])).values());
+    const lines = latest.map((e) => this.db.stockCountLines.find((l) => l.id === e.lineId && l.countId === id));
+    if (lines.some((l) => !l)) throw new StorageConflict(COUNT_LINE_MISSING);
+    // Check every entry before writing any, as the Postgres transaction would.
+    const planned = latest.map((e, n) => {
+      const line = lines[n]!;
+      const b = this.db.inventoryBatches.find((x) => x.id === line.batchId);
+      if (!b) throw new StorageConflict(ISSUE_BATCH_GONE);
+      const it = this.db.inventoryItems.find((x) => x.id === line.itemId);
+      if (e.counted !== null) {
+        const problem = countedProblem(e.counted, b, { name: it?.name ?? "—", unit: it?.unit ?? "" });
+        if (problem) throw new StorageConflict(problem);
+      }
+      return { line, e, expected: b.remaining };
+    });
+    const now = new Date().toISOString();
+    for (const { line, e, expected } of planned) {
+      Object.assign(line, {
+        counted: e.counted,
+        expected,
+        note: e.note ?? null,
+        countedAt: e.counted === null ? null : now,
+        countedBy: e.counted === null ? null : actor.id,
+        countedByName: e.counted === null ? null : actor.name,
+      });
+    }
+    await this.persist();
+    return this.countDetail(count);
+  }
+
+  async postCount(id: string, actor: Actor): Promise<StockCountDetail | undefined> {
+    const count = this.db.stockCounts.find((x) => x.id === id);
+    if (!count) return undefined;
+    if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+    const lines = this.db.stockCountLines.filter((l) => l.countId === id);
+    const items = new Map(this.db.inventoryItems.map((i) => [i.id, i]));
+    const batches = new Map(this.db.inventoryBatches.filter((b) => lines.some((l) => l.batchId === b.id)).map((b) => [b.id, b]));
+    const plan = planCountPost(
+      lines.map((l) => ({ ...l, itemName: items.get(l.itemId)?.name ?? "—", unit: items.get(l.itemId)?.unit ?? "" })),
+      batches,
+    );
+    if (!plan.ok) throw new StorageConflict(plan.message);
+    const now = new Date().toISOString();
+    let shortageValue = 0;
+    let surplusValue = 0;
+    for (const a of plan.adjustments) {
+      const b = batches.get(a.batchId)!;
+      const v = lineTotal(Math.abs(a.delta), b.purchasePrice);
+      if (a.delta < 0) shortageValue += v;
+      else surplusValue += v;
+      b.remaining = a.next;
+      this.db.stockMovements.push({
+        id: randomUUID(),
+        itemId: b.itemId,
+        batchId: b.id,
+        kind: "count",
+        quantity: a.delta,
+        receiptId: null,
+        issueId: null,
+        countId: id,
+        note: `Inventarizatsiya №${count.number}`,
+        createdAt: now,
+        createdBy: actor.id,
+        createdByName: actor.name,
+      });
+    }
+    Object.assign(count, { status: "posted", postedAt: now, postedBy: actor.id, postedByName: actor.name, shortageValue, surplusValue });
+    await this.persist();
+    return this.countDetail(count);
+  }
+
+  async cancelCount(id: string, reason: string, actor: Actor): Promise<StockCountDetail | undefined> {
+    const count = this.db.stockCounts.find((x) => x.id === id);
+    if (!count) return undefined;
+    if (count.status === "posted") throw new StorageConflict(COUNT_POSTED_FINAL);
+    if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+    Object.assign(count, { status: "cancelled", cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+    await this.persist();
+    return this.countDetail(count);
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {

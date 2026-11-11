@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { defaultTests, testReferences } from "@shared/tests-data";
 import {
@@ -16,6 +16,8 @@ import {
   inventoryBatches,
   stockMovements,
   stockIssues,
+  stockCounts,
+  stockCountLines,
   auditLog,
   departments,
   doctors,
@@ -127,14 +129,23 @@ import { classifyTest, isTestGroup, orderGroups } from "@shared/lab-catalogue";
 import { LAB_BOARD_AWAITING_LIMIT, type LabBoard, type LabBoardCounts } from "@shared/lab-board";
 import { checkLogo, type ClinicLogo } from "@shared/branding";
 import {
+  COUNTED_AFTER_DOCUMENT,
+  COUNT_ALREADY_OPEN,
+  COUNT_LINE_MISSING,
+  COUNT_NOTHING,
+  COUNT_NOT_OPEN,
+  COUNT_POSTED_FINAL,
   INVENTORY_CODE_TAKEN,
   INVENTORY_NAME_TAKEN,
   ITEM_HAS_STOCK_HISTORY,
   ISSUE_ALREADY_CANCELLED,
+  ISSUE_BATCH_GONE,
   QTY_EPSILON,
   RECEIPT_ALREADY_CANCELLED,
   RECEIPT_IN_USE,
+  countedProblem,
   lineTotal,
+  planCountPost,
   planIssue,
 } from "@shared/inventory";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
@@ -149,6 +160,12 @@ import {
   zScore,
 } from "@shared/qc";
 import type {
+  CountEntryInput,
+  CreateCountInput,
+  StockCount,
+  StockCountDetail,
+  StockCountLine,
+  StockCountView,
   CreateIssueInput,
   InventoryBatchView,
   StockIssue,
@@ -3950,6 +3967,9 @@ export class PgStorage implements IStorage {
         .select()
         .from(stockMovements)
         .where(and(eq(stockMovements.issueId, id), inArray(stockMovements.kind, ["issue", "writeoff"])));
+      if (await this.countedSince(tx as unknown as typeof db, out.map((m) => m.batchId), issue.createdAt)) {
+        throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+      }
       if (out.length) {
         const batchIds = Array.from(new Set(out.map((m) => m.batchId)));
         const batches = await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, batchIds)).orderBy(asc(inventoryBatches.id)).for("update");
@@ -3978,6 +3998,233 @@ export class PgStorage implements IStorage {
         .set({ cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
         .where(eq(stockIssues.id, id));
       return this.issueDetail(tx as unknown as typeof db, id);
+    });
+  }
+
+  // ------------------------------------------------------------- counts (B5.5)
+
+  /**
+   * Has any of these batches been counted, in a count that was not cancelled,
+   * after `since`? Then the shelf was reconciled past that document, and
+   * undoing it would put back (or take out) stock the count already settled.
+   */
+  private async countedSince(exec: typeof db, batchIds: string[], since: string): Promise<boolean> {
+    const ids = Array.from(new Set(batchIds));
+    if (ids.length === 0) return false;
+    const [hit] = await exec
+      .select({ id: stockCountLines.id })
+      .from(stockCountLines)
+      .innerJoin(stockCounts, eq(stockCounts.id, stockCountLines.countId))
+      .where(and(inArray(stockCountLines.batchId, ids), gt(stockCountLines.countedAt, since), ne(stockCounts.status, "cancelled")))
+      .limit(1);
+    return Boolean(hit);
+  }
+
+  private countSelect(exec: typeof db) {
+    return exec
+      .select({
+        c: stockCounts,
+        lineCount: sql<number>`(SELECT count(*)::int FROM stock_count_lines l WHERE l.count_id = "stock_counts"."id")`,
+        countedCount: sql<number>`(SELECT count(*)::int FROM stock_count_lines l
+                                    WHERE l.count_id = "stock_counts"."id" AND l.counted IS NOT NULL)`,
+        diffCount: sql<number>`(SELECT count(*)::int FROM stock_count_lines l
+                                 WHERE l.count_id = "stock_counts"."id" AND l.counted IS NOT NULL AND abs(l.counted - l.expected) > 1e-9)`,
+      })
+      .from(stockCounts);
+  }
+
+  private mapCount(r: { c: typeof stockCounts.$inferSelect; lineCount: number; countedCount: number; diffCount: number }): StockCountView {
+    return {
+      ...r.c,
+      status: r.c.status as StockCount["status"],
+      kinds: (r.c.kinds ?? null) as StockCount["kinds"],
+      lineCount: r.lineCount,
+      countedCount: r.countedCount,
+      diffCount: r.diffCount,
+    };
+  }
+
+  private async countDetail(exec: typeof db, id: string): Promise<StockCountDetail | undefined> {
+    const [head] = await this.countSelect(exec).where(eq(stockCounts.id, id)).limit(1);
+    if (!head) return undefined;
+    const rows = await exec
+      .select({ l: stockCountLines, itemName: inventoryItems.name, unit: inventoryItems.unit, kind: inventoryItems.kind, b: inventoryBatches })
+      .from(stockCountLines)
+      .leftJoin(inventoryItems, eq(inventoryItems.id, stockCountLines.itemId))
+      .leftJoin(inventoryBatches, eq(inventoryBatches.id, stockCountLines.batchId))
+      .where(eq(stockCountLines.countId, id))
+      .orderBy(asc(inventoryItems.name), sql`${inventoryBatches.expiresOn} ASC NULLS LAST`, asc(inventoryBatches.createdAt));
+    const lines: StockCountLine[] = rows.map((r) => ({
+      ...r.l,
+      itemName: r.itemName ?? "—",
+      unit: r.unit ?? "",
+      kind: (r.kind ?? "consumable") as StockCountLine["kind"],
+      lotNumber: r.b?.lotNumber ?? null,
+      expiresOn: r.b?.expiresOn ?? null,
+      purchasePrice: r.b?.purchasePrice ?? 0,
+      quantity: r.b?.quantity ?? 0,
+      remaining: r.b?.remaining ?? 0,
+      batchCancelled: !r.b || Boolean(r.b.cancelledAt),
+    }));
+    return { ...this.mapCount(head), lines };
+  }
+
+  async listCounts(query: { limit?: number } = {}): Promise<StockCountView[]> {
+    const rows = await this.countSelect(db).orderBy(desc(stockCounts.number)).limit(query.limit ?? 100);
+    return rows.map((r) => this.mapCount(r));
+  }
+
+  async getCount(id: string): Promise<StockCountDetail | undefined> {
+    return this.countDetail(db, id);
+  }
+
+  async createCount(input: CreateCountInput, actor: Actor): Promise<StockCountDetail> {
+    return db.transaction(async (tx) => {
+      const [open] = await tx.select({ id: stockCounts.id }).from(stockCounts).where(eq(stockCounts.status, "open")).limit(1);
+      if (open) throw new StorageConflict(COUNT_ALREADY_OPEN);
+      const where = [isNull(inventoryBatches.cancelledAt), sql`${inventoryBatches.remaining} > ${QTY_EPSILON}`];
+      if (input.kinds) where.push(inArray(inventoryItems.kind, input.kinds));
+      const batches = await tx
+        .select({ id: inventoryBatches.id, itemId: inventoryBatches.itemId, remaining: inventoryBatches.remaining })
+        .from(inventoryBatches)
+        .innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId))
+        .where(and(...where));
+      if (batches.length === 0) throw new StorageConflict(COUNT_NOTHING);
+      let count: typeof stockCounts.$inferSelect;
+      try {
+        [count] = await tx
+          .insert(stockCounts)
+          .values({
+            status: "open",
+            kinds: input.kinds,
+            countedOn: input.countedOn,
+            notes: input.notes ?? null,
+            createdBy: actor.id,
+            createdByName: actor.name,
+          })
+          .returning();
+      } catch (err) {
+        // Two people opening a count at the same moment: the index lets one through.
+        const e = err as { code?: string; constraint?: string };
+        if (e?.code === "23505" && e.constraint === "UQ_stock_counts_open") throw new StorageConflict(COUNT_ALREADY_OPEN);
+        throw err;
+      }
+      await tx.insert(stockCountLines).values(batches.map((b) => ({ countId: count.id, itemId: b.itemId, batchId: b.id, expected: b.remaining })));
+      return (await this.countDetail(tx as unknown as typeof db, count.id))!;
+    });
+  }
+
+  async saveCountEntries(id: string, entries: CountEntryInput[], actor: Actor): Promise<StockCountDetail | undefined> {
+    return db.transaction(async (tx) => {
+      const [count] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
+      if (!count) return undefined;
+      if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+      // The last entry for a line wins, as it would on screen.
+      const latest = Array.from(new Map(entries.map((e) => [e.lineId, e])).values());
+      const lines = await tx
+        .select()
+        .from(stockCountLines)
+        .where(and(eq(stockCountLines.countId, id), inArray(stockCountLines.id, latest.map((e) => e.lineId))));
+      if (lines.length !== latest.length) throw new StorageConflict(COUNT_LINE_MISSING);
+      const byLine = new Map(lines.map((l) => [l.id, l]));
+      // Locked, so `expected` is a remaining no issue is changing right now.
+      const batches = await tx
+        .select({ b: inventoryBatches, name: inventoryItems.name, unit: inventoryItems.unit })
+        .from(inventoryBatches)
+        .innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId))
+        .where(inArray(inventoryBatches.id, Array.from(new Set(lines.map((l) => l.batchId)))))
+        .orderBy(asc(inventoryBatches.id))
+        .for("update", { of: inventoryBatches });
+      const byBatch = new Map(batches.map((r) => [r.b.id, r]));
+      const rows = latest.map((e) => {
+        const r = byBatch.get(byLine.get(e.lineId)!.batchId);
+        if (!r) throw new StorageConflict(ISSUE_BATCH_GONE);
+        if (e.counted !== null) {
+          const problem = countedProblem(e.counted, r.b, { name: r.name, unit: r.unit });
+          if (problem) throw new StorageConflict(problem);
+        }
+        return { id: e.lineId, counted: e.counted, expected: r.b.remaining, note: e.note ?? null };
+      });
+      const now = new Date().toISOString();
+      await tx.execute(sql`
+        UPDATE stock_count_lines AS l
+           SET counted = v.counted,
+               expected = v.expected,
+               note = v.note,
+               counted_at = CASE WHEN v.counted IS NULL THEN NULL ELSE ${now}::timestamptz END,
+               counted_by = CASE WHEN v.counted IS NULL THEN NULL ELSE ${actor.id}::text END,
+               counted_by_name = CASE WHEN v.counted IS NULL THEN NULL ELSE ${actor.name}::text END
+          FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS v(id varchar, counted double precision, expected double precision, note text)
+         WHERE l.id = v.id AND l.count_id = ${id}`);
+      return this.countDetail(tx as unknown as typeof db, id);
+    });
+  }
+
+  async postCount(id: string, actor: Actor): Promise<StockCountDetail | undefined> {
+    return db.transaction(async (tx) => {
+      const [count] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
+      if (!count) return undefined;
+      if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+      const lines = await tx
+        .select({ l: stockCountLines, itemName: inventoryItems.name, unit: inventoryItems.unit })
+        .from(stockCountLines)
+        .leftJoin(inventoryItems, eq(inventoryItems.id, stockCountLines.itemId))
+        .where(eq(stockCountLines.countId, id));
+      const batchIds = Array.from(new Set(lines.map((r) => r.l.batchId)));
+      // Fixed order, like issues: a post and an issue on the same batches cannot deadlock.
+      const batches = batchIds.length
+        ? await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, batchIds)).orderBy(asc(inventoryBatches.id)).for("update")
+        : [];
+      const byBatch = new Map(batches.map((b) => [b.id, b]));
+      const plan = planCountPost(
+        lines.map((r) => ({ id: r.l.id, batchId: r.l.batchId, expected: r.l.expected, counted: r.l.counted, itemName: r.itemName ?? "—", unit: r.unit ?? "" })),
+        byBatch,
+      );
+      if (!plan.ok) throw new StorageConflict(plan.message);
+      let shortageValue = 0;
+      let surplusValue = 0;
+      for (const a of plan.adjustments) {
+        const v = lineTotal(Math.abs(a.delta), byBatch.get(a.batchId)!.purchasePrice);
+        if (a.delta < 0) shortageValue += v;
+        else surplusValue += v;
+      }
+      if (plan.adjustments.length) {
+        const itemOf = new Map(lines.map((r) => [r.l.id, r.l.itemId]));
+        await tx.insert(stockMovements).values(
+          plan.adjustments.map((a) => ({
+            itemId: itemOf.get(a.lineId)!,
+            batchId: a.batchId,
+            kind: "count",
+            quantity: a.delta,
+            countId: id,
+            note: `Inventarizatsiya №${count.number}`,
+            createdBy: actor.id,
+            createdByName: actor.name,
+          })),
+        );
+        for (const a of plan.adjustments) {
+          await tx.update(inventoryBatches).set({ remaining: a.next }).where(eq(inventoryBatches.id, a.batchId));
+        }
+      }
+      await tx
+        .update(stockCounts)
+        .set({ status: "posted", postedAt: new Date().toISOString(), postedBy: actor.id, postedByName: actor.name, shortageValue, surplusValue })
+        .where(eq(stockCounts.id, id));
+      return this.countDetail(tx as unknown as typeof db, id);
+    });
+  }
+
+  async cancelCount(id: string, reason: string, actor: Actor): Promise<StockCountDetail | undefined> {
+    return db.transaction(async (tx) => {
+      const [count] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
+      if (!count) return undefined;
+      if (count.status === "posted") throw new StorageConflict(COUNT_POSTED_FINAL);
+      if (count.status !== "open") throw new StorageConflict(COUNT_NOT_OPEN);
+      await tx
+        .update(stockCounts)
+        .set({ status: "cancelled", cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
+        .where(eq(stockCounts.id, id));
+      return this.countDetail(tx as unknown as typeof db, id);
     });
   }
 
@@ -4048,6 +4295,9 @@ export class PgStorage implements IStorage {
       if (receipt.cancelledAt) throw new StorageConflict(RECEIPT_ALREADY_CANCELLED);
       const batches = await tx.select().from(inventoryBatches).where(eq(inventoryBatches.receiptId, id)).for("update");
       if (batches.some((b) => Math.abs(b.remaining - b.quantity) > 1e-9)) throw new StorageConflict(RECEIPT_IN_USE);
+      if (await this.countedSince(tx as unknown as typeof db, batches.map((b) => b.id), receipt.createdAt)) {
+        throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+      }
       const now = new Date().toISOString();
       if (batches.length) {
         await tx.insert(stockMovements).values(

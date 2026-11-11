@@ -126,7 +126,7 @@ export function duplicateLine(lines: { itemId: string; lotNumber?: string | null
   return null;
 }
 
-export const MOVEMENT_KINDS = ["receipt", "receipt_cancel", "issue", "writeoff", "issue_cancel"] as const;
+export const MOVEMENT_KINDS = ["receipt", "receipt_cancel", "issue", "writeoff", "issue_cancel", "count"] as const;
 export type MovementKind = (typeof MOVEMENT_KINDS)[number];
 export const MOVEMENT_KIND_LABELS: Record<MovementKind, string> = {
   receipt: "Kirim",
@@ -134,6 +134,7 @@ export const MOVEMENT_KIND_LABELS: Record<MovementKind, string> = {
   issue: "Bo'limga berildi",
   writeoff: "Hisobdan chiqarildi",
   issue_cancel: "Chiqim bekor qilindi",
+  count: "Inventarizatsiya tuzatishi",
 };
 
 export const ITEM_HAS_STOCK_HISTORY = "Bu mahsulot bo'yicha kirim yoki chiqim bor, shuning uchun o'chirilmaydi. Uni faolsizlantiring.";
@@ -357,3 +358,142 @@ export function summarizeStock(items: StockItem[], batches: StockBatch[], today:
   out.lowStock.sort((a, b) => a.usable / a.minStock - b.usable / b.minStock || a.name.localeCompare(b.name));
   return out;
 }
+
+// ------------------------------------------------------------- counts (B5.5)
+
+/**
+ * Inventarizatsiya (TZ §7.1): the shelf is counted batch by batch and the
+ * difference between what the ledger says and what is really there is
+ * posted as a correcting movement.
+ *
+ * A count opens over the live batches of the chosen types. Each line keeps
+ * `expected` — the ledger's remaining at the moment that line was counted —
+ * so issues made while the count is open are never mistaken for a shortage:
+ * posting moves each batch by (counted − expected), the difference found when
+ * it was counted, and what moved since then stays as it is. One count is open
+ * at a time; a posted count is final (a later count corrects it).
+ */
+export const COUNT_STATUSES = ["open", "posted", "cancelled"] as const;
+export type CountStatus = (typeof COUNT_STATUSES)[number];
+export const COUNT_STATUS_LABELS: Record<CountStatus, string> = {
+  open: "Sanoq davom etmoqda",
+  posted: "Tasdiqlangan",
+  cancelled: "Bekor qilingan",
+};
+
+export const MAX_COUNT_ENTRIES = 500;
+
+export const COUNT_ALREADY_OPEN = "Ochiq inventarizatsiya bor — avval uni tasdiqlang yoki bekor qiling";
+export const COUNT_NOT_OPEN = "Bu inventarizatsiya yopilgan: tasdiqlangan yoki bekor qilingan";
+export const COUNT_POSTED_FINAL = "Tasdiqlangan inventarizatsiya bekor qilinmaydi — farqni yangi inventarizatsiya bilan tuzating";
+export const COUNT_NOTHING = "Tanlangan turlarda qoldig'i bor partiya yo'q — sanaladigan narsa yo'q";
+export const COUNT_LINE_MISSING = "Sanoq qatori topilmadi — sahifani yangilang";
+export const COUNTED_AFTER_DOCUMENT =
+  "Bu hujjatdan keyin uning partiyalari inventarizatsiyada sanalgan, shuning uchun bekor qilib bo'lmaydi. Farqni yangi hujjat yoki inventarizatsiya bilan tuzating.";
+
+type CountItem = { name: string; unit: string };
+type CountBatch = { quantity: number; cancelledAt?: string | null; lotNumber?: string | null };
+
+const lotLabel = (lot: string | null | undefined) => (lot ? `LOT ${lot}` : "LOT yo'q");
+
+/**
+ * Why a counted quantity cannot be recorded, or null. A batch cannot hold
+ * more than arrived with it: goods found beyond that are a receipt nobody
+ * recorded, and are taken in with a receipt document, not by a count.
+ */
+export function countedProblem(counted: number, batch: CountBatch, item: CountItem): string | null {
+  if (!Number.isFinite(counted) || counted < 0) return `"${item.name}": sanalgan miqdor manfiy bo'lmasligi kerak`;
+  if (batch.cancelledAt) return `"${item.name}" (${lotLabel(batch.lotNumber)}): partiya bekor qilingan — sanalmaydi`;
+  if (counted > batch.quantity + QTY_EPSILON) {
+    return `"${item.name}" (${lotLabel(batch.lotNumber)}): sanalgan ${fmtQty(counted)} ${item.unit} partiyaga kelgan ${fmtQty(batch.quantity)} ${item.unit} dan ko'p — ortiqcha mahsulotni kirim hujjati bilan qabul qiling`;
+  }
+  return null;
+}
+
+/** counted − expected, with fractional noise (ml, g) treated as no difference. */
+export function countDelta(line: { expected: number; counted: number | null }): number {
+  if (line.counted === null) return 0;
+  const d = line.counted - line.expected;
+  return Math.abs(d) <= QTY_EPSILON ? 0 : Number(d.toFixed(6));
+}
+
+type SummaryLine = { expected: number; counted: number | null; purchasePrice: number; batchCancelled?: boolean };
+export type CountSummary = {
+  lines: number;
+  counted: number;
+  /** Lines still waiting for a number (cancelled batches are not waited for). */
+  uncounted: number;
+  matched: number;
+  shortage: { lines: number; value: number };
+  surplus: { lines: number; value: number };
+};
+
+/** Progress and the money of the differences, at purchase prices. Server and form share it. */
+export function summarizeCount(lines: SummaryLine[]): CountSummary {
+  const s: CountSummary = { lines: lines.length, counted: 0, uncounted: 0, matched: 0, shortage: { lines: 0, value: 0 }, surplus: { lines: 0, value: 0 } };
+  for (const l of lines) {
+    // A batch cancelled while the count was open has nothing left to count or post.
+    if (l.batchCancelled) continue;
+    if (l.counted === null) {
+      s.uncounted += 1;
+      continue;
+    }
+    s.counted += 1;
+    const d = countDelta(l);
+    if (d === 0) s.matched += 1;
+    else if (d < 0) {
+      s.shortage.lines += 1;
+      s.shortage.value += lineTotal(-d, l.purchasePrice);
+    } else {
+      s.surplus.lines += 1;
+      s.surplus.value += lineTotal(d, l.purchasePrice);
+    }
+  }
+  return s;
+}
+
+type PostLine = { id: string; batchId: string; expected: number; counted: number | null; itemName: string; unit: string };
+type PostBatch = { id: string; remaining: number; quantity: number; cancelledAt: string | null; lotNumber: string | null };
+export type CountAdjustment = { lineId: string; batchId: string; delta: number; next: number };
+
+/**
+ * What posting a count does to each batch: `remaining + (counted − expected)`.
+ * Every line must be counted first (a cancelled batch is skipped), and the
+ * result must stay between nothing and what arrived — if stock left a batch
+ * after it was counted and the count found less, the shelf and the ledger
+ * disagree again and that line has to be counted anew.
+ */
+export function planCountPost(lines: PostLine[], batches: Map<string, PostBatch>): { ok: true; adjustments: CountAdjustment[] } | { ok: false; message: string } {
+  const live = lines.filter((l) => {
+    const b = batches.get(l.batchId);
+    return b && !b.cancelledAt;
+  });
+  const waiting = live.filter((l) => l.counted === null).length;
+  if (waiting > 0) return { ok: false, message: `${waiting} ta partiya hali sanalmagan — hammasini sanab, keyin tasdiqlang` };
+  const adjustments: CountAdjustment[] = [];
+  for (const l of live) {
+    const d = countDelta(l);
+    if (d === 0) continue;
+    const b = batches.get(l.batchId)!;
+    const next = b.remaining + d;
+    const where = `"${l.itemName}" (${lotLabel(b.lotNumber)})`;
+    if (next < -QTY_EPSILON) {
+      return {
+        ok: false,
+        message: `${where}: sanoqdan keyin partiyadan chiqim bo'lgan, hisobda ${fmtQty(b.remaining)} ${l.unit} qoldi — ${fmtQty(-d)} ${l.unit} kamomadni qo'llab bo'lmaydi. Shu partiyani qayta sanang.`,
+      };
+    }
+    if (next > b.quantity + QTY_EPSILON) {
+      return {
+        ok: false,
+        message: `${where}: sanoqdan keyin partiyaga qaytarilgan, ${fmtQty(d)} ${l.unit} ortiqcha bilan kelgan miqdordan oshadi. Shu partiyani qayta sanang.`,
+      };
+    }
+    adjustments.push({ lineId: l.id, batchId: l.batchId, delta: d, next: Math.abs(next) <= QTY_EPSILON ? 0 : Math.min(next, b.quantity) });
+  }
+  return { ok: true, adjustments };
+}
+
+/** "Hammasi" or the chosen TZ §7.2 types, for lists and the act. */
+export const countScopeLabel = (kinds: readonly InventoryKind[] | null) =>
+  !kinds || kinds.length === 0 || kinds.length === INVENTORY_KINDS.length ? "Butun ombor" : kinds.map((k) => INVENTORY_KIND_LABELS[k]).join(", ");

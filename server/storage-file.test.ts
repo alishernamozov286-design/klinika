@@ -2128,3 +2128,103 @@ describe("orders by test group (B4.2)", () => {
     expect(hema.items.some((o) => o.id === urine.id)).toBe(false);
   });
 });
+
+describe("stock counts (B5.5)", () => {
+  const setup = async () => {
+    const dept = await storage.createDepartment({ name: "Laboratoriya", kind: "laboratoriya", description: null, isActive: true }, ACTOR);
+    const glu = await storage.createInventoryItem(
+      { name: "Glyukoza reagenti", kind: "reagent", code: null, manufacturer: null, unit: "to'plam", minStock: 0, salePrice: null, isActive: true, notes: null },
+      ACTOR,
+    );
+    const tube = await storage.createInventoryItem(
+      { name: "Probirka EDTA", kind: "tube", code: null, manufacturer: null, unit: "dona", minStock: 0, salePrice: null, isActive: true, notes: null },
+      ACTOR,
+    );
+    const r = await storage.createReceipt(
+      {
+        supplier: "MedTech",
+        documentNumber: null,
+        receivedOn: "2026-11-01",
+        notes: null,
+        lines: [
+          { itemId: glu.id, lotNumber: "G1", expiresOn: "2027-06-01", quantity: 6, purchasePrice: 100000 },
+          { itemId: tube.id, lotNumber: null, expiresOn: null, quantity: 500, purchasePrice: 1000 },
+        ],
+      },
+      ACTOR,
+    );
+    return { dept, glu, tube, r };
+  };
+  const today = "2026-11-11";
+  const issue = (deptId: string, itemId: string, quantity: number) =>
+    storage.createIssue({ kind: "department", departmentId: deptId, receivedBy: "Aziz", reason: null, issuedOn: today, notes: null, lines: [{ itemId, quantity, batchId: null }] }, today, ACTOR);
+
+  it("counts the chosen types, posts the differences, and leaves a ledger that adds up", async () => {
+    const { dept, glu, tube } = await setup();
+    const reagents = await storage.createCount({ countedOn: today, kinds: ["reagent"], notes: null }, ACTOR);
+    expect(reagents).toMatchObject({ number: 1, status: "open", lineCount: 1, countedCount: 0 });
+    // One open count at a time.
+    await expect(storage.createCount({ countedOn: today, kinds: null, notes: null }, ACTOR)).rejects.toThrow(/Ochiq inventarizatsiya bor/);
+    expect(await storage.cancelCount(reagents.id, "Turini noto'g'ri tanladik", ACTOR)).toMatchObject({ status: "cancelled", cancelReason: "Turini noto'g'ri tanladik" });
+
+    const c = await storage.createCount({ countedOn: today, kinds: null, notes: null }, ACTOR);
+    expect(c.lines.map((l) => [l.itemName, l.expected, l.counted])).toEqual([
+      ["Glyukoza reagenti", 6, null],
+      ["Probirka EDTA", 500, null],
+    ]);
+    const [g, t] = c.lines;
+    // More than arrived with the batch is a receipt, not a count.
+    await expect(storage.saveCountEntries(c.id, [{ lineId: g.id, counted: 7, note: null }], ACTOR)).rejects.toThrow(/kirim hujjati/);
+    // Counted 4 of 6 glucose; then 1 is issued — that is not a shortage.
+    let d = await storage.saveCountEntries(c.id, [{ lineId: g.id, counted: 4, note: "Bitta quti singan" }], ACTOR);
+    expect(d!.lines[0]).toMatchObject({ counted: 4, expected: 6, countedByName: ACTOR.name, note: "Bitta quti singan" });
+    await issue(dept.id, glu.id, 1);
+    // Not everything counted yet.
+    await expect(storage.postCount(c.id, ACTOR)).rejects.toThrow(/1 ta partiya hali sanalmagan/);
+    // Tubes: 120 issued before counting, then counted 380 (expected follows the ledger: 380, no difference).
+    await issue(dept.id, tube.id, 120);
+    d = await storage.saveCountEntries(c.id, [{ lineId: t.id, counted: 380, note: null }], ACTOR);
+    expect(d!.lines[1]).toMatchObject({ expected: 380, counted: 380 });
+
+    const posted = await storage.postCount(c.id, ACTOR);
+    expect(posted).toMatchObject({ status: "posted", postedByName: ACTOR.name, shortageValue: 200000, surplusValue: 0, diffCount: 1, countedCount: 2 });
+    const batches = await storage.listBatches();
+    // 6 − 1 issued − 2 short = 3.
+    expect(batches.find((b) => b.itemId === glu.id)!.remaining).toBe(3);
+    expect(batches.find((b) => b.itemId === tube.id)!.remaining).toBe(380);
+    // Final: no second post, no cancel, no more entries.
+    await expect(storage.postCount(c.id, ACTOR)).rejects.toThrow(/yopilgan/);
+    await expect(storage.cancelCount(c.id, "x", ACTOR)).rejects.toThrow(/bekor qilinmaydi/);
+    await expect(storage.saveCountEntries(c.id, [{ lineId: g.id, counted: 3, note: null }], ACTOR)).rejects.toThrow(/yopilgan/);
+    // A new count can open now.
+    expect((await storage.createCount({ countedOn: today, kinds: null, notes: null }, ACTOR)).number).toBe(3);
+    expect((await storage.listCounts()).map((x) => [x.number, x.status])).toEqual([
+      [3, "open"],
+      [2, "posted"],
+      [1, "cancelled"],
+    ]);
+  });
+
+  it("documents before a count stay closed: a counted batch's issue or receipt cannot be cancelled", async () => {
+    const { dept, glu, r } = await setup();
+    const out = await issue(dept.id, glu.id, 2);
+    const c = await storage.createCount({ countedOn: today, kinds: ["reagent"], notes: null }, ACTOR);
+    await storage.saveCountEntries(c.id, [{ lineId: c.lines[0].id, counted: 4, note: null }], ACTOR);
+    await expect(storage.cancelIssue(out.id, "xato", ACTOR)).rejects.toThrow(/inventarizatsiyada sanalgan/);
+    // Clearing the line (not counted any more) frees it again.
+    await storage.saveCountEntries(c.id, [{ lineId: c.lines[0].id, counted: null, note: null }], ACTOR);
+    expect((await storage.getCount(c.id))!.lines[0]).toMatchObject({ counted: null, countedAt: null });
+    expect(await storage.cancelIssue(out.id, "xato", ACTOR)).toMatchObject({ cancelReason: "xato" });
+    // Nothing used from the receipt any more, but its batch is counted again (all 6 there): the receipt is settled too.
+    await storage.saveCountEntries(c.id, [{ lineId: c.lines[0].id, counted: 6, note: null }], ACTOR);
+    await expect(storage.cancelReceipt(r.id, "x", ACTOR)).rejects.toThrow(/inventarizatsiyada sanalgan/);
+    // A cancelled count settles nothing.
+    await storage.cancelCount(c.id, "Qayta o'tkazamiz", ACTOR);
+    expect(await storage.cancelReceipt(r.id, "Noto'g'ri hujjat", ACTOR)).toMatchObject({ cancelReason: "Noto'g'ri hujjat" });
+  });
+
+  it("refuses an empty scope", async () => {
+    await setup();
+    await expect(storage.createCount({ countedOn: today, kinds: ["medicine"], notes: null }, ACTOR)).rejects.toThrow(/sanaladigan narsa yo'q/);
+  });
+});

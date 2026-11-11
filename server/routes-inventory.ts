@@ -1,22 +1,26 @@
 /**
- * Ombor (Bosqich 5, TZ §7). B5.1: the product catalogue.
+ * Ombor (Bosqich 5, TZ §7): catalogue, receipts, issues, stock and counts.
  *
  *   inventory.read     the catalogue (with stock on hand) and receipts
  *   inventory.manage   add, edit, deactivate, delete an item that never moved; cancel a receipt
  *   inventory.receive  record a receipt (B5.2)
  *   inventory.issue    issue to a department or write off (B5.3)
+ *   inventory.count    open, count, post or cancel a stock count (B5.5)
  *
  * Rules and labels: shared/inventory.ts.
  */
 import type { Express } from "express";
 import {
+  createCountSchema,
   createIssueSchema,
+  saveCountEntriesSchema,
   createReceiptSchema,
   insertInventoryItemSchema,
   updateInventoryItemSchema,
   voidRecordSchema,
   type InventoryBatchView,
   type InventoryItemView,
+  type StockCountView,
   type StockIssueView,
   type StockReceiptView,
 } from "@shared/schema";
@@ -26,9 +30,11 @@ import {
   INVENTORY_NAME_TAKEN,
   ISSUE_KIND_LABELS,
   WRITEOFF_REASON_LABELS,
+  countScopeLabel,
   duplicateIssueLine,
   duplicateLine,
   fmtQty,
+  summarizeCount,
   summarizeStock,
   inventoryKey,
   receiptLineProblem,
@@ -274,6 +280,102 @@ export function registerInventoryRoutes(app: Express) {
         storage.listBatches().catch((e) => emptyIfMissing(e, [] as InventoryBatchView[])),
       ]);
       res.json(summarizeStock(items, batches, today));
+    }),
+  );
+
+  // ------------------------------------------------------- counts (B5.5)
+
+  app.get(
+    "/api/inventory/counts",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const n = Number(stringParam(req.query.limit) ?? 100);
+      const limit = Number.isFinite(n) ? Math.min(Math.max(1, Math.trunc(n)), 500) : 100;
+      res.json(await storage.listCounts({ limit }).catch((e) => emptyIfMissing(e, [] as StockCountView[])));
+    }),
+  );
+
+  app.get(
+    "/api/inventory/counts/:id",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const count = await storage.getCount(req.params.id);
+      if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
+      res.json(count);
+    }),
+  );
+
+  app.post(
+    "/api/inventory/counts",
+    requirePermission("inventory.count"),
+    handle(async (req, res) => {
+      const input = createCountSchema.parse(req.body);
+      if (input.countedOn > clockNow().date) return res.status(400).json({ message: "Inventarizatsiya sanasi kelajakda bo'lishi mumkin emas" });
+      // One open count at a time, and something to count: both refused inside the storage (409).
+      const count = await storage.createCount(input, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "inventory",
+        count.id,
+        `Inventarizatsiya №${count.number} boshlandi (${countScopeLabel(count.kinds)}, ${count.countedOn}): ${count.lineCount} ta partiya sanaladi`,
+      );
+      res.status(201).json(count);
+    }),
+  );
+
+  app.put(
+    "/api/inventory/counts/:id/lines",
+    requirePermission("inventory.count"),
+    handle(async (req, res) => {
+      const { entries } = saveCountEntriesSchema.parse(req.body);
+      const count = await storage.saveCountEntries(req.params.id, entries, actorOf(req));
+      if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
+      const byId = new Map(count.lines.map((l) => [l.id, l]));
+      const what = entries
+        .map((e) => {
+          const l = byId.get(e.lineId);
+          if (!l) return null;
+          const lot = l.lotNumber ? ` LOT ${l.lotNumber}` : "";
+          return e.counted === null
+            ? `${l.itemName}${lot}: sanoq o'chirildi`
+            : `${l.itemName}${lot}: sanaldi ${fmtQty(e.counted)}, hisobda ${fmtQty(l.expected)} ${l.unit}`;
+        })
+        .filter(Boolean);
+      await audit(req, "update", "inventory", count.id, `Inventarizatsiya №${count.number}: ${what.slice(0, 20).join("; ")}${what.length > 20 ? ` va yana ${what.length - 20} ta` : ""}`);
+      res.json(count);
+    }),
+  );
+
+  app.post(
+    "/api/inventory/counts/:id/post",
+    requirePermission("inventory.count"),
+    handle(async (req, res) => {
+      // Every line counted and each result within the batch: checked on locked rows inside the storage (409).
+      const count = await storage.postCount(req.params.id, actorOf(req));
+      if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
+      const s = summarizeCount(count.lines);
+      await audit(
+        req,
+        "verify",
+        "inventory",
+        count.id,
+        `Inventarizatsiya №${count.number} tasdiqlandi: ${s.counted} ta partiya sanaldi, ${s.matched} tasi mos; ` +
+          `kamomad ${s.shortage.lines} ta (${count.shortageValue} so'm), ortiqcha ${s.surplus.lines} ta (${count.surplusValue} so'm) — qoldiq tuzatildi`,
+      );
+      res.json(count);
+    }),
+  );
+
+  app.post(
+    "/api/inventory/counts/:id/cancel",
+    requirePermission("inventory.count"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const count = await storage.cancelCount(req.params.id, reason, actorOf(req));
+      if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
+      await audit(req, "void", "inventory", count.id, `Inventarizatsiya №${count.number} bekor qilindi, qoldiq o'zgarmadi: ${reason}`);
+      res.json(count);
     }),
   );
 }

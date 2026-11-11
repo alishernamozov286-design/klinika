@@ -6,6 +6,10 @@ import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type {
   CreateIssueInput,
+  CreateCountInput,
+  CountEntryInput,
+  StockCountDetail,
+  StockCountView,
   InventoryBatchView,
   StockIssue,
   StockIssueDetail,
@@ -834,7 +838,7 @@ export interface IStorage {
   getReceipt(id: string): Promise<StockReceiptDetail | undefined>;
   /** Receipt, one batch per line and a +movement per batch, in one transaction. The route has checked the lines. */
   createReceipt(input: CreateReceiptInput, actor: Actor): Promise<StockReceiptDetail>;
-  /** Cancels a receipt whose batches are untouched (StorageConflict otherwise). */
+  /** Cancels a receipt whose batches are untouched and not counted since (StorageConflict otherwise). */
   cancelReceipt(id: string, reason: string, actor: Actor): Promise<StockReceiptDetail | undefined>;
   /** Live batches (not cancelled, something left), FEFO order. */
   listBatches(query?: { itemId?: string }): Promise<InventoryBatchView[]>;
@@ -846,8 +850,22 @@ export interface IStorage {
    * `remaining` in one transaction. A shortage is a StorageConflict naming the line.
    */
   createIssue(input: CreateIssueInput, today: string, actor: Actor): Promise<StockIssueDetail>;
-  /** Puts every quantity back on the batch it came from; once (StorageConflict after). */
+  /**
+   * Puts every quantity back on the batch it came from; once (StorageConflict after).
+   * Refused once a batch of it has been counted since (COUNTED_AFTER_DOCUMENT).
+   */
   cancelIssue(id: string, reason: string, actor: Actor): Promise<StockIssueDetail | undefined>;
+  // B5.5 inventarizatsiya (rules: shared/inventory.ts summarizeCount / planCountPost)
+  listCounts(query?: { limit?: number }): Promise<StockCountView[]>;
+  getCount(id: string): Promise<StockCountDetail | undefined>;
+  /** Opens a count over the live batches of the given types (all when null). One open count at a time. */
+  createCount(input: CreateCountInput, actor: Actor): Promise<StockCountDetail>;
+  /** Records counted quantities on an open count; each line's `expected` becomes its batch's remaining now. */
+  saveCountEntries(id: string, entries: CountEntryInput[], actor: Actor): Promise<StockCountDetail | undefined>;
+  /** Posts every difference as a `count` movement on locked batches, in one transaction. Final. */
+  postCount(id: string, actor: Actor): Promise<StockCountDetail | undefined>;
+  /** Cancels an open count; a posted one is refused (COUNT_POSTED_FINAL). */
+  cancelCount(id: string, reason: string, actor: Actor): Promise<StockCountDetail | undefined>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

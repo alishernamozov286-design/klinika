@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_UNIT, INVENTORY_KINDS, INVENTORY_KIND_LABELS, INVENTORY_KIND_SHORT, allocateFefo, duplicateIssueLine, duplicateLine, inventoryKey, isLotTracked, lineTotal, planIssue, receiptLineProblem, daysLeft, expiryState, summarizeStock } from "./inventory";
+import { DEFAULT_UNIT, INVENTORY_KINDS, INVENTORY_KIND_LABELS, INVENTORY_KIND_SHORT, allocateFefo, countDelta, countScopeLabel, countedProblem, planCountPost, summarizeCount, duplicateIssueLine, duplicateLine, inventoryKey, isLotTracked, lineTotal, planIssue, receiptLineProblem, daysLeft, expiryState, summarizeStock } from "./inventory";
 import { insertInventoryItemSchema } from "./schema";
 
 describe("inventory catalogue (B5.1, TZ §7.2)", () => {
@@ -173,5 +173,69 @@ describe("stock and expiry (B5.4)", () => {
     expect(s.soon).toEqual({ batches: 1, value: 200 });
     // 4 on the shelf, but only 2 usable against a minimum of 3.
     expect(s.lowStock).toEqual([{ id: "glu", name: "Glyukoza", unit: "to'plam", kind: "reagent", usable: 2, minStock: 3 }]);
+  });
+});
+
+describe("stock counts (B5.5)", () => {
+  const item = { name: "Glyukoza", unit: "to'plam" };
+
+  it("a batch cannot be found holding more than arrived with it", () => {
+    expect(countedProblem(3, { quantity: 5 }, item)).toBeNull();
+    expect(countedProblem(5, { quantity: 5 }, item)).toBeNull();
+    expect(countedProblem(0, { quantity: 5 }, item)).toBeNull();
+    expect(countedProblem(6, { quantity: 5, lotNumber: "L1" }, item)).toMatch(/LOT L1.*kelgan 5 to'plam dan ko'p.*kirim hujjati/);
+    expect(countedProblem(-1, { quantity: 5 }, item)).toMatch(/manfiy/);
+    expect(countedProblem(1, { quantity: 5, cancelledAt: "2026-11-01T00:00:00Z" }, item)).toMatch(/bekor qilingan/);
+  });
+
+  it("the difference ignores fractional noise", () => {
+    expect(countDelta({ expected: 5, counted: null })).toBe(0);
+    expect(countDelta({ expected: 5, counted: 3 })).toBe(-2);
+    expect(countDelta({ expected: 0.3, counted: 0.1 + 0.2 })).toBe(0);
+    expect(countDelta({ expected: 1.5, counted: 2 })).toBe(0.5);
+  });
+
+  it("summarises progress and the money of shortages and surpluses", () => {
+    const s = summarizeCount([
+      { expected: 5, counted: 5, purchasePrice: 100 },
+      { expected: 5, counted: 3, purchasePrice: 100 },
+      { expected: 2, counted: 2.5, purchasePrice: 1000 },
+      { expected: 4, counted: null, purchasePrice: 10 },
+      // A batch cancelled while open is neither waited for nor posted.
+      { expected: 4, counted: null, purchasePrice: 10, batchCancelled: true },
+    ]);
+    expect(s).toEqual({ lines: 5, counted: 3, uncounted: 1, matched: 1, shortage: { lines: 1, value: 200 }, surplus: { lines: 1, value: 500 } });
+  });
+
+  const batch = (id: string, remaining: number, quantity = 10) => ({ id, remaining, quantity, cancelledAt: null as string | null, lotNumber: id.toUpperCase() });
+  const line = (id: string, batchId: string, expected: number, counted: number | null) => ({ id, batchId, expected, counted, itemName: "Glyukoza", unit: "to'plam" });
+
+  it("posts the difference found at counting onto what is there now", () => {
+    // Counted 4 of 6; 1 more was issued after counting (remaining now 5): the shelf holds 3.
+    const r = planCountPost([line("l1", "a", 6, 4), line("l2", "b", 2, 2), line("l3", "c", 1, 1.5)], new Map([["a", batch("a", 5)], ["b", batch("b", 2)], ["c", batch("c", 1, 2)]]));
+    expect(r).toEqual({
+      ok: true,
+      adjustments: [
+        { lineId: "l1", batchId: "a", delta: -2, next: 3 },
+        { lineId: "l3", batchId: "c", delta: 0.5, next: 1.5 },
+      ],
+    });
+  });
+
+  it("refuses an uncounted line, and a difference stock moved past since counting", () => {
+    const waiting = planCountPost([line("l1", "a", 6, null), line("l2", "b", 1, 1)], new Map([["a", batch("a", 6)], ["b", batch("b", 1)]]));
+    expect(!waiting.ok && waiting.message).toMatch(/1 ta partiya hali sanalmagan/);
+    // Counted 1 of 6 (−5), then 3 were issued: 3 left, a −5 would go below nothing.
+    const gone = planCountPost([line("l1", "a", 6, 1)], new Map([["a", batch("a", 3)]]));
+    expect(!gone.ok && gone.message).toMatch(/LOT A.*sanoqdan keyin partiyadan chiqim.*qayta sanang/);
+    // A cancelled batch is skipped, counted or not.
+    const cancelled = planCountPost([line("l1", "a", 6, null)], new Map([["a", { ...batch("a", 0), cancelledAt: "2026-11-01T00:00:00Z" }]]));
+    expect(cancelled).toEqual({ ok: true, adjustments: [] });
+  });
+
+  it("names the scope", () => {
+    expect(countScopeLabel(null)).toBe("Butun ombor");
+    expect(countScopeLabel(["reagent", "control"])).toBe("Laboratoriya reagentlari, Nazorat materiallari");
+    expect(countScopeLabel([...INVENTORY_KINDS])).toBe("Butun ombor");
   });
 });
