@@ -8,6 +8,11 @@ import type {
   CreateIssueInput,
   CreateCountInput,
   CountEntryInput,
+  ConsumptionNormView,
+  ExtraConsumptionInput,
+  InsertNormInput,
+  LabConsumptionView,
+  UpdateNormInput,
   StockCountDetail,
   StockCountView,
   InventoryBatchView,
@@ -866,6 +871,30 @@ export interface IStorage {
   postCount(id: string, actor: Actor): Promise<StockCountDetail | undefined>;
   /** Cancels an open count; a posted one is refused (COUNT_POSTED_FINAL). */
   cancelCount(id: string, reason: string, actor: Actor): Promise<StockCountDetail | undefined>;
+  // B5.6 reagent consumption (rules: shared/consumption.ts)
+  listNorms(): Promise<ConsumptionNormView[]>;
+  getNorm(id: string): Promise<ConsumptionNormView | undefined>;
+  /** A draft; one draft per test and item (StorageConflict NORM_DRAFT_EXISTS). */
+  createNorm(input: InsertNormInput, actor: Actor): Promise<ConsumptionNormView>;
+  /** Drafts only (StorageConflict NORM_NOT_DRAFT). */
+  updateNorm(id: string, input: UpdateNormInput, actor: Actor): Promise<ConsumptionNormView | undefined>;
+  /** Puts a draft in force and retires the approved norm it replaces, at the same instant. */
+  approveNorm(id: string, actor: Actor): Promise<{ norm: ConsumptionNormView; replaced: ConsumptionNormView | null } | undefined>;
+  retireNorm(id: string, reason: string, actor: Actor): Promise<ConsumptionNormView | undefined>;
+  /** `from` inclusive, `to` exclusive (ISO instants); newest first. */
+  listConsumptions(query?: { from?: string; to?: string; shortOnly?: boolean; limit?: number }): Promise<LabConsumptionView[]>;
+  /**
+   * Consumes, once, every norm in force when a verified line was verified and
+   * not consumed yet — for one order, or for all (up to MAX_CONSUME_BATCH).
+   * Never refuses for want of stock: the uncovered part is a shortage.
+   */
+  consumeVerified(scope: { orderId?: string }, today: string, actor: Actor): Promise<LabConsumptionView[]>;
+  /** Real use beyond the norm, with a reason; posted like a norm consumption. */
+  recordConsumption(input: ExtraConsumptionInput, today: string, actor: Actor): Promise<LabConsumptionView>;
+  /** Covers shortages from the stock there is now (all of them when `ids` is null); returns those that moved. */
+  settleConsumptions(ids: string[] | null, today: string, actor: Actor): Promise<LabConsumptionView[]>;
+  /** Extra consumptions only; puts the stock back on its batches. */
+  cancelConsumption(id: string, reason: string, actor: Actor): Promise<LabConsumptionView | undefined>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

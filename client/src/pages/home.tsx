@@ -201,7 +201,9 @@ export default function Home() {
       {seesLab && <LabBoard onOpenOrder={setDetail} />}
       {/* The storekeeper's warnings (TZ §7.3). */}
       {seesStock && (
-        <StockHomePanel onOpen={(w) => setLocation(w === "low" ? "/inventory?tab=stock" : `/inventory?tab=stock&window=${w}`)} />
+        <StockHomePanel
+          onOpen={(w) => setLocation(w === "consumption" ? "/inventory?tab=consumption" : w === "low" ? "/inventory?tab=stock" : `/inventory?tab=stock&window=${w}`)}
+        />
       )}
 
       {/* ----------------------------------------------------------- stats */}

@@ -3,6 +3,8 @@ import type {
   StockIssue,
   StockCount,
   StockCountLineRow,
+  ConsumptionNorm,
+  LabConsumption,
   InventoryBatch,
   StockMovement,
   StockReceipt,
@@ -76,6 +78,8 @@ export type DbShape = {
   stockIssues: StockIssue[];
   stockCounts: StockCount[];
   stockCountLines: StockCountLineRow[];
+  consumptionNorms: ConsumptionNorm[];
+  labConsumptions: LabConsumption[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
   security: SecuritySettings | null;
@@ -137,6 +141,8 @@ export const emptyDb = (): DbShape => ({
   stockIssues: [],
   stockCounts: [],
   stockCountLines: [],
+  consumptionNorms: [],
+  labConsumptions: [],
   icdUzNames: {},
   security: null,
   patients: [],

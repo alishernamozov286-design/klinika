@@ -18,6 +18,8 @@ import {
   stockIssues,
   stockCounts,
   stockCountLines,
+  consumptionNorms,
+  labConsumptions,
   auditLog,
   departments,
   doctors,
@@ -148,6 +150,16 @@ import {
   planCountPost,
   planIssue,
 } from "@shared/inventory";
+import {
+  CONSUMPTION_ALREADY_CANCELLED,
+  MAX_CONSUME_BATCH,
+  NORM_ALREADY_RETIRED,
+  NORM_CONSUMPTION_FINAL,
+  NORM_DRAFT_EXISTS,
+  NORM_NOT_DRAFT,
+  planConsumptions,
+  shortOf,
+} from "@shared/consumption";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
   QC_LOOKBACK,
@@ -160,6 +172,13 @@ import {
   zScore,
 } from "@shared/qc";
 import type {
+  ConsumptionNorm,
+  ConsumptionNormView,
+  ExtraConsumptionInput,
+  InsertNormInput,
+  LabConsumption,
+  LabConsumptionView,
+  UpdateNormInput,
   CountEntryInput,
   CreateCountInput,
   StockCount,
@@ -4225,6 +4244,350 @@ export class PgStorage implements IStorage {
         .set({ status: "cancelled", cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
         .where(eq(stockCounts.id, id));
       return this.countDetail(tx as unknown as typeof db, id);
+    });
+  }
+
+  // ---------------------------------------------------------- consumption (B5.6)
+
+  private normSelect(exec: typeof db) {
+    return exec
+      .select({ n: consumptionNorms, testName: tests.name, itemName: inventoryItems.name, unit: inventoryItems.unit, itemKind: inventoryItems.kind, itemActive: inventoryItems.isActive })
+      .from(consumptionNorms)
+      .leftJoin(tests, eq(tests.id, consumptionNorms.testId))
+      .leftJoin(inventoryItems, eq(inventoryItems.id, consumptionNorms.itemId));
+  }
+
+  private mapNorm(r: {
+    n: typeof consumptionNorms.$inferSelect;
+    testName: string | null;
+    itemName: string | null;
+    unit: string | null;
+    itemKind: string | null;
+    itemActive: boolean | null;
+  }): ConsumptionNormView {
+    return {
+      ...r.n,
+      status: r.n.status as ConsumptionNorm["status"],
+      testName: r.testName ?? "—",
+      itemName: r.itemName ?? "—",
+      unit: r.unit ?? "",
+      itemKind: (r.itemKind ?? "consumable") as ConsumptionNormView["itemKind"],
+      itemActive: r.itemActive ?? false,
+    };
+  }
+
+  async listNorms(): Promise<ConsumptionNormView[]> {
+    const rows = await this.normSelect(db).orderBy(asc(tests.name), asc(inventoryItems.name), desc(consumptionNorms.createdAt));
+    return rows.map((r) => this.mapNorm(r));
+  }
+
+  async getNorm(id: string): Promise<ConsumptionNormView | undefined> {
+    const [r] = await this.normSelect(db).where(eq(consumptionNorms.id, id)).limit(1);
+    return r && this.mapNorm(r);
+  }
+
+  async createNorm(input: InsertNormInput, actor: Actor): Promise<ConsumptionNormView> {
+    try {
+      const [n] = await db
+        .insert(consumptionNorms)
+        .values({ testId: input.testId, itemId: input.itemId, quantity: input.quantity, notes: input.notes ?? null, status: "draft", createdBy: actor.id, createdByName: actor.name })
+        .returning();
+      return (await this.getNorm(n.id))!;
+    } catch (err) {
+      const e = err as { code?: string; constraint?: string };
+      if (e?.code === "23505" && e.constraint === "UQ_consumption_norms_live") throw new StorageConflict(NORM_DRAFT_EXISTS);
+      throw err;
+    }
+  }
+
+  async updateNorm(id: string, input: UpdateNormInput, actor: Actor): Promise<ConsumptionNormView | undefined> {
+    const patch: Partial<typeof consumptionNorms.$inferInsert> = { updatedAt: new Date().toISOString(), updatedBy: actor.id };
+    if (input.quantity !== undefined) patch.quantity = input.quantity;
+    if (input.notes !== undefined) patch.notes = input.notes;
+    const [n] = await db
+      .update(consumptionNorms)
+      .set(patch)
+      .where(and(eq(consumptionNorms.id, id), eq(consumptionNorms.status, "draft")))
+      .returning({ id: consumptionNorms.id });
+    if (n) return this.getNorm(id);
+    if (await this.getNorm(id)) throw new StorageConflict(NORM_NOT_DRAFT);
+    return undefined;
+  }
+
+  async approveNorm(id: string, actor: Actor): Promise<{ norm: ConsumptionNormView; replaced: ConsumptionNormView | null } | undefined> {
+    return db.transaction(async (tx) => {
+      const [draft] = await tx.select().from(consumptionNorms).where(eq(consumptionNorms.id, id)).for("update");
+      if (!draft) return undefined;
+      if (draft.status !== "draft") throw new StorageConflict(NORM_NOT_DRAFT);
+      const now = new Date().toISOString();
+      // The norm it replaces stops at the same instant the new one starts.
+      const [old] = await tx
+        .update(consumptionNorms)
+        .set({ status: "retired", retiredAt: now, retiredBy: actor.id, retiredByName: actor.name, retireReason: "Yangi norma tasdiqlandi" })
+        .where(and(eq(consumptionNorms.testId, draft.testId), eq(consumptionNorms.itemId, draft.itemId), eq(consumptionNorms.status, "approved")))
+        .returning({ id: consumptionNorms.id });
+      await tx
+        .update(consumptionNorms)
+        .set({ status: "approved", approvedAt: now, approvedBy: actor.id, approvedByName: actor.name })
+        .where(eq(consumptionNorms.id, id));
+      const exec = tx as unknown as typeof db;
+      const [n] = await this.normSelect(exec).where(eq(consumptionNorms.id, id)).limit(1);
+      const [r] = old ? await this.normSelect(exec).where(eq(consumptionNorms.id, old.id)).limit(1) : [];
+      return { norm: this.mapNorm(n), replaced: r ? this.mapNorm(r) : null };
+    });
+  }
+
+  async retireNorm(id: string, reason: string, actor: Actor): Promise<ConsumptionNormView | undefined> {
+    const [n] = await db
+      .update(consumptionNorms)
+      .set({ status: "retired", retiredAt: new Date().toISOString(), retiredBy: actor.id, retiredByName: actor.name, retireReason: reason })
+      .where(and(eq(consumptionNorms.id, id), ne(consumptionNorms.status, "retired")))
+      .returning({ id: consumptionNorms.id });
+    if (n) return this.getNorm(id);
+    if (await this.getNorm(id)) throw new StorageConflict(NORM_ALREADY_RETIRED);
+    return undefined;
+  }
+
+  private consumptionSelect(exec: typeof db) {
+    return exec
+      .select({
+        c: labConsumptions,
+        itemName: inventoryItems.name,
+        unit: inventoryItems.unit,
+        testName: tests.name,
+        orderNumber: orders.orderNumber,
+        value: sql<number>`(SELECT coalesce(sum((CASE WHEN m.quantity < 0 THEN 1 ELSE -1 END) * round((abs(m.quantity) * b.purchase_price)::numeric)), 0)::float
+                             FROM stock_movements m JOIN inventory_batches b ON b.id = m.batch_id
+                            WHERE m.consumption_id = "lab_consumptions"."id")`,
+      })
+      .from(labConsumptions)
+      .leftJoin(inventoryItems, eq(inventoryItems.id, labConsumptions.itemId))
+      .leftJoin(tests, eq(tests.id, labConsumptions.testId))
+      .leftJoin(orders, eq(orders.id, labConsumptions.orderId));
+  }
+
+  private mapConsumption(r: {
+    c: typeof labConsumptions.$inferSelect;
+    itemName: string | null;
+    unit: string | null;
+    testName: string | null;
+    orderNumber: number | null;
+    value: number;
+  }): LabConsumptionView {
+    return {
+      ...r.c,
+      kind: r.c.kind as LabConsumption["kind"],
+      reason: r.c.reason as LabConsumption["reason"],
+      itemName: r.itemName ?? "—",
+      unit: r.unit ?? "",
+      testName: r.testName ?? null,
+      orderNumber: r.orderNumber ?? null,
+      value: Number(r.value),
+    };
+  }
+
+  async listConsumptions(query: { from?: string; to?: string; shortOnly?: boolean; limit?: number } = {}): Promise<LabConsumptionView[]> {
+    const where = [];
+    if (query.from) where.push(gte(labConsumptions.createdAt, query.from));
+    if (query.to) where.push(sql`${labConsumptions.createdAt} < ${query.to}`);
+    if (query.shortOnly) where.push(isNull(labConsumptions.cancelledAt), sql`${labConsumptions.quantity} - ${labConsumptions.posted} > ${QTY_EPSILON}`);
+    const rows = await this.consumptionSelect(db)
+      .where(where.length ? and(...where) : undefined)
+      .orderBy(desc(labConsumptions.createdAt))
+      .limit(query.limit ?? 5000);
+    return rows.map((r) => this.mapConsumption(r));
+  }
+
+  private async consumptionsByIds(exec: typeof db, ids: string[]): Promise<LabConsumptionView[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.consumptionSelect(exec).where(inArray(labConsumptions.id, ids)).orderBy(asc(labConsumptions.createdAt));
+    return rows.map((r) => this.mapConsumption(r));
+  }
+
+  /**
+   * Takes what the shelf has for each consumption (FEFO, no expired batch) on
+   * batches locked by the caller, writes the movements, and moves `remaining`
+   * and `posted` with one statement each.
+   */
+  private async postConsumptions(
+    tx: typeof db,
+    entries: { id: string; itemId: string; need: number; posted: number }[],
+    batches: (typeof inventoryBatches.$inferSelect)[],
+    today: string,
+    actor: Actor,
+  ): Promise<void> {
+    const plan = planConsumptions(entries.map((e) => ({ key: e.id, itemId: e.itemId, quantity: e.need })), batches, today);
+    const moves = plan.flatMap((p) => p.allocations.map((a) => ({ ...a, consumptionId: p.key, itemId: entries.find((e) => e.id === p.key)!.itemId })));
+    if (moves.length === 0) return;
+    await tx.insert(stockMovements).values(
+      moves.map((m) => ({
+        itemId: m.itemId,
+        batchId: m.batchId,
+        kind: "consumption",
+        quantity: -m.quantity,
+        consumptionId: m.consumptionId,
+        createdBy: actor.id,
+        createdByName: actor.name,
+      })),
+    );
+    const left = new Map(batches.map((b) => [b.id, b.remaining]));
+    for (const m of moves) left.set(m.batchId, (left.get(m.batchId) ?? 0) - m.quantity);
+    const remaining = Array.from(new Set(moves.map((m) => m.batchId))).map((id) => {
+      const r = left.get(id)!;
+      return { id, remaining: r < QTY_EPSILON ? 0 : r };
+    });
+    await tx.execute(sql`
+      UPDATE inventory_batches AS b SET remaining = v.remaining
+        FROM jsonb_to_recordset(${JSON.stringify(remaining)}::jsonb) AS v(id varchar, remaining double precision)
+       WHERE b.id = v.id`);
+    const posted = plan
+      .filter((p) => p.posted > 0)
+      .map((p) => ({ id: p.key, posted: Number((entries.find((e) => e.id === p.key)!.posted + p.posted).toFixed(6)) }));
+    await tx.execute(sql`
+      UPDATE lab_consumptions AS c SET posted = v.posted
+        FROM jsonb_to_recordset(${JSON.stringify(posted)}::jsonb) AS v(id varchar, posted double precision)
+       WHERE c.id = v.id`);
+  }
+
+  private async lockLiveBatches(tx: typeof db, itemIds: string[]) {
+    if (itemIds.length === 0) return [];
+    return tx
+      .select()
+      .from(inventoryBatches)
+      .where(and(inArray(inventoryBatches.itemId, Array.from(new Set(itemIds))), isNull(inventoryBatches.cancelledAt)))
+      .orderBy(asc(inventoryBatches.id))
+      .for("update");
+  }
+
+  async consumeVerified(scope: { orderId?: string }, today: string, actor: Actor): Promise<LabConsumptionView[]> {
+    return db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      const orderFilter = scope.orderId ? sql`AND ot.order_id = ${scope.orderId}` : sql``;
+      // Each verified line meets the norms in force at its verification.
+      const found = await tx.execute(sql`
+        SELECT ot.id AS order_test_id, ot.order_id, ot.test_id, n.id AS norm_id, n.item_id, n.quantity
+          FROM order_tests ot
+          JOIN consumption_norms n
+            ON n.test_id = ot.test_id
+           AND n.approved_at IS NOT NULL AND n.approved_at <= ot.verified_at
+           AND (n.retired_at IS NULL OR n.retired_at > ot.verified_at)
+         WHERE ot.verified_at IS NOT NULL ${orderFilter}
+           AND NOT EXISTS (SELECT 1 FROM lab_consumptions c
+                            WHERE c.order_test_id = ot.id AND c.item_id = n.item_id AND c.kind = 'norm')
+         ORDER BY ot.verified_at
+         LIMIT ${MAX_CONSUME_BATCH}`);
+      const candidates = found.rows as { order_test_id: string; order_id: string; test_id: string; norm_id: string; item_id: string; quantity: number }[];
+      if (candidates.length === 0) return [];
+      const batches = await this.lockLiveBatches(exec, candidates.map((c) => c.item_id));
+      // A verification and a reconcile racing: the index lets one row through, the other is skipped.
+      const inserted = await tx
+        .insert(labConsumptions)
+        .values(
+          candidates.map((c) => ({
+            kind: "norm",
+            orderId: c.order_id,
+            orderTestId: c.order_test_id,
+            testId: c.test_id,
+            itemId: c.item_id,
+            normId: c.norm_id,
+            quantity: Number(c.quantity),
+            posted: 0,
+            createdBy: actor.id,
+            createdByName: actor.name,
+          })),
+        )
+        .onConflictDoNothing({ target: [labConsumptions.orderTestId, labConsumptions.itemId], where: sql`kind = 'norm'` })
+        .returning();
+      await this.postConsumptions(exec, inserted.map((c) => ({ id: c.id, itemId: c.itemId, need: c.quantity, posted: 0 })), batches, today, actor);
+      return this.consumptionsByIds(exec, inserted.map((c) => c.id));
+    });
+  }
+
+  async recordConsumption(input: ExtraConsumptionInput, today: string, actor: Actor): Promise<LabConsumptionView> {
+    return db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      const batches = await this.lockLiveBatches(exec, [input.itemId]);
+      const [c] = await tx
+        .insert(labConsumptions)
+        .values({
+          kind: "extra",
+          testId: input.testId,
+          itemId: input.itemId,
+          quantity: input.quantity,
+          posted: 0,
+          reason: input.reason,
+          note: input.note ?? null,
+          createdBy: actor.id,
+          createdByName: actor.name,
+        })
+        .returning();
+      await this.postConsumptions(exec, [{ id: c.id, itemId: c.itemId, need: c.quantity, posted: 0 }], batches, today, actor);
+      return (await this.consumptionsByIds(exec, [c.id]))[0];
+    });
+  }
+
+  async settleConsumptions(ids: string[] | null, today: string, actor: Actor): Promise<LabConsumptionView[]> {
+    return db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      const where = [isNull(labConsumptions.cancelledAt), sql`${labConsumptions.quantity} - ${labConsumptions.posted} > ${QTY_EPSILON}`];
+      if (ids) where.push(inArray(labConsumptions.id, ids.length ? ids : ["-"]));
+      const short = await tx.select().from(labConsumptions).where(and(...where)).orderBy(asc(labConsumptions.createdAt)).limit(MAX_CONSUME_BATCH).for("update");
+      if (short.length === 0) return [];
+      const batches = await this.lockLiveBatches(exec, short.map((c) => c.itemId));
+      await this.postConsumptions(exec, short.map((c) => ({ id: c.id, itemId: c.itemId, need: shortOf(c), posted: c.posted })), batches, today, actor);
+      const after = await this.consumptionsByIds(exec, short.map((c) => c.id));
+      const moved = after.filter((a) => a.posted > short.find((s) => s.id === a.id)!.posted + QTY_EPSILON);
+      if (moved.length) {
+        await tx
+          .update(labConsumptions)
+          .set({ settledAt: new Date().toISOString(), settledByName: actor.name })
+          .where(inArray(labConsumptions.id, moved.map((m) => m.id)));
+      }
+      return this.consumptionsByIds(exec, moved.map((m) => m.id));
+    });
+  }
+
+  async cancelConsumption(id: string, reason: string, actor: Actor): Promise<LabConsumptionView | undefined> {
+    return db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      const [c] = await tx.select().from(labConsumptions).where(eq(labConsumptions.id, id)).for("update");
+      if (!c) return undefined;
+      if (c.kind !== "extra") throw new StorageConflict(NORM_CONSUMPTION_FINAL);
+      if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
+      const out = await tx.select().from(stockMovements).where(and(eq(stockMovements.consumptionId, id), eq(stockMovements.kind, "consumption")));
+      if (await this.countedSince(exec, out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+      if (out.length) {
+        const batches = await tx
+          .select()
+          .from(inventoryBatches)
+          .where(inArray(inventoryBatches.id, Array.from(new Set(out.map((m) => m.batchId)))))
+          .orderBy(asc(inventoryBatches.id))
+          .for("update");
+        const byId = new Map(batches.map((b) => [b.id, b]));
+        for (const m of out) {
+          const b = byId.get(m.batchId);
+          if (!b) continue;
+          b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+          await tx.update(inventoryBatches).set({ remaining: b.remaining }).where(eq(inventoryBatches.id, b.id));
+        }
+        await tx.insert(stockMovements).values(
+          out.map((m) => ({
+            itemId: m.itemId,
+            batchId: m.batchId,
+            kind: "consumption_cancel",
+            quantity: -m.quantity,
+            consumptionId: id,
+            note: reason,
+            createdBy: actor.id,
+            createdByName: actor.name,
+          })),
+        );
+      }
+      await tx
+        .update(labConsumptions)
+        .set({ cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
+        .where(eq(labConsumptions.id, id));
+      return (await this.consumptionsByIds(exec, [id]))[0];
     });
   }
 

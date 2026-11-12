@@ -1,6 +1,7 @@
 /**
  * Ombor (Bosqich 5, TZ §7): the product catalogue with stock on hand (B5.1),
- * receipts (B5.2), issues (B5.3), stock and expiry (B5.4) and counts (B5.5).
+ * receipts (B5.2), issues (B5.3), stock and expiry (B5.4), counts (B5.5)
+ * and lab reagent consumption (B5.6).
  * Rules: shared/inventory.ts.
  */
 import { useEffect, useMemo, useState, type ComponentType } from "react";
@@ -47,7 +48,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Receipts } from "@/components/inventory/receipts";
 import { Issues } from "@/components/inventory/issues";
 import { Counts } from "@/components/inventory/counts";
-import { StockAlertsBanner, StockView, type StockWindow } from "@/components/inventory/stock";
+import { Consumption } from "@/components/inventory/consumption";
+import { StockAlertsBanner, StockView, type StockAlertTarget, type StockWindow } from "@/components/inventory/stock";
 import type { StockAlerts } from "@shared/inventory";
 import { EmptyState, Money, PageHeader, StatCard, TableSkeleton } from "@/components/ui-kit";
 import { MoneyInput, SearchInput } from "@/components/inputs";
@@ -95,7 +97,8 @@ const EXPORT_COLUMNS: ExportColumn<InventoryItemView>[] = [
   { header: "Holat", value: (i) => (i.isActive ? "Faol" : "Faolsiz"), width: 9 },
 ];
 
-type InventoryTab = "items" | "stock" | "receipts" | "issues" | "counts";
+type InventoryTab = "items" | "stock" | "receipts" | "issues" | "counts" | "consumption";
+const TABS: readonly InventoryTab[] = ["items", "stock", "receipts", "issues", "counts", "consumption"];
 
 export default function Inventory() {
   const { can } = useAuth();
@@ -109,13 +112,14 @@ export default function Inventory() {
   const openCount = stockCounts.find((c) => c.status === "open");
   const [tab, setTab] = useState<InventoryTab>(() => {
     const asked = new URLSearchParams(window.location.search).get("tab");
-    return asked === "receipts" || asked === "issues" || asked === "stock" || asked === "counts" ? asked : "items";
+    return TABS.includes(asked as InventoryTab) ? (asked as InventoryTab) : "items";
   });
   const [stockWindow, setStockWindow] = useState<StockWindow>(() => {
     const w = new URLSearchParams(window.location.search).get("window");
     return w === "expired" || w === "soon" || w === "watch" ? w : "all";
   });
-  const openStock = (w: StockWindow | "low") => {
+  const openStock = (w: StockAlertTarget) => {
+    if (w === "consumption") return setTab("consumption");
     setStockWindow(w === "low" ? "all" : w);
     setTab("stock");
     if (w === "low") setTimeout(() => document.getElementById("low-stock")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
@@ -252,7 +256,13 @@ export default function Inventory() {
               </span>
             )}
           </TabsTrigger>
+          <TabsTrigger value="consumption" data-testid="tab-inventory-consumption">
+            Reagent sarfi
+          </TabsTrigger>
         </TabsList>
+        <TabsContent value="consumption" className="mt-4">
+          <Consumption items={items} />
+        </TabsContent>
         <TabsContent value="counts" className="mt-4">
           <Counts />
         </TabsContent>

@@ -126,7 +126,7 @@ export function duplicateLine(lines: { itemId: string; lotNumber?: string | null
   return null;
 }
 
-export const MOVEMENT_KINDS = ["receipt", "receipt_cancel", "issue", "writeoff", "issue_cancel", "count"] as const;
+export const MOVEMENT_KINDS = ["receipt", "receipt_cancel", "issue", "writeoff", "issue_cancel", "count", "consumption", "consumption_cancel"] as const;
 export type MovementKind = (typeof MOVEMENT_KINDS)[number];
 export const MOVEMENT_KIND_LABELS: Record<MovementKind, string> = {
   receipt: "Kirim",
@@ -135,6 +135,8 @@ export const MOVEMENT_KIND_LABELS: Record<MovementKind, string> = {
   writeoff: "Hisobdan chiqarildi",
   issue_cancel: "Chiqim bekor qilindi",
   count: "Inventarizatsiya tuzatishi",
+  consumption: "Laboratoriya sarfi",
+  consumption_cancel: "Sarf bekor qilindi",
 };
 
 export const ITEM_HAS_STOCK_HISTORY = "Bu mahsulot bo'yicha kirim yoki chiqim bor, shuning uchun o'chirilmaydi. Uni faolsizlantiring.";
@@ -324,6 +326,8 @@ export type StockAlerts = {
   watch: { batches: number };
   /** Active items with a minimum whose usable (unexpired) stock is at or below it. */
   lowStock: LowStockItem[];
+  /** B5.6: lab consumptions the shelf could not cover (filled in by the route). */
+  consumptionShort: number;
 };
 
 /**
@@ -332,7 +336,7 @@ export type StockAlerts = {
  * cover tomorrow's tests.
  */
 export function summarizeStock(items: StockItem[], batches: StockBatch[], today: string): StockAlerts {
-  const out: StockAlerts = { date: today, value: 0, expired: { batches: 0, value: 0 }, soon: { batches: 0, value: 0 }, watch: { batches: 0 }, lowStock: [] };
+  const out: StockAlerts = { date: today, value: 0, expired: { batches: 0, value: 0 }, soon: { batches: 0, value: 0 }, watch: { batches: 0 }, lowStock: [], consumptionShort: 0 };
   const usable = new Map<string, number>();
   for (const b of batches) {
     if (b.remaining <= QTY_EPSILON) continue;

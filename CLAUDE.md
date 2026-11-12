@@ -48,6 +48,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/icd10.ts` + `data/icd10/`: MKB-10 katalogini o'qish, kod normallash, o'zbekcha nomlar importi (B3.4).
 - `server/result-delivery.ts`: tasdiqlangan natijani yo'llagan shifokorga yetkazish (B3.9).
 - `shared/inventory.ts`: ombor mahsulot turlari (TZ §7.2), birliklar, nom qoidalari, FEFO, muddat ogohlantirishlari, inventarizatsiya qoidalari (B5). `server/routes-inventory.ts`: ombor API. `client/src/components/inventory/`: Ombor sahifasi tablari.
+- `shared/consumption.ts`: reagent sarfi qoidalari — norma qachon amalda, FEFO bo'yicha qisman olish, yetishmovchilik, hisobot (B5.6). `server/routes-consumption.ts`: normalar, sarf jurnali, qayta hisoblash API. `server/reagent-consumption.ts`: natija tasdiqlanganda sarfni yozish (hech qachon xato bermaydi).
 - `shared/qc.ts`: sifat nazorati qoidalari — Westgard, z-score, EQA bahosi, muddatlar (B4.8). `server/routes-qc.ts`: QC API. `client/src/components/qc/`: Levey–Jennings kartasi va QC panellari.
 - `shared/lab-devices.ts`: analizatorlar yorliqlari va qoidalari, TZ §6.4 ro'yxati (B4.9). `server/routes-lab.ts`: analizatorlar va xatolar jurnali API.
 - `shared/branding.ts`: klinika logotipini tekshirish qoidalari (B4.7).
@@ -104,7 +105,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-11. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 48.5 → ≈64%**.
+> Holat 2026-11-12. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 49.5 → ≈65%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -293,7 +294,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B4.10** Analizator integratsiyasi (`§6.4`): import API + lokal ko‘prik (D-4), namuna ID bo‘yicha moslashtirish, avtotekshiruv, takroriy natija nazorati, operator tasdig‘i. Protokol bo‘lmasa qo‘lda kiritish qoladi.
 - [x] **B4.11** Natijani bemorga elektron yetkazish (`§1`): Telegram bot.
 
-### Bosqich 5: Ombor (`§7`, `§15.5`) 71%
+### Bosqich 5: Ombor (`§7`, `§15.5`) 86%
 
 - [x] **B5.1** Mahsulotlar katalogi (`§7.2`, `inventory_items`): 8 tur, o‘lchov birligi, minimal qoldiq.
   - `inventory_items`: nomi, turi (TZ §7.2 dagi 8 tur: reagentlar, kalibratorlar, nazorat materiallari, probirkalar, shpritslar, sarf materiallari, dori vositalari, dezinfeksiya vositalari), artikul (ixtiyoriy), ishlab chiqaruvchi, o'lchov birligi (erkin, takliflar bilan; turga qarab standart taklif), minimal qoldiq (kasr ham, manfiy emas), sotuv yoki hisobdan chiqarish narxi (TZ §7.3, butun so'm, ixtiyoriy), faol, izoh, §10 ustunlari. Nom va artikul katta-kichik harf va bo'shliqqa qaramay takrorlanmaydi: route tekshiradi, Postgres'da `UQ_inventory_items_name` / `_code` oxirgi himoya (poygada ham 409). Qoidalar `shared/inventory.ts`.
@@ -335,7 +336,16 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - UI: Ombor → "Inventarizatsiya" tabi (ochiq sanoq tab yorlig'ida "12/40" bo'lib ko'rinadi, `?tab=counts`). Boshlash dialogi (sana, butun ombor yoki turlar, nechta partiya sanalishi oldindan). Ochiq sanoq: jarayon, mos, kamomad va ortiqcha (so'mda, jonli), qidiruv, "Sanalmagan" / "Farqli" filtrlari; har bir qator kiritilganda darhol saqlanadi, Enter keyingi qatorga o'tadi, "hisobdagidek" tugmasi, sanoqdan keyingi harakat alohida belgi bilan. Tasdiqlash oynasi (xulosa, sanalmaganlar bo'lsa yopiq). Chop etiladigan **inventarizatsiya dalolatnomasi** (qoralama yoki tasdiqlangan, "faqat farqlar", komissiya imzolari). Telefon o'lchamiga moslangan.
   - Migratsiya: `npm run db:counts` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart:** har bir harakat yozuvi `count_id` ni nomlaydi, kirim va chiqimni bekor qilish sanoq qatorlarini o'qiydi. Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi (migratsiya ikki marta, unique va CHECK cheklovlari, `FOR UPDATE OF`, jsonb orqali saqlash, ro'yxat va tafsilot so'rovlari, tasdiqlash oqimi, daftar = qoldiq, ruxsat bir marta qo'shiladi; 22 tekshiruv), so'ng bajarildi (2026-11-12): 2 jadval, ustun, indekslar, CHECK'lar, omborchiga ruxsat; qayta ishga tushirish hech narsani o'zgartirmadi.
   - Testlar: `shared/inventory.test.ts` (+6), `storage-file.test.ts` (3), brauzerda omborchi va rahbar yo'li (52 tekshiruv: sanoq, xato qator, Enter bilan o'tish, sanoq paytidagi chiqim, dalolatnoma, tasdiqlash, bekor qilish, ruxsatlar; telefon o'lchami alohida).
-- [ ] **B5.6** Reagent sarfini avtomatik hisoblash (`§7.3`, `§11` Lab→Ombor): tahlil uchun tasdiqlangan sarf normasi bo‘yicha (normani tahlil katalogida belgilash ham shu yerda, B4.6 dan ko'chirildi), real sarfni tuzatish imkoni bilan.
+- [x] **B5.6** Reagent sarfini avtomatik hisoblash (`§7.3`, `§11` Lab→Ombor): tahlil uchun tasdiqlangan sarf normasi bo‘yicha (normani tahlil katalogida belgilash ham shu yerda, B4.6 dan ko'chirildi), real sarfni tuzatish imkoni bilan.
+  - **Sarf normasi** (`consumption_norms`): tahlil + ombor mahsuloti (reagent, kalibrator, nazorat materiali, probirka, shprits, sarf materiali, dezinfeksiya) + bitta tahlilga miqdor, mahsulot birligida. Taklif (`draft`) → lab mudiri tasdiqlaydi (`approved`) → faqat shundan keyin ombordan chiqadi. Qiymatni o'zgartirish yangi taklif: amaldagisi yangisi tasdiqlanguncha ishlayveradi, tasdiqlanganda o'sha lahzada almashadi (eskisi "Yangi norma tasdiqlandi" sababi bilan tarixda). Bekor qilish sabab bilan. O'chirilmaydi. Bir tahlil+mahsulotga bitta taklif va bitta amaldagi norma (`UQ_consumption_norms_live`), holat izchilligi CHECK bilan.
+  - **Avtomatik sarf** (`lab_consumptions`, `kind = norm`): natija qatori tasdiqlanganda (B4.5) tahlil bajarilgan hisoblanadi va **tasdiqlash paytida amalda bo'lgan** normalar bo'yicha bir marta sarflanadi (`UQ_lab_consumptions_norm`: qator + mahsulot; ikki yo'l poygada ham bitta yozuv, `ON CONFLICT DO NOTHING`). Norma tasdiqlanishidan oldingi natijalar orqaga qarab sarflanmaydi. Mahsulot FEFO bo'yicha, **muddati o'tgan partiyadan olinmaydi**; har bir partiyadan olingan miqdor `consumption` harakati bo'lib qoldiq daftariga tushadi (`stock_movements.consumption_id`).
+  - **Ombor natijani to'xtatmaydi:** yaroqli qoldiq yetmasa natija baribir tasdiqlanadi, yetmagan qismi **yetishmovchilik** bo'lib qoladi (`posted < quantity`). Ombor sahifasi tepasidagi ogohlantirishda va omborchining bosh sahifasida ko'rinadi. Kirimdan keyin "Qayta hisoblash" (`POST /api/consumption/reconcile`, omborchi yoki lab mudiri) uni yangi partiyadan yopadi. Shu tugma tasdiqlash ilgagi o'tkazib yuborgan sarflarni ham yozadi (ilgak xato bersa faqat logga yoziladi, tasdiqlash buzilmaydi).
+  - **Real sarf** (`kind = extra`, TZ "real ishlatilgan miqdor"): takroriy o'lchov, kalibratsiya, sifat nazorati, to'kilgan/yaroqsiz bo'lgan, boshqa (izoh majburiy); ixtiyoriy tahlilga bog'lanadi. Laborant yozadi. Noto'g'ri yozilgani lab mudiri tomonidan sabab bilan bekor qilinadi, mahsulot o'z partiyasiga qaytadi (keyin sanalgan bo'lsa rad etiladi, B5.5 qoidasi). Norma bo'yicha sarf bekor qilinmaydi: tahlil bajarilgan.
+  - **Hisobot** (TZ §13 "reagent sarfi"): davr bo'yicha, mahsulotlar kesimida (norma bo'yicha, qo'shimcha, jami, yetishmagan, qiymat) va tahlillar kesimida (bajarilgan soni, reagent qiymati, 1 tahlil tannarxi). Qiymat haqiqatda olingan partiyalarning xarid narxida. Excel/PDF eksport.
+  - Ruxsatlar: `consumption.norms` (omborchi, lab mudiri — taklif), `consumption.approve` (lab mudiri, `sensitive` — tasdiqlash, qo'shimcha sarfni bekor qilish), `consumption.record` (laborant, lab mudiri). Laborantga `inventory.read` ham berildi: reagent qoldig'ini ko'radi. Audit: taklif, tahrir, tasdiqlash (o'zi taklif qilganini tasdiqlasa belgilanadi), bekor qilish, har bir avtomatik sarf (buyurtma bo'yicha), qo'shimcha sarf, qayta hisoblash.
+  - UI: Ombor → "Reagent sarfi" tabi (`?tab=consumption`): Jurnal (ko'rsatkichlar, yetishmovchilik banneri, sarflar ro'yxati, qo'shimcha sarf dialogi), Normalar (tahlillar bo'yicha kartalar, tasdiqlash kutayotganlar soni tabda, "1 to'plam ≈ N ta tahlil" maslahati), Hisobot. Normalar tahlillar katalogi ekranida emas, shu yerda boshqariladi: omborchi va lab mudiri uchrashadigan joy. Telefon o'lchamiga moslangan.
+  - Migratsiya: `npm run db:consumption` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart:** har bir harakat yozuvi `consumption_id` ni nomlaydi. Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi (migratsiya ikki marta, unique va CHECK cheklovlari, real tasdiqlangan qator bilan nomzodlar so'rovi, `ON CONFLICT` qisman indeksda, qisman olish, jsonb yangilashlar, jurnal qiymati, daftar = qoldiq, ruxsatlar bir marta; 21 tekshiruv).
+  - Testlar: `shared/consumption.test.ts` (7), `storage-file.test.ts` (3), brauzerda omborchi → lab mudiri → laborant yo'li (46 tekshiruv: taklif, tasdiqlash, qoralama normada sarf yo'qligi, avtomatik sarf, yetishmovchilik va uni yopish, qo'shimcha sarf, bekor qilish, hisobot, ruxsatlar, telefon).
 - [ ] **B5.7** Ombor bosh sahifasi va hisobotlari (`§7.1`).
 
 ### Bosqich 6: Statsionar (`§8`, `§15.6`) 0%
@@ -363,7 +373,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 ### Hisobotlar va rahbariyat paneli (`§13`) 32%
 
 - [~] **R.1** Rahbariyat boshqaruv paneli: hozirgi bosh sahifa statistikasi asos.
-- [~] **R.2** Kunlik bemorlar soni · [ ] shifokorlar faoliyati · [~] lab tahlillari soni · [ ] eng ko‘p buyuriladigan tahlillar · [ ] reagent sarfi · [x] ombor qoldig‘i · [ ] statsionar bandligi · [x] kunlik/oylik tushum · [ ] xizmatlar daromadi · [~] qarzdorlik · [x] xarajatlar.
+- [~] **R.2** Kunlik bemorlar soni · [ ] shifokorlar faoliyati · [~] lab tahlillari soni · [ ] eng ko‘p buyuriladigan tahlillar · [x] reagent sarfi · [x] ombor qoldig‘i · [ ] statsionar bandligi · [x] kunlik/oylik tushum · [ ] xizmatlar daromadi · [~] qarzdorlik · [x] xarajatlar.
 - [~] **R.3** PDF va Excel eksport: bor. Har yangi hisobotga qo‘shiladi.
 
 ### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 11%
@@ -388,7 +398,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 | 16.2 | Registraturadan shifokorga buyurtma | B2.7, B2.8, B3.1 | ✅ |
 | 16.3 | Shifokordan laboratoriyaga yo‘llanma | B3.5 | ✅ |
 | 16.4 | Tasdiqlangan natija shifokorga yetadi | B4.5, B3.9 | ✅ |
-| 16.5 | Ombor kirim/chiqim to‘g‘ri hisoblanadi | B5.2–B5.6 | 🟡 (kirim, chiqim, FEFO, inventarizatsiya, daftar = qoldiq; reagent sarfi qoldi) |
+| 16.5 | Ombor kirim/chiqim to‘g‘ri hisoblanadi | B5.2–B5.6 | ✅ (kirim, chiqim, FEFO, inventarizatsiya, reagent sarfi; har bir harakat daftarda, daftar = qoldiq) |
 | 16.6 | Statsionar bemorining elektron tarixi | B6.* | ❌ |
 | 16.7 | Barcha xizmatlar kassa bilan bog‘langan | B2.6, B7.1 | 🟡 |
 | 16.8 | Xodimlar vakolatlari to‘g‘ri ishlaydi | B1.4, B8.7 | 🟡 |
@@ -419,6 +429,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-12 · B5.6 · Reagent sarfi: tahlil bo'yicha sarf normasi (taklif → lab mudiri tasdig'i → tarix), natija tasdiqlanganda amaldagi norma bo'yicha bir martalik avtomatik sarf (FEFO, muddati o'tganisiz), ombor natijani to'xtatmaydi — yetishmovchilik ogohlantirish bo'lib qoladi va kirimdan keyin yopiladi, sababli qo'shimcha sarf, davr hisoboti (mahsulot va tahlil kesimida, tahlil tannarxi). 16.5 yopildi.
 - 2026-11-11 · B5.5 · Inventarizatsiya: butun ombor yoki turlar bo'yicha partiyama-partiya sanoq, har qator darhol saqlanadi, sanoq paytida ish to'xtamaydi (farq sanalgan paytdagi hisobga nisbatan), tasdiqlashda farq qoldiq daftariga tuzatish bo'lib yoziladi, chop etiladigan dalolatnoma. Yo'l-yo'lakay: partiyasi keyin sanalgan kirim yoki chiqimni bekor qilib bo'lmaydi.
 - 2026-11-11 · B5.4 · Qoldiq va muddat: partiyalar bo'yicha qoldiq va kelib chiqishi, muddat holati va filtrlari, ombor qiymati, yaroqli qoldiq bo'yicha "kam qolgan", ogohlantirish banneri va omborchining bosh sahifa paneli, muddati o'tgan partiyani bir bosishda hisobdan chiqarish, eksport. Yo'l-yo'lakay: katalogdagi "kam qolgan" endi ogohlantirish bilan bir xil qoida, omborchiga "bo'lim tayyorlanmoqda" yozuvi chiqmaydi.
 - 2026-11-10 · B5.3 · Chiqim: bo'limga berish (kim oldi) va hisobdan chiqarish (sabab), FEFO taqsimlash (muddati o'tgan partiya bo'limga berilmaydi), aniq partiya tanlash, saqlashdan oldin taqsimot ko'rinishi, bekor qilishda partiyalarga qaytarish, chop etiladigan hujjat.

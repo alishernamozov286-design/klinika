@@ -104,7 +104,26 @@ import {
   planCountPost,
   planIssue,
 } from "@shared/inventory";
+import {
+  CONSUMPTION_ALREADY_CANCELLED,
+  MAX_CONSUME_BATCH,
+  NORM_ALREADY_RETIRED,
+  NORM_CONSUMPTION_FINAL,
+  NORM_DRAFT_EXISTS,
+  NORM_NOT_DRAFT,
+  movementValue,
+  normInForce,
+  planConsumptions,
+  shortOf,
+} from "@shared/consumption";
 import type {
+  ConsumptionNorm,
+  ConsumptionNormView,
+  ExtraConsumptionInput,
+  InsertNormInput,
+  LabConsumption,
+  LabConsumptionView,
+  UpdateNormInput,
   CountEntryInput,
   CreateCountInput,
   StockCount,
@@ -3092,6 +3111,7 @@ export class FileStorage implements IStorage {
         receiptId: receipt.id,
         issueId: null,
         countId: null,
+        consumptionId: null,
         note: null,
         createdAt: now,
         createdBy: actor.id,
@@ -3120,6 +3140,7 @@ export class FileStorage implements IStorage {
         receiptId: id,
         issueId: null,
         countId: null,
+        consumptionId: null,
         note: reason,
         createdAt: now,
         createdBy: actor.id,
@@ -3241,6 +3262,7 @@ export class FileStorage implements IStorage {
         receiptId: null,
         issueId: issue.id,
         countId: null,
+        consumptionId: null,
         note: null,
         createdAt: now,
         createdBy: actor.id,
@@ -3270,6 +3292,7 @@ export class FileStorage implements IStorage {
         receiptId: null,
         issueId: id,
         countId: null,
+        consumptionId: null,
         note: reason,
         createdAt: now,
         createdBy: actor.id,
@@ -3460,6 +3483,7 @@ export class FileStorage implements IStorage {
         receiptId: null,
         issueId: null,
         countId: id,
+        consumptionId: null,
         note: `Inventarizatsiya №${count.number}`,
         createdAt: now,
         createdBy: actor.id,
@@ -3479,6 +3503,265 @@ export class FileStorage implements IStorage {
     Object.assign(count, { status: "cancelled", cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
     await this.persist();
     return this.countDetail(count);
+  }
+
+  // ---------------------------------------------------------- consumption (B5.6)
+
+  private normView(n: ConsumptionNorm): ConsumptionNormView {
+    const t = this.db.tests.find((x) => x.id === n.testId);
+    const it = this.db.inventoryItems.find((x) => x.id === n.itemId);
+    return { ...n, testName: t?.name ?? "—", itemName: it?.name ?? "—", unit: it?.unit ?? "", itemKind: it?.kind ?? "consumable", itemActive: it?.isActive ?? false };
+  }
+
+  async listNorms(): Promise<ConsumptionNormView[]> {
+    return this.db.consumptionNorms
+      .map((n) => this.normView(n))
+      .sort((a, b) => a.testName.localeCompare(b.testName) || a.itemName.localeCompare(b.itemName) || b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getNorm(id: string): Promise<ConsumptionNormView | undefined> {
+    const n = this.db.consumptionNorms.find((x) => x.id === id);
+    return n && this.normView(n);
+  }
+
+  async createNorm(input: InsertNormInput, actor: Actor): Promise<ConsumptionNormView> {
+    if (this.db.consumptionNorms.some((n) => n.testId === input.testId && n.itemId === input.itemId && n.status === "draft")) {
+      throw new StorageConflict(NORM_DRAFT_EXISTS);
+    }
+    const n: ConsumptionNorm = {
+      id: randomUUID(),
+      testId: input.testId,
+      itemId: input.itemId,
+      quantity: input.quantity,
+      status: "draft",
+      notes: input.notes ?? null,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      createdByName: actor.name,
+      updatedAt: null,
+      updatedBy: null,
+      approvedAt: null,
+      approvedBy: null,
+      approvedByName: null,
+      retiredAt: null,
+      retiredBy: null,
+      retiredByName: null,
+      retireReason: null,
+    };
+    this.db.consumptionNorms.push(n);
+    await this.persist();
+    return this.normView(n);
+  }
+
+  async updateNorm(id: string, input: UpdateNormInput, actor: Actor): Promise<ConsumptionNormView | undefined> {
+    const n = this.db.consumptionNorms.find((x) => x.id === id);
+    if (!n) return undefined;
+    if (n.status !== "draft") throw new StorageConflict(NORM_NOT_DRAFT);
+    if (input.quantity !== undefined) n.quantity = input.quantity;
+    if (input.notes !== undefined) n.notes = input.notes;
+    Object.assign(n, { updatedAt: new Date().toISOString(), updatedBy: actor.id });
+    await this.persist();
+    return this.normView(n);
+  }
+
+  async approveNorm(id: string, actor: Actor): Promise<{ norm: ConsumptionNormView; replaced: ConsumptionNormView | null } | undefined> {
+    const n = this.db.consumptionNorms.find((x) => x.id === id);
+    if (!n) return undefined;
+    if (n.status !== "draft") throw new StorageConflict(NORM_NOT_DRAFT);
+    const now = new Date().toISOString();
+    const old = this.db.consumptionNorms.find((x) => x.testId === n.testId && x.itemId === n.itemId && x.status === "approved");
+    if (old) Object.assign(old, { status: "retired", retiredAt: now, retiredBy: actor.id, retiredByName: actor.name, retireReason: "Yangi norma tasdiqlandi" });
+    Object.assign(n, { status: "approved", approvedAt: now, approvedBy: actor.id, approvedByName: actor.name });
+    await this.persist();
+    return { norm: this.normView(n), replaced: old ? this.normView(old) : null };
+  }
+
+  async retireNorm(id: string, reason: string, actor: Actor): Promise<ConsumptionNormView | undefined> {
+    const n = this.db.consumptionNorms.find((x) => x.id === id);
+    if (!n) return undefined;
+    if (n.status === "retired") throw new StorageConflict(NORM_ALREADY_RETIRED);
+    Object.assign(n, { status: "retired", retiredAt: new Date().toISOString(), retiredBy: actor.id, retiredByName: actor.name, retireReason: reason });
+    await this.persist();
+    return this.normView(n);
+  }
+
+  private consumptionView(c: LabConsumption): LabConsumptionView {
+    const it = this.db.inventoryItems.find((x) => x.id === c.itemId);
+    const value = this.db.stockMovements
+      .filter((m) => m.consumptionId === c.id)
+      .reduce((s, m) => s + movementValue(m.quantity, this.db.inventoryBatches.find((b) => b.id === m.batchId)?.purchasePrice ?? 0), 0);
+    return {
+      ...c,
+      itemName: it?.name ?? "—",
+      unit: it?.unit ?? "",
+      testName: c.testId ? (this.db.tests.find((t) => t.id === c.testId)?.name ?? null) : null,
+      orderNumber: c.orderId ? (this.db.orders.find((o) => o.id === c.orderId)?.orderNumber ?? null) : null,
+      value,
+    };
+  }
+
+  async listConsumptions(query: { from?: string; to?: string; shortOnly?: boolean; limit?: number } = {}): Promise<LabConsumptionView[]> {
+    return this.db.labConsumptions
+      .filter(
+        (c) =>
+          (!query.from || c.createdAt >= query.from) &&
+          (!query.to || c.createdAt < query.to) &&
+          (!query.shortOnly || (!c.cancelledAt && shortOf(c) > 0)),
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, query.limit ?? 5000)
+      .map((c) => this.consumptionView(c));
+  }
+
+  /** As on Postgres: FEFO from usable batches, the rest stays a shortage. */
+  private postConsumptions(entries: { c: LabConsumption; need: number }[], today: string, actor: Actor): void {
+    const ids = new Set(entries.map((e) => e.c.itemId));
+    const batches = this.db.inventoryBatches.filter((b) => ids.has(b.itemId) && !b.cancelledAt);
+    const plan = planConsumptions(entries.map((e) => ({ key: e.c.id, itemId: e.c.itemId, quantity: e.need })), batches, today);
+    const now = new Date().toISOString();
+    for (const p of plan) {
+      const e = entries.find((x) => x.c.id === p.key)!;
+      for (const a of p.allocations) {
+        const b = batches.find((x) => x.id === a.batchId)!;
+        b.remaining = b.remaining - a.quantity < QTY_EPSILON ? 0 : b.remaining - a.quantity;
+        this.db.stockMovements.push({
+          id: randomUUID(),
+          itemId: e.c.itemId,
+          batchId: a.batchId,
+          kind: "consumption",
+          quantity: -a.quantity,
+          receiptId: null,
+          issueId: null,
+          countId: null,
+          consumptionId: e.c.id,
+          note: null,
+          createdAt: now,
+          createdBy: actor.id,
+          createdByName: actor.name,
+        });
+      }
+      e.c.posted = Number((e.c.posted + p.posted).toFixed(6));
+    }
+  }
+
+  async consumeVerified(scope: { orderId?: string }, today: string, actor: Actor): Promise<LabConsumptionView[]> {
+    const done = new Set(this.db.labConsumptions.filter((c) => c.kind === "norm").map((c) => `${c.orderTestId}|${c.itemId}`));
+    const created: LabConsumption[] = [];
+    const lines = this.db.orderTests
+      .filter((ot) => ot.verifiedAt && (!scope.orderId || ot.orderId === scope.orderId))
+      .sort((a, b) => a.verifiedAt!.localeCompare(b.verifiedAt!));
+    const now = new Date().toISOString();
+    for (const ot of lines) {
+      for (const n of this.db.consumptionNorms) {
+        if (created.length >= MAX_CONSUME_BATCH) break;
+        if (n.testId !== ot.testId || !normInForce(n, ot.verifiedAt!) || done.has(`${ot.id}|${n.itemId}`)) continue;
+        done.add(`${ot.id}|${n.itemId}`);
+        created.push({
+          id: randomUUID(),
+          kind: "norm",
+          orderId: ot.orderId,
+          orderTestId: ot.id,
+          testId: ot.testId,
+          itemId: n.itemId,
+          normId: n.id,
+          quantity: n.quantity,
+          posted: 0,
+          reason: null,
+          note: null,
+          createdAt: now,
+          createdBy: actor.id,
+          createdByName: actor.name,
+          settledAt: null,
+          settledByName: null,
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelledByName: null,
+          cancelReason: null,
+        });
+      }
+    }
+    if (created.length === 0) return [];
+    this.db.labConsumptions.push(...created);
+    this.postConsumptions(created.map((c) => ({ c, need: c.quantity })), today, actor);
+    await this.persist();
+    return created.map((c) => this.consumptionView(c));
+  }
+
+  async recordConsumption(input: ExtraConsumptionInput, today: string, actor: Actor): Promise<LabConsumptionView> {
+    const c: LabConsumption = {
+      id: randomUUID(),
+      kind: "extra",
+      orderId: null,
+      orderTestId: null,
+      testId: input.testId,
+      itemId: input.itemId,
+      normId: null,
+      quantity: input.quantity,
+      posted: 0,
+      reason: input.reason,
+      note: input.note ?? null,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      createdByName: actor.name,
+      settledAt: null,
+      settledByName: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancelledByName: null,
+      cancelReason: null,
+    };
+    this.db.labConsumptions.push(c);
+    this.postConsumptions([{ c, need: c.quantity }], today, actor);
+    await this.persist();
+    return this.consumptionView(c);
+  }
+
+  async settleConsumptions(ids: string[] | null, today: string, actor: Actor): Promise<LabConsumptionView[]> {
+    const wanted = ids ? new Set(ids) : null;
+    const short = this.db.labConsumptions
+      .filter((c) => !c.cancelledAt && shortOf(c) > 0 && (!wanted || wanted.has(c.id)))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, MAX_CONSUME_BATCH);
+    if (short.length === 0) return [];
+    const before = new Map(short.map((c) => [c.id, c.posted]));
+    this.postConsumptions(short.map((c) => ({ c, need: shortOf(c) })), today, actor);
+    const moved = short.filter((c) => c.posted > before.get(c.id)! + QTY_EPSILON);
+    const now = new Date().toISOString();
+    for (const c of moved) Object.assign(c, { settledAt: now, settledByName: actor.name });
+    await this.persist();
+    return moved.map((c) => this.consumptionView(c));
+  }
+
+  async cancelConsumption(id: string, reason: string, actor: Actor): Promise<LabConsumptionView | undefined> {
+    const c = this.db.labConsumptions.find((x) => x.id === id);
+    if (!c) return undefined;
+    if (c.kind !== "extra") throw new StorageConflict(NORM_CONSUMPTION_FINAL);
+    if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
+    const out = this.db.stockMovements.filter((m) => m.consumptionId === id && m.kind === "consumption");
+    if (this.countedSince(out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+    const now = new Date().toISOString();
+    for (const m of out) {
+      const b = this.db.inventoryBatches.find((x) => x.id === m.batchId);
+      if (b) b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+      this.db.stockMovements.push({
+        id: randomUUID(),
+        itemId: m.itemId,
+        batchId: m.batchId,
+        kind: "consumption_cancel",
+        quantity: -m.quantity,
+        receiptId: null,
+        issueId: null,
+        countId: null,
+        consumptionId: id,
+        note: reason,
+        createdAt: now,
+        createdBy: actor.id,
+        createdByName: actor.name,
+      });
+    }
+    Object.assign(c, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+    await this.persist();
+    return this.consumptionView(c);
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {

@@ -64,15 +64,23 @@ export function ExpiryBadge({ expiresOn, today }: { expiresOn: string | null; to
 }
 
 /** The warnings, above every Ombor tab and on the storekeeper's home page. */
-export function StockAlertsBanner({ alerts, onOpen, className }: { alerts: StockAlerts | undefined; onOpen: (w: Window | "low") => void; className?: string }) {
+export type StockAlertTarget = Window | "low" | "consumption";
+
+export function StockAlertsBanner({ alerts, onOpen, className }: { alerts: StockAlerts | undefined; onOpen: (w: StockAlertTarget) => void; className?: string }) {
   if (!alerts) return null;
-  const parts: { key: Window | "low"; text: string; tone: string }[] = [];
+  const parts: { key: StockAlertTarget; text: string; tone: string }[] = [];
   if (alerts.expired.batches > 0)
     parts.push({ key: "expired", text: `${alerts.expired.batches} ta partiyaning muddati o'tgan (${money(alerts.expired.value)}) — hisobdan chiqaring`, tone: "text-rose-700 dark:text-rose-300" });
   if (alerts.soon.batches > 0)
     parts.push({ key: "soon", text: `${alerts.soon.batches} ta partiya ${EXPIRY_SOON_DAYS} kun ichida tugaydi`, tone: "text-amber-800 dark:text-amber-300" });
   if (alerts.lowStock.length > 0)
     parts.push({ key: "low", text: `${alerts.lowStock.length} ta mahsulot kam qolgan`, tone: "text-amber-800 dark:text-amber-300" });
+  if (alerts.consumptionShort > 0)
+    parts.push({
+      key: "consumption",
+      text: `${alerts.consumptionShort} ta laboratoriya sarfi qoldiqdan chiqmadi — kirimni tekshiring`,
+      tone: "text-amber-800 dark:text-amber-300",
+    });
   if (parts.length === 0) return null;
   const severe = alerts.expired.batches > 0;
   return (
@@ -359,9 +367,9 @@ export function StockView({ items, initialWindow = "all" }: { items: InventoryIt
  * The storekeeper's home page card: the same warnings, with a way in. Quiet
  * (a single "all in order" line) when there is nothing to do.
  */
-export function StockHomePanel({ onOpen }: { onOpen: (w: StockWindow | "low") => void }) {
+export function StockHomePanel({ onOpen }: { onOpen: (w: StockAlertTarget) => void }) {
   const { data: alerts, isLoading } = useQuery<StockAlerts>({ queryKey: ["/api/inventory/alerts"], refetchOnMount: "always" });
-  const nothing = alerts && alerts.expired.batches === 0 && alerts.soon.batches === 0 && alerts.lowStock.length === 0;
+  const nothing = alerts && alerts.expired.batches === 0 && alerts.soon.batches === 0 && alerts.lowStock.length === 0 && alerts.consumptionShort === 0;
   return (
     <SectionCard icon={PackageSearch} title="Ombor" description="Muddat va qoldiq ogohlantirishlari (TZ §7.3)" bodyClassName="p-5">
       {isLoading || !alerts ? (
@@ -388,6 +396,16 @@ export function StockHomePanel({ onOpen }: { onOpen: (w: StockWindow | "low") =>
               <p className="text-xs text-muted-foreground">{x.label}</p>
             </button>
           ))}
+          {alerts.consumptionShort > 0 && (
+            <button
+              type="button"
+              onClick={() => onOpen("consumption")}
+              className="text-left text-sm font-medium text-amber-800 underline-offset-2 hover:underline dark:text-amber-300 sm:col-span-3"
+              data-testid="stock-home-consumption"
+            >
+              {alerts.consumptionShort} ta laboratoriya sarfi qoldiqdan chiqmadi — kirimni tekshiring
+            </button>
+          )}
         </div>
       )}
     </SectionCard>

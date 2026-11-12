@@ -20,6 +20,7 @@ import {
   voidRecordSchema,
   type InventoryBatchView,
   type InventoryItemView,
+  type LabConsumptionView,
   type StockCountView,
   type StockIssueView,
   type StockReceiptView,
@@ -275,11 +276,12 @@ export function registerInventoryRoutes(app: Express) {
     requirePermission("inventory.read"),
     handle(async (_req, res) => {
       const today = clockNow().date;
-      const [items, batches] = await Promise.all([
+      const [items, batches, short] = await Promise.all([
         storage.listInventoryItems().catch((e) => emptyIfMissing(e, [] as InventoryItemView[])),
         storage.listBatches().catch((e) => emptyIfMissing(e, [] as InventoryBatchView[])),
+        storage.listConsumptions({ shortOnly: true, limit: 1000 }).catch((e) => emptyIfMissing(e, [] as LabConsumptionView[])),
       ]);
-      res.json(summarizeStock(items, batches, today));
+      res.json({ ...summarizeStock(items, batches, today), consumptionShort: short.length });
     }),
   );
 

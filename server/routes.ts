@@ -122,6 +122,9 @@ import { registerMedicalRoutes } from "./routes-medical";
 import { registerLabRoutes } from "./routes-lab";
 import { registerQcRoutes } from "./routes-qc";
 import { registerInventoryRoutes } from "./routes-inventory";
+import { registerConsumptionRoutes } from "./routes-consumption";
+import { consumeForOrder } from "./reagent-consumption";
+import { describeConsumption } from "@shared/consumption";
 
 export async function registerRoutes(app: Express): Promise<void> {
   setupAuth(app);
@@ -1129,6 +1132,11 @@ export async function registerRoutes(app: Express): Promise<void> {
           released ? " — buyurtma to'liq tasdiqlandi" : ""
         }`,
       );
+      // TZ §11 Laboratoriya → Ombor: verified lines are done tests. Never fails the verification.
+      const consumed = await consumeForOrder(order.id, order.orderNumber, actorOf(req));
+      if (consumed.length) {
+        await audit(req, "create", "inventory", order.id, `Reagent sarfi #${order.orderNumber} (norma bo'yicha): ${describeConsumption(consumed)}`);
+      }
       // Awaited: a serverless instance freezes once the response is sent.
       const [delivery, doctorTold] = released
         ? await Promise.all([notifyIfReady(order), notifyOrderingDoctor(order, { kind: "released" })])
@@ -2421,6 +2429,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   registerLabRoutes(app);
   registerQcRoutes(app);
   registerInventoryRoutes(app);
+  registerConsumptionRoutes(app);
 
   // An unknown API path is a 404 in JSON, not the client app's index.html with
   // a 200 — which is what the SPA fallback further down would otherwise serve.

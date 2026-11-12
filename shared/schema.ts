@@ -37,6 +37,7 @@ import {
   type MovementKind,
   type WriteoffReason,
 } from "./inventory";
+import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
  * One schema, two backends: Postgres when DATABASE_URL is set, otherwise the
@@ -1344,6 +1345,8 @@ export const stockMovements = pgTable(
     issueId: varchar("issue_id"),
     /** B5.5: the stock count a correcting movement comes from. */
     countId: varchar("count_id"),
+    /** B5.6: the lab consumption a movement comes from. */
+    consumptionId: varchar("consumption_id"),
     note: text("note"),
     createdAt: isoTimestamp("created_at").defaultNow().notNull(),
     createdBy: varchar("created_by"),
@@ -1384,6 +1387,79 @@ export const stockCounts = pgTable(
     cancelReason: text("cancel_reason"),
   },
   (t) => [uniqueIndex("UQ_stock_counts_open").on(t.status).where(sql`status = 'open'`)],
+);
+
+/**
+ * Sarf normasi (B5.6, TZ §7.3): how much of a warehouse item one lab test
+ * uses. Proposed as a draft, in force once the lab head approves it; a new
+ * approval retires the one before. Never deleted. At most one draft and one
+ * approved norm per test and item (UQ_consumption_norms_live).
+ */
+export const consumptionNorms = pgTable(
+  "consumption_norms",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    testId: varchar("test_id").notNull(),
+    itemId: varchar("item_id").notNull(),
+    /** Per one test, in the item's unit. */
+    quantity: doublePrecision("quantity").notNull(),
+    status: text("status").notNull().default("draft"),
+    notes: text("notes"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    createdByName: text("created_by_name"),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+    approvedAt: isoTimestamp("approved_at"),
+    approvedBy: varchar("approved_by"),
+    approvedByName: text("approved_by_name"),
+    retiredAt: isoTimestamp("retired_at"),
+    retiredBy: varchar("retired_by"),
+    retiredByName: text("retired_by_name"),
+    retireReason: text("retire_reason"),
+  },
+  (t) => [
+    uniqueIndex("UQ_consumption_norms_live").on(t.testId, t.itemId, t.status).where(sql`status IN ('draft', 'approved')`),
+    index("IDX_consumption_norms_test").on(t.testId),
+  ],
+);
+
+/**
+ * Reagent sarfi jurnali (B5.6, TZ §11 Laboratoriya → Ombor). A `norm` row is
+ * written once per verified result line and item; an `extra` row is real use
+ * beyond the norm, with a reason. `posted` is what the shelf covered, the
+ * rest a shortage until settled. Its stock movements carry its id.
+ */
+export const labConsumptions = pgTable(
+  "lab_consumptions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    kind: text("kind").notNull(),
+    orderId: varchar("order_id"),
+    orderTestId: varchar("order_test_id"),
+    testId: varchar("test_id"),
+    itemId: varchar("item_id").notNull(),
+    normId: varchar("norm_id"),
+    quantity: doublePrecision("quantity").notNull(),
+    posted: doublePrecision("posted").notNull().default(0),
+    /** Extra use only. */
+    reason: text("reason"),
+    note: text("note"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    createdByName: text("created_by_name"),
+    /** Last time a shortage was covered from new stock. */
+    settledAt: isoTimestamp("settled_at"),
+    settledByName: text("settled_by_name"),
+    cancelledAt: isoTimestamp("cancelled_at"),
+    cancelledBy: varchar("cancelled_by"),
+    cancelledByName: text("cancelled_by_name"),
+    cancelReason: text("cancel_reason"),
+  },
+  (t) => [
+    uniqueIndex("UQ_lab_consumptions_norm").on(t.orderTestId, t.itemId).where(sql`kind = 'norm'`),
+    index("IDX_lab_consumptions_created").on(t.createdAt),
+  ],
 );
 
 /** One batch of a count: what the ledger said when it was counted, and what was found. */
@@ -1729,6 +1805,24 @@ export type StockCountLine = StockCountLineRow & {
   batchCancelled: boolean;
 };
 export type StockCountDetail = StockCountView & { lines: StockCountLine[] };
+
+export type ConsumptionNorm = Omit<typeof consumptionNorms.$inferSelect, "status"> & { status: NormStatus };
+export type ConsumptionNormView = ConsumptionNorm & {
+  testName: string;
+  itemName: string;
+  unit: string;
+  itemKind: InventoryKind;
+  itemActive: boolean;
+};
+export type LabConsumption = Omit<typeof labConsumptions.$inferSelect, "kind" | "reason"> & { kind: ConsumptionKind; reason: ExtraReason | null };
+export type LabConsumptionView = LabConsumption & {
+  itemName: string;
+  unit: string;
+  testName: string | null;
+  orderNumber: number | null;
+  /** Cost of what left the shelf, at the batches' purchase prices, so'm. */
+  value: number;
+};
 
 export type Referral = Omit<typeof referrals.$inferSelect, "kind" | "status"> & {
   kind: ReferralKind;
@@ -2751,6 +2845,33 @@ export const saveCountEntriesSchema = z.object({
   entries: z.array(countEntrySchema).min(1, "Hech narsa yuborilmadi").max(MAX_COUNT_ENTRIES, `Bir so'rovda ko'pi bilan ${MAX_COUNT_ENTRIES} ta qator`),
 });
 export type CreateCountInput = z.infer<typeof createCountSchema>;
+
+const normQuantity = z
+  .number({ invalid_type_error: "Norma: raqam kiriting", required_error: "Normani kiriting" })
+  .finite("Norma: raqam kiriting")
+  .positive("Norma musbat bo'lishi kerak")
+  .max(MAX_NORM_QUANTITY, "Norma juda katta");
+export const insertNormSchema = z.object({
+  testId: z.string().min(1, "Tahlilni tanlang"),
+  itemId: z.string().min(1, "Mahsulotni tanlang"),
+  quantity: normQuantity,
+  notes: optionalText(300, "Izoh"),
+});
+export const updateNormSchema = z.object({ quantity: normQuantity.optional(), notes: optionalText(300, "Izoh") });
+export const extraConsumptionSchema = z.object({
+  itemId: z.string().min(1, "Mahsulotni tanlang"),
+  testId: z.string().min(1).nullish().transform((v) => v ?? null),
+  quantity: z
+    .number({ invalid_type_error: "Miqdor: raqam kiriting", required_error: "Miqdorni kiriting" })
+    .finite("Miqdor: raqam kiriting")
+    .positive("Miqdor musbat bo'lishi kerak")
+    .max(1_000_000, "Miqdor juda katta"),
+  reason: z.enum(EXTRA_REASONS, { errorMap: () => ({ message: "Sababni tanlang" }) }),
+  note: optionalText(300, "Izoh"),
+});
+export type InsertNormInput = z.infer<typeof insertNormSchema>;
+export type UpdateNormInput = z.infer<typeof updateNormSchema>;
+export type ExtraConsumptionInput = z.infer<typeof extraConsumptionSchema>;
 export type CountEntryInput = z.infer<typeof countEntrySchema>;
 
 // ------------------------------------------------------- quality control

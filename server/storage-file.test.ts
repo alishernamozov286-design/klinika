@@ -2228,3 +2228,105 @@ describe("stock counts (B5.5)", () => {
     await expect(storage.createCount({ countedOn: today, kinds: ["medicine"], notes: null }, ACTOR)).rejects.toThrow(/sanaladigan narsa yo'q/);
   });
 });
+
+describe("reagent consumption (B5.6)", () => {
+  const HEAD = { id: "head-1", name: "Laboratoriya mudiri" };
+  const LAB = { id: "lab-1", name: "Laborant Bir" };
+  const today = new Date().toISOString().slice(0, 10);
+  const later = (days: number) => new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
+
+  const setup = async (stock = 0.05) => {
+    const reagent = await storage.createInventoryItem(
+      { name: "Glyukoza reagenti", kind: "reagent", code: null, manufacturer: null, unit: "to'plam", minStock: 0, salePrice: null, isActive: true, notes: null },
+      ACTOR,
+    );
+    await storage.createReceipt(
+      {
+        supplier: "MedTech",
+        documentNumber: null,
+        receivedOn: today,
+        notes: null,
+        lines: [{ itemId: reagent.id, lotNumber: "G1", expiresOn: later(100), quantity: stock, purchasePrice: 200000 }],
+      },
+      ACTOR,
+    );
+    return reagent;
+  };
+  const verified = async (testIds: string[]) => {
+    const { order } = await makeOrder(testIds);
+    await storage.saveResults(order.id, order.items.map((i) => ({ id: i.id, result: "5.0" })), LAB);
+    return (await storage.verifyResults(order.id, null, HEAD))!.order;
+  };
+
+  it("only an approved norm consumes, once per verified line, from the date it was approved", async () => {
+    const reagent = await setup();
+    const draft = await storage.createNorm({ testId: "3", itemId: reagent.id, quantity: 0.01, notes: null }, ACTOR);
+    expect(draft).toMatchObject({ status: "draft", unit: "to'plam", itemName: "Glyukoza reagenti" });
+    await expect(storage.createNorm({ testId: "3", itemId: reagent.id, quantity: 0.02, notes: null }, ACTOR)).rejects.toThrow(/tasdiqlanmagan norma allaqachon bor/);
+
+    // Verified while the norm is only a draft: nothing moves, not even later.
+    const before = await verified(["3"]);
+    expect(await storage.consumeVerified({ orderId: before.id }, today, HEAD)).toEqual([]);
+
+    const { norm, replaced } = (await storage.approveNorm(draft.id, HEAD))!;
+    expect(norm).toMatchObject({ status: "approved", approvedByName: HEAD.name });
+    expect(replaced).toBeNull();
+    await expect(storage.updateNorm(norm.id, { quantity: 0.5 }, ACTOR)).rejects.toThrow(/Faqat tasdiqlanmagan/);
+
+    const order = await verified(["3"]);
+    const used = await storage.consumeVerified({ orderId: order.id }, today, HEAD);
+    expect(used).toHaveLength(1);
+    expect(used[0]).toMatchObject({ kind: "norm", quantity: 0.01, posted: 0.01, orderNumber: order.orderNumber, testName: order.items[0].testName, value: 2000 });
+    // Once: the next run (or a reconcile) finds nothing new, and the earlier draft-era order is still left alone.
+    expect(await storage.consumeVerified({}, today, HEAD)).toEqual([]);
+    const batch = (await storage.listBatches({ itemId: reagent.id }))[0];
+    expect(batch.remaining).toBeCloseTo(0.04);
+  });
+
+  it("a new norm replaces the old one at approval; the warehouse never holds a result back", async () => {
+    const reagent = await setup(0.015);
+    const first = await storage.createNorm({ testId: "3", itemId: reagent.id, quantity: 0.01, notes: null }, ACTOR);
+    await storage.approveNorm(first.id, HEAD);
+    const next = await storage.createNorm({ testId: "3", itemId: reagent.id, quantity: 0.02, notes: "Yangi to'plam" }, ACTOR);
+    const out = (await storage.approveNorm(next.id, HEAD))!;
+    expect(out.replaced).toMatchObject({ id: first.id, status: "retired", retireReason: "Yangi norma tasdiqlandi" });
+
+    // 0.02 needed, 0.015 on the shelf: the result is verified anyway, 0.005 is a shortage.
+    const order = await verified(["3"]);
+    const [c] = await storage.consumeVerified({ orderId: order.id }, today, HEAD);
+    expect(c.quantity).toBe(0.02);
+    expect(c.posted).toBeCloseTo(0.015);
+    expect(await storage.listConsumptions({ shortOnly: true })).toHaveLength(1);
+
+    // Stock arrives; settling covers the rest from it.
+    await storage.createReceipt(
+      { supplier: "MedTech", documentNumber: null, receivedOn: today, notes: null, lines: [{ itemId: reagent.id, lotNumber: "G2", expiresOn: later(200), quantity: 1, purchasePrice: 200000 }] },
+      ACTOR,
+    );
+    const settled = await storage.settleConsumptions(null, today, ACTOR);
+    expect(settled).toHaveLength(1);
+    expect(settled[0].posted).toBeCloseTo(0.02);
+    expect(settled[0].settledByName).toBe(ACTOR.name);
+    expect(await storage.listConsumptions({ shortOnly: true })).toEqual([]);
+    // Norm consumption is final: the test was done.
+    await expect(storage.cancelConsumption(c.id, "xato", ACTOR)).rejects.toThrow(/bekor qilinmaydi/);
+  });
+
+  it("extra use is recorded with a reason, and cancelled back onto its batch", async () => {
+    const reagent = await setup(1);
+    const extra = await storage.recordConsumption({ itemId: reagent.id, testId: "3", quantity: 0.1, reason: "repeat", note: "Gemoliz" }, today, LAB);
+    expect(extra).toMatchObject({ kind: "extra", reason: "repeat", posted: 0.1, createdByName: LAB.name, value: 20000 });
+    expect((await storage.listBatches({ itemId: reagent.id }))[0].remaining).toBeCloseTo(0.9);
+    const back = await storage.cancelConsumption(extra.id, "Noto'g'ri mahsulot", HEAD);
+    expect(back).toMatchObject({ cancelReason: "Noto'g'ri mahsulot", value: 0 });
+    expect((await storage.listBatches({ itemId: reagent.id }))[0].remaining).toBeCloseTo(1);
+    await expect(storage.cancelConsumption(extra.id, "yana", HEAD)).rejects.toThrow(/allaqachon/);
+    // A retired norm stops consuming.
+    const n = await storage.createNorm({ testId: "3", itemId: reagent.id, quantity: 0.01, notes: null }, ACTOR);
+    await storage.approveNorm(n.id, HEAD);
+    await storage.retireNorm(n.id, "Analizator almashtirildi", HEAD);
+    await expect(storage.retireNorm(n.id, "yana", HEAD)).rejects.toThrow(/allaqachon/);
+    const order = await verified(["3"]);
+    expect(await storage.consumeVerified({ orderId: order.id }, today, HEAD)).toEqual([]);
+  });
+});

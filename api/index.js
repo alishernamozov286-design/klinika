@@ -219,6 +219,22 @@ var init_permissions = __esm({
         label: "Kirim",
         description: "Kirim hujjatini rasmiylashtirish: yetkazib beruvchi, LOT, yaroqlilik muddati, miqdor, xarid narxi (TZ \xA77.3)"
       },
+      "consumption.norms": {
+        group: "warehouse",
+        label: "Sarf normalari",
+        description: "Tahlil uchun reagent sarf normasini taklif qilish, tasdiqlanmaganini tahrirlash, normani bekor qilish (TZ \xA77.3)"
+      },
+      "consumption.approve": {
+        group: "warehouse",
+        label: "Normani tasdiqlash",
+        description: "Sarf normasini tasdiqlash (shundan keyin tahlil tasdiqlanganda ombordan avtomatik chiqadi), qo'shimcha sarfni bekor qilish",
+        sensitive: true
+      },
+      "consumption.record": {
+        group: "warehouse",
+        label: "Qo'shimcha sarf",
+        description: "Normadan tashqari real sarfni yozish: takroriy o'lchov, kalibratsiya, sifat nazorati, to'kilgan reagent"
+      },
       "inventory.count": {
         group: "warehouse",
         label: "Inventarizatsiya",
@@ -388,7 +404,19 @@ var init_permissions = __esm({
         key: "laborant",
         name: "Laborant",
         description: "Namunalarni qabul qilish va tahlil natijalarini kiritish",
-        permissions: ["patients.read", "orders.read", "samples.manage", "results.enter", "results.send", "devices.read", "devices.log", "qc.read", "qc.enter"]
+        permissions: [
+          "patients.read",
+          "orders.read",
+          "samples.manage",
+          "results.enter",
+          "results.send",
+          "devices.read",
+          "devices.log",
+          "qc.read",
+          "qc.enter",
+          "inventory.read",
+          "consumption.record"
+        ]
       },
       {
         key: "lab_mudiri",
@@ -411,6 +439,9 @@ var init_permissions = __esm({
           "qc.enter",
           "qc.manage",
           "inventory.read",
+          "consumption.norms",
+          "consumption.approve",
+          "consumption.record",
           "reports.view"
         ]
       },
@@ -418,7 +449,7 @@ var init_permissions = __esm({
         key: "omborchi",
         name: "Omborchi",
         description: "Ombor: kirim, chiqim va qoldiq",
-        permissions: ["inventory.read", "inventory.manage", "inventory.receive", "inventory.issue", "inventory.count"]
+        permissions: ["inventory.read", "inventory.manage", "inventory.receive", "inventory.issue", "inventory.count", "consumption.norms"]
       },
       {
         key: "hamshira",
@@ -846,7 +877,7 @@ function expiryState(expiresOn, today) {
   return "ok";
 }
 function summarizeStock(items, batches, today) {
-  const out = { date: today, value: 0, expired: { batches: 0, value: 0 }, soon: { batches: 0, value: 0 }, watch: { batches: 0 }, lowStock: [] };
+  const out = { date: today, value: 0, expired: { batches: 0, value: 0 }, soon: { batches: 0, value: 0 }, watch: { batches: 0 }, lowStock: [], consumptionShort: 0 };
   const usable = /* @__PURE__ */ new Map();
   for (const b of batches) {
     if (b.remaining <= QTY_EPSILON) continue;
@@ -1018,6 +1049,94 @@ var init_inventory = __esm({
   }
 });
 
+// shared/consumption.ts
+function normInForce(n, at) {
+  return !!n.approvedAt && n.approvedAt <= at && (!n.retiredAt || n.retiredAt > at);
+}
+function planConsumptions(lines, batches, today) {
+  const left = new Map(batches.map((b) => [b.id, b.remaining]));
+  return lines.map((l) => {
+    const own = batches.filter((b) => b.itemId === l.itemId).map((b) => ({ ...b, remaining: left.get(b.id) ?? 0 }));
+    let r = allocateFefo(own, l.quantity, today);
+    if (!r.ok) r = r.available > QTY_EPSILON ? allocateFefo(own, r.available, today) : { ok: true, allocations: [] };
+    const allocations = r.ok ? r.allocations : [];
+    for (const a of allocations) left.set(a.batchId, (left.get(a.batchId) ?? 0) - a.quantity);
+    const posted = Number(allocations.reduce((s, a) => s + a.quantity, 0).toFixed(6));
+    return { key: l.key, allocations, posted, short: shortOf({ quantity: l.quantity, posted }) };
+  });
+}
+function shortOf(e) {
+  const s = e.quantity - e.posted;
+  return s > QTY_EPSILON ? Number(s.toFixed(6)) : 0;
+}
+function describeConsumption(entries) {
+  const byItem = /* @__PURE__ */ new Map();
+  for (const e of entries) {
+    const x = byItem.get(e.itemName) ?? { unit: e.unit, q: 0, short: 0 };
+    x.q += e.quantity;
+    x.short += shortOf(e);
+    byItem.set(e.itemName, x);
+  }
+  return Array.from(byItem.entries()).map(([name, x]) => `${name} ${fmtQty(x.q)} ${x.unit}${x.short > 0 ? ` (${fmtQty(x.short)} yetishmadi)` : ""}`).join("; ");
+}
+function summarizeConsumption(entries) {
+  const items = /* @__PURE__ */ new Map();
+  const tests2 = /* @__PURE__ */ new Map();
+  const performed = /* @__PURE__ */ new Set();
+  const out = { value: 0, performed: 0, extraEntries: 0, shortEntries: 0, byItem: [], byTest: [] };
+  for (const e of entries) {
+    if (e.cancelledAt) continue;
+    out.value += e.value;
+    if (shortOf(e) > 0) out.shortEntries += 1;
+    if (e.kind === "extra") out.extraEntries += 1;
+    const it = items.get(e.itemId) ?? { itemId: e.itemId, itemName: e.itemName, unit: e.unit, norm: 0, extra: 0, total: 0, short: 0, value: 0 };
+    if (e.kind === "norm") it.norm += e.quantity;
+    else it.extra += e.quantity;
+    it.total += e.quantity;
+    it.short += shortOf(e);
+    it.value += e.value;
+    items.set(e.itemId, it);
+    if (e.testId) {
+      const t = tests2.get(e.testId) ?? { testId: e.testId, testName: e.testName ?? "\u2014", performed: 0, value: 0, lines: /* @__PURE__ */ new Set() };
+      t.value += e.value;
+      if (e.kind === "norm" && e.orderTestId) {
+        t.lines.add(e.orderTestId);
+        performed.add(e.orderTestId);
+      }
+      tests2.set(e.testId, t);
+    }
+  }
+  const tidy = (n) => Number(n.toFixed(6));
+  out.performed = performed.size;
+  out.byItem = Array.from(items.values()).map((r) => ({ ...r, norm: tidy(r.norm), extra: tidy(r.extra), total: tidy(r.total), short: tidy(r.short) })).sort((a, b) => b.value - a.value || a.itemName.localeCompare(b.itemName));
+  out.byTest = Array.from(tests2.values()).map(({ lines, ...t }) => ({ ...t, performed: lines.size })).sort((a, b) => b.value - a.value || a.testName.localeCompare(b.testName));
+  return out;
+}
+var EXTRA_REASONS, EXTRA_REASON_LABELS, CONSUMABLE_KINDS, MAX_NORM_QUANTITY, MAX_CONSUME_BATCH, NORM_DRAFT_EXISTS, NORM_NOT_DRAFT, NORM_ALREADY_RETIRED, CONSUMPTION_ALREADY_CANCELLED, NORM_CONSUMPTION_FINAL, movementValue;
+var init_consumption = __esm({
+  "shared/consumption.ts"() {
+    "use strict";
+    init_inventory();
+    EXTRA_REASONS = ["repeat", "calibration", "qc", "spoiled", "other"];
+    EXTRA_REASON_LABELS = {
+      repeat: "Takroriy o'lchov",
+      calibration: "Kalibratsiya",
+      qc: "Sifat nazorati",
+      spoiled: "To'kilgan / yaroqsiz bo'lgan",
+      other: "Boshqa sabab"
+    };
+    CONSUMABLE_KINDS = ["reagent", "calibrator", "control", "tube", "syringe", "consumable", "disinfectant"];
+    MAX_NORM_QUANTITY = 1e4;
+    MAX_CONSUME_BATCH = 500;
+    NORM_DRAFT_EXISTS = "Bu tahlil va mahsulot uchun tasdiqlanmagan norma allaqachon bor \u2014 o'shani tahrirlang";
+    NORM_NOT_DRAFT = "Faqat tasdiqlanmagan normani o'zgartirish yoki tasdiqlash mumkin";
+    NORM_ALREADY_RETIRED = "Bu norma allaqachon bekor qilingan";
+    CONSUMPTION_ALREADY_CANCELLED = "Bu sarf allaqachon bekor qilingan";
+    NORM_CONSUMPTION_FINAL = "Norma bo'yicha sarf bekor qilinmaydi: tahlil bajarilgan. Tokcha bilan farq bo'lsa, inventarizatsiya tuzatadi.";
+    movementValue = (quantity, price) => (quantity < 0 ? 1 : -1) * lineTotal(Math.abs(quantity), price);
+  }
+});
+
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
@@ -1066,6 +1185,7 @@ __export(schema_exports, {
   cancelExpenseSchema: () => cancelExpenseSchema,
   cancelReferralSchema: () => cancelReferralSchema,
   changePasswordSchema: () => changePasswordSchema,
+  consumptionNorms: () => consumptionNorms,
   countEntrySchema: () => countEntrySchema,
   createAppointmentSchema: () => createAppointmentSchema,
   createCountSchema: () => createCountSchema,
@@ -1081,6 +1201,7 @@ __export(schema_exports, {
   emergencyContactSchema: () => emergencyContactSchema,
   eqaResults: () => eqaResults,
   expenses: () => expenses,
+  extraConsumptionSchema: () => extraConsumptionSchema,
   icd10: () => icd10,
   importIcdUzSchema: () => importIcdUzSchema,
   insertAllergySchema: () => insertAllergySchema,
@@ -1093,6 +1214,7 @@ __export(schema_exports, {
   insertExpenseSchema: () => insertExpenseSchema,
   insertInventoryItemSchema: () => insertInventoryItemSchema,
   insertMaintenanceSchema: () => insertMaintenanceSchema,
+  insertNormSchema: () => insertNormSchema,
   insertPatientSchema: () => insertPatientSchema,
   insertQcMaterialSchema: () => insertQcMaterialSchema,
   insertQcResultSchema: () => insertQcResultSchema,
@@ -1104,6 +1226,7 @@ __export(schema_exports, {
   inventoryBatches: () => inventoryBatches,
   inventoryItems: () => inventoryItems,
   issueLineSchema: () => issueLineSchema,
+  labConsumptions: () => labConsumptions,
   labDeviceErrors: () => labDeviceErrors,
   labDevices: () => labDevices,
   labSettings: () => labSettings,
@@ -1160,6 +1283,7 @@ __export(schema_exports, {
   updateExpenseSchema: () => updateExpenseSchema,
   updateIcdUzSchema: () => updateIcdUzSchema,
   updateInventoryItemSchema: () => updateInventoryItemSchema,
+  updateNormSchema: () => updateNormSchema,
   updateOrderSchema: () => updateOrderSchema,
   updateQcMaterialSchema: () => updateQcMaterialSchema,
   updateQcTargetSchema: () => updateQcTargetSchema,
@@ -1213,7 +1337,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, consumptionNorms, labConsumptions, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, normQuantity, insertNormSchema, updateNormSchema, extraConsumptionSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1223,6 +1347,7 @@ var init_schema = __esm({
     init_lab_devices();
     init_qc();
     init_inventory();
+    init_consumption();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
     ORDER_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
@@ -2165,6 +2290,8 @@ var init_schema = __esm({
         issueId: varchar("issue_id"),
         /** B5.5: the stock count a correcting movement comes from. */
         countId: varchar("count_id"),
+        /** B5.6: the lab consumption a movement comes from. */
+        consumptionId: varchar("consumption_id"),
         note: text("note"),
         createdAt: isoTimestamp("created_at").defaultNow().notNull(),
         createdBy: varchar("created_by"),
@@ -2198,6 +2325,65 @@ var init_schema = __esm({
         cancelReason: text("cancel_reason")
       },
       (t) => [uniqueIndex("UQ_stock_counts_open").on(t.status).where(sql`status = 'open'`)]
+    );
+    consumptionNorms = pgTable(
+      "consumption_norms",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        testId: varchar("test_id").notNull(),
+        itemId: varchar("item_id").notNull(),
+        /** Per one test, in the item's unit. */
+        quantity: doublePrecision("quantity").notNull(),
+        status: text("status").notNull().default("draft"),
+        notes: text("notes"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        createdByName: text("created_by_name"),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by"),
+        approvedAt: isoTimestamp("approved_at"),
+        approvedBy: varchar("approved_by"),
+        approvedByName: text("approved_by_name"),
+        retiredAt: isoTimestamp("retired_at"),
+        retiredBy: varchar("retired_by"),
+        retiredByName: text("retired_by_name"),
+        retireReason: text("retire_reason")
+      },
+      (t) => [
+        uniqueIndex("UQ_consumption_norms_live").on(t.testId, t.itemId, t.status).where(sql`status IN ('draft', 'approved')`),
+        index("IDX_consumption_norms_test").on(t.testId)
+      ]
+    );
+    labConsumptions = pgTable(
+      "lab_consumptions",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        kind: text("kind").notNull(),
+        orderId: varchar("order_id"),
+        orderTestId: varchar("order_test_id"),
+        testId: varchar("test_id"),
+        itemId: varchar("item_id").notNull(),
+        normId: varchar("norm_id"),
+        quantity: doublePrecision("quantity").notNull(),
+        posted: doublePrecision("posted").notNull().default(0),
+        /** Extra use only. */
+        reason: text("reason"),
+        note: text("note"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        createdByName: text("created_by_name"),
+        /** Last time a shortage was covered from new stock. */
+        settledAt: isoTimestamp("settled_at"),
+        settledByName: text("settled_by_name"),
+        cancelledAt: isoTimestamp("cancelled_at"),
+        cancelledBy: varchar("cancelled_by"),
+        cancelledByName: text("cancelled_by_name"),
+        cancelReason: text("cancel_reason")
+      },
+      (t) => [
+        uniqueIndex("UQ_lab_consumptions_norm").on(t.orderTestId, t.itemId).where(sql`kind = 'norm'`),
+        index("IDX_lab_consumptions_created").on(t.createdAt)
+      ]
     );
     stockCountLines = pgTable(
       "stock_count_lines",
@@ -2617,6 +2803,21 @@ var init_schema = __esm({
     });
     saveCountEntriesSchema = z.object({
       entries: z.array(countEntrySchema).min(1, "Hech narsa yuborilmadi").max(MAX_COUNT_ENTRIES, `Bir so'rovda ko'pi bilan ${MAX_COUNT_ENTRIES} ta qator`)
+    });
+    normQuantity = z.number({ invalid_type_error: "Norma: raqam kiriting", required_error: "Normani kiriting" }).finite("Norma: raqam kiriting").positive("Norma musbat bo'lishi kerak").max(MAX_NORM_QUANTITY, "Norma juda katta");
+    insertNormSchema = z.object({
+      testId: z.string().min(1, "Tahlilni tanlang"),
+      itemId: z.string().min(1, "Mahsulotni tanlang"),
+      quantity: normQuantity,
+      notes: optionalText(300, "Izoh")
+    });
+    updateNormSchema = z.object({ quantity: normQuantity.optional(), notes: optionalText(300, "Izoh") });
+    extraConsumptionSchema = z.object({
+      itemId: z.string().min(1, "Mahsulotni tanlang"),
+      testId: z.string().min(1).nullish().transform((v) => v ?? null),
+      quantity: z.number({ invalid_type_error: "Miqdor: raqam kiriting", required_error: "Miqdorni kiriting" }).finite("Miqdor: raqam kiriting").positive("Miqdor musbat bo'lishi kerak").max(1e6, "Miqdor juda katta"),
+      reason: z.enum(EXTRA_REASONS, { errorMap: () => ({ message: "Sababni tanlang" }) }),
+      note: optionalText(300, "Izoh")
     });
     qcNumber = (label) => z.number({ invalid_type_error: `${label}: raqam kiriting`, required_error: `${label}ni kiriting` }).finite(`${label}: raqam kiriting`);
     optionalDay = dayString.nullish().or(z.literal("")).transform((v) => v ? v : null);
@@ -3777,6 +3978,7 @@ var init_storage_pg = __esm({
     init_lab_board();
     init_branding();
     init_inventory();
+    init_consumption();
     init_lab_devices();
     init_qc();
     init_icd10();
@@ -6598,6 +6800,253 @@ var init_storage_pg = __esm({
           return this.countDetail(tx, id);
         });
       }
+      // ---------------------------------------------------------- consumption (B5.6)
+      normSelect(exec) {
+        return exec.select({ n: consumptionNorms, testName: tests.name, itemName: inventoryItems.name, unit: inventoryItems.unit, itemKind: inventoryItems.kind, itemActive: inventoryItems.isActive }).from(consumptionNorms).leftJoin(tests, eq(tests.id, consumptionNorms.testId)).leftJoin(inventoryItems, eq(inventoryItems.id, consumptionNorms.itemId));
+      }
+      mapNorm(r) {
+        return {
+          ...r.n,
+          status: r.n.status,
+          testName: r.testName ?? "\u2014",
+          itemName: r.itemName ?? "\u2014",
+          unit: r.unit ?? "",
+          itemKind: r.itemKind ?? "consumable",
+          itemActive: r.itemActive ?? false
+        };
+      }
+      async listNorms() {
+        const rows = await this.normSelect(db).orderBy(asc(tests.name), asc(inventoryItems.name), desc(consumptionNorms.createdAt));
+        return rows.map((r) => this.mapNorm(r));
+      }
+      async getNorm(id) {
+        const [r] = await this.normSelect(db).where(eq(consumptionNorms.id, id)).limit(1);
+        return r && this.mapNorm(r);
+      }
+      async createNorm(input, actor) {
+        try {
+          const [n] = await db.insert(consumptionNorms).values({ testId: input.testId, itemId: input.itemId, quantity: input.quantity, notes: input.notes ?? null, status: "draft", createdBy: actor.id, createdByName: actor.name }).returning();
+          return await this.getNorm(n.id);
+        } catch (err) {
+          const e = err;
+          if (e?.code === "23505" && e.constraint === "UQ_consumption_norms_live") throw new StorageConflict(NORM_DRAFT_EXISTS);
+          throw err;
+        }
+      }
+      async updateNorm(id, input, actor) {
+        const patch = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id };
+        if (input.quantity !== void 0) patch.quantity = input.quantity;
+        if (input.notes !== void 0) patch.notes = input.notes;
+        const [n] = await db.update(consumptionNorms).set(patch).where(and(eq(consumptionNorms.id, id), eq(consumptionNorms.status, "draft"))).returning({ id: consumptionNorms.id });
+        if (n) return this.getNorm(id);
+        if (await this.getNorm(id)) throw new StorageConflict(NORM_NOT_DRAFT);
+        return void 0;
+      }
+      async approveNorm(id, actor) {
+        return db.transaction(async (tx) => {
+          const [draft] = await tx.select().from(consumptionNorms).where(eq(consumptionNorms.id, id)).for("update");
+          if (!draft) return void 0;
+          if (draft.status !== "draft") throw new StorageConflict(NORM_NOT_DRAFT);
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          const [old] = await tx.update(consumptionNorms).set({ status: "retired", retiredAt: now, retiredBy: actor.id, retiredByName: actor.name, retireReason: "Yangi norma tasdiqlandi" }).where(and(eq(consumptionNorms.testId, draft.testId), eq(consumptionNorms.itemId, draft.itemId), eq(consumptionNorms.status, "approved"))).returning({ id: consumptionNorms.id });
+          await tx.update(consumptionNorms).set({ status: "approved", approvedAt: now, approvedBy: actor.id, approvedByName: actor.name }).where(eq(consumptionNorms.id, id));
+          const exec = tx;
+          const [n] = await this.normSelect(exec).where(eq(consumptionNorms.id, id)).limit(1);
+          const [r] = old ? await this.normSelect(exec).where(eq(consumptionNorms.id, old.id)).limit(1) : [];
+          return { norm: this.mapNorm(n), replaced: r ? this.mapNorm(r) : null };
+        });
+      }
+      async retireNorm(id, reason, actor) {
+        const [n] = await db.update(consumptionNorms).set({ status: "retired", retiredAt: (/* @__PURE__ */ new Date()).toISOString(), retiredBy: actor.id, retiredByName: actor.name, retireReason: reason }).where(and(eq(consumptionNorms.id, id), ne(consumptionNorms.status, "retired"))).returning({ id: consumptionNorms.id });
+        if (n) return this.getNorm(id);
+        if (await this.getNorm(id)) throw new StorageConflict(NORM_ALREADY_RETIRED);
+        return void 0;
+      }
+      consumptionSelect(exec) {
+        return exec.select({
+          c: labConsumptions,
+          itemName: inventoryItems.name,
+          unit: inventoryItems.unit,
+          testName: tests.name,
+          orderNumber: orders.orderNumber,
+          value: sql2`(SELECT coalesce(sum((CASE WHEN m.quantity < 0 THEN 1 ELSE -1 END) * round((abs(m.quantity) * b.purchase_price)::numeric)), 0)::float
+                             FROM stock_movements m JOIN inventory_batches b ON b.id = m.batch_id
+                            WHERE m.consumption_id = "lab_consumptions"."id")`
+        }).from(labConsumptions).leftJoin(inventoryItems, eq(inventoryItems.id, labConsumptions.itemId)).leftJoin(tests, eq(tests.id, labConsumptions.testId)).leftJoin(orders, eq(orders.id, labConsumptions.orderId));
+      }
+      mapConsumption(r) {
+        return {
+          ...r.c,
+          kind: r.c.kind,
+          reason: r.c.reason,
+          itemName: r.itemName ?? "\u2014",
+          unit: r.unit ?? "",
+          testName: r.testName ?? null,
+          orderNumber: r.orderNumber ?? null,
+          value: Number(r.value)
+        };
+      }
+      async listConsumptions(query = {}) {
+        const where = [];
+        if (query.from) where.push(gte(labConsumptions.createdAt, query.from));
+        if (query.to) where.push(sql2`${labConsumptions.createdAt} < ${query.to}`);
+        if (query.shortOnly) where.push(isNull(labConsumptions.cancelledAt), sql2`${labConsumptions.quantity} - ${labConsumptions.posted} > ${QTY_EPSILON}`);
+        const rows = await this.consumptionSelect(db).where(where.length ? and(...where) : void 0).orderBy(desc(labConsumptions.createdAt)).limit(query.limit ?? 5e3);
+        return rows.map((r) => this.mapConsumption(r));
+      }
+      async consumptionsByIds(exec, ids) {
+        if (ids.length === 0) return [];
+        const rows = await this.consumptionSelect(exec).where(inArray(labConsumptions.id, ids)).orderBy(asc(labConsumptions.createdAt));
+        return rows.map((r) => this.mapConsumption(r));
+      }
+      /**
+       * Takes what the shelf has for each consumption (FEFO, no expired batch) on
+       * batches locked by the caller, writes the movements, and moves `remaining`
+       * and `posted` with one statement each.
+       */
+      async postConsumptions(tx, entries, batches, today, actor) {
+        const plan = planConsumptions(entries.map((e) => ({ key: e.id, itemId: e.itemId, quantity: e.need })), batches, today);
+        const moves = plan.flatMap((p) => p.allocations.map((a) => ({ ...a, consumptionId: p.key, itemId: entries.find((e) => e.id === p.key).itemId })));
+        if (moves.length === 0) return;
+        await tx.insert(stockMovements).values(
+          moves.map((m) => ({
+            itemId: m.itemId,
+            batchId: m.batchId,
+            kind: "consumption",
+            quantity: -m.quantity,
+            consumptionId: m.consumptionId,
+            createdBy: actor.id,
+            createdByName: actor.name
+          }))
+        );
+        const left = new Map(batches.map((b) => [b.id, b.remaining]));
+        for (const m of moves) left.set(m.batchId, (left.get(m.batchId) ?? 0) - m.quantity);
+        const remaining = Array.from(new Set(moves.map((m) => m.batchId))).map((id) => {
+          const r = left.get(id);
+          return { id, remaining: r < QTY_EPSILON ? 0 : r };
+        });
+        await tx.execute(sql2`
+      UPDATE inventory_batches AS b SET remaining = v.remaining
+        FROM jsonb_to_recordset(${JSON.stringify(remaining)}::jsonb) AS v(id varchar, remaining double precision)
+       WHERE b.id = v.id`);
+        const posted = plan.filter((p) => p.posted > 0).map((p) => ({ id: p.key, posted: Number((entries.find((e) => e.id === p.key).posted + p.posted).toFixed(6)) }));
+        await tx.execute(sql2`
+      UPDATE lab_consumptions AS c SET posted = v.posted
+        FROM jsonb_to_recordset(${JSON.stringify(posted)}::jsonb) AS v(id varchar, posted double precision)
+       WHERE c.id = v.id`);
+      }
+      async lockLiveBatches(tx, itemIds) {
+        if (itemIds.length === 0) return [];
+        return tx.select().from(inventoryBatches).where(and(inArray(inventoryBatches.itemId, Array.from(new Set(itemIds))), isNull(inventoryBatches.cancelledAt))).orderBy(asc(inventoryBatches.id)).for("update");
+      }
+      async consumeVerified(scope, today, actor) {
+        return db.transaction(async (tx) => {
+          const exec = tx;
+          const orderFilter = scope.orderId ? sql2`AND ot.order_id = ${scope.orderId}` : sql2``;
+          const found = await tx.execute(sql2`
+        SELECT ot.id AS order_test_id, ot.order_id, ot.test_id, n.id AS norm_id, n.item_id, n.quantity
+          FROM order_tests ot
+          JOIN consumption_norms n
+            ON n.test_id = ot.test_id
+           AND n.approved_at IS NOT NULL AND n.approved_at <= ot.verified_at
+           AND (n.retired_at IS NULL OR n.retired_at > ot.verified_at)
+         WHERE ot.verified_at IS NOT NULL ${orderFilter}
+           AND NOT EXISTS (SELECT 1 FROM lab_consumptions c
+                            WHERE c.order_test_id = ot.id AND c.item_id = n.item_id AND c.kind = 'norm')
+         ORDER BY ot.verified_at
+         LIMIT ${MAX_CONSUME_BATCH}`);
+          const candidates = found.rows;
+          if (candidates.length === 0) return [];
+          const batches = await this.lockLiveBatches(exec, candidates.map((c) => c.item_id));
+          const inserted = await tx.insert(labConsumptions).values(
+            candidates.map((c) => ({
+              kind: "norm",
+              orderId: c.order_id,
+              orderTestId: c.order_test_id,
+              testId: c.test_id,
+              itemId: c.item_id,
+              normId: c.norm_id,
+              quantity: Number(c.quantity),
+              posted: 0,
+              createdBy: actor.id,
+              createdByName: actor.name
+            }))
+          ).onConflictDoNothing({ target: [labConsumptions.orderTestId, labConsumptions.itemId], where: sql2`kind = 'norm'` }).returning();
+          await this.postConsumptions(exec, inserted.map((c) => ({ id: c.id, itemId: c.itemId, need: c.quantity, posted: 0 })), batches, today, actor);
+          return this.consumptionsByIds(exec, inserted.map((c) => c.id));
+        });
+      }
+      async recordConsumption(input, today, actor) {
+        return db.transaction(async (tx) => {
+          const exec = tx;
+          const batches = await this.lockLiveBatches(exec, [input.itemId]);
+          const [c] = await tx.insert(labConsumptions).values({
+            kind: "extra",
+            testId: input.testId,
+            itemId: input.itemId,
+            quantity: input.quantity,
+            posted: 0,
+            reason: input.reason,
+            note: input.note ?? null,
+            createdBy: actor.id,
+            createdByName: actor.name
+          }).returning();
+          await this.postConsumptions(exec, [{ id: c.id, itemId: c.itemId, need: c.quantity, posted: 0 }], batches, today, actor);
+          return (await this.consumptionsByIds(exec, [c.id]))[0];
+        });
+      }
+      async settleConsumptions(ids, today, actor) {
+        return db.transaction(async (tx) => {
+          const exec = tx;
+          const where = [isNull(labConsumptions.cancelledAt), sql2`${labConsumptions.quantity} - ${labConsumptions.posted} > ${QTY_EPSILON}`];
+          if (ids) where.push(inArray(labConsumptions.id, ids.length ? ids : ["-"]));
+          const short = await tx.select().from(labConsumptions).where(and(...where)).orderBy(asc(labConsumptions.createdAt)).limit(MAX_CONSUME_BATCH).for("update");
+          if (short.length === 0) return [];
+          const batches = await this.lockLiveBatches(exec, short.map((c) => c.itemId));
+          await this.postConsumptions(exec, short.map((c) => ({ id: c.id, itemId: c.itemId, need: shortOf(c), posted: c.posted })), batches, today, actor);
+          const after = await this.consumptionsByIds(exec, short.map((c) => c.id));
+          const moved = after.filter((a) => a.posted > short.find((s) => s.id === a.id).posted + QTY_EPSILON);
+          if (moved.length) {
+            await tx.update(labConsumptions).set({ settledAt: (/* @__PURE__ */ new Date()).toISOString(), settledByName: actor.name }).where(inArray(labConsumptions.id, moved.map((m) => m.id)));
+          }
+          return this.consumptionsByIds(exec, moved.map((m) => m.id));
+        });
+      }
+      async cancelConsumption(id, reason, actor) {
+        return db.transaction(async (tx) => {
+          const exec = tx;
+          const [c] = await tx.select().from(labConsumptions).where(eq(labConsumptions.id, id)).for("update");
+          if (!c) return void 0;
+          if (c.kind !== "extra") throw new StorageConflict(NORM_CONSUMPTION_FINAL);
+          if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
+          const out = await tx.select().from(stockMovements).where(and(eq(stockMovements.consumptionId, id), eq(stockMovements.kind, "consumption")));
+          if (await this.countedSince(exec, out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+          if (out.length) {
+            const batches = await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, Array.from(new Set(out.map((m) => m.batchId))))).orderBy(asc(inventoryBatches.id)).for("update");
+            const byId = new Map(batches.map((b) => [b.id, b]));
+            for (const m of out) {
+              const b = byId.get(m.batchId);
+              if (!b) continue;
+              b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+              await tx.update(inventoryBatches).set({ remaining: b.remaining }).where(eq(inventoryBatches.id, b.id));
+            }
+            await tx.insert(stockMovements).values(
+              out.map((m) => ({
+                itemId: m.itemId,
+                batchId: m.batchId,
+                kind: "consumption_cancel",
+                quantity: -m.quantity,
+                consumptionId: id,
+                note: reason,
+                createdBy: actor.id,
+                createdByName: actor.name
+              }))
+            );
+          }
+          await tx.update(labConsumptions).set({ cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason }).where(eq(labConsumptions.id, id));
+          return (await this.consumptionsByIds(exec, [id]))[0];
+        });
+      }
       async listReceipts(query = {}) {
         const rows = await db.select({
           r: stockReceipts,
@@ -6970,6 +7419,8 @@ var init_db = __esm({
       stockIssues: [],
       stockCounts: [],
       stockCountLines: [],
+      consumptionNorms: [],
+      labConsumptions: [],
       icdUzNames: {},
       security: null,
       patients: [],
@@ -7034,6 +7485,7 @@ var init_storage_file = __esm({
     init_lab_devices();
     init_qc();
     init_inventory();
+    init_consumption();
     init_icd10();
     init_lab_verification();
     init_lab_rules();
@@ -9438,6 +9890,7 @@ var init_storage_file = __esm({
             receiptId: receipt.id,
             issueId: null,
             countId: null,
+            consumptionId: null,
             note: null,
             createdAt: now,
             createdBy: actor.id,
@@ -9465,6 +9918,7 @@ var init_storage_file = __esm({
             receiptId: id,
             issueId: null,
             countId: null,
+            consumptionId: null,
             note: reason,
             createdAt: now,
             createdBy: actor.id,
@@ -9568,6 +10022,7 @@ var init_storage_file = __esm({
             receiptId: null,
             issueId: issue.id,
             countId: null,
+            consumptionId: null,
             note: null,
             createdAt: now,
             createdBy: actor.id,
@@ -9596,6 +10051,7 @@ var init_storage_file = __esm({
             receiptId: null,
             issueId: id,
             countId: null,
+            consumptionId: null,
             note: reason,
             createdAt: now,
             createdBy: actor.id,
@@ -9766,6 +10222,7 @@ var init_storage_file = __esm({
             receiptId: null,
             issueId: null,
             countId: id,
+            consumptionId: null,
             note: `Inventarizatsiya \u2116${count.number}`,
             createdAt: now,
             createdBy: actor.id,
@@ -9784,6 +10241,234 @@ var init_storage_file = __esm({
         Object.assign(count, { status: "cancelled", cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
         await this.persist();
         return this.countDetail(count);
+      }
+      // ---------------------------------------------------------- consumption (B5.6)
+      normView(n) {
+        const t = this.db.tests.find((x) => x.id === n.testId);
+        const it = this.db.inventoryItems.find((x) => x.id === n.itemId);
+        return { ...n, testName: t?.name ?? "\u2014", itemName: it?.name ?? "\u2014", unit: it?.unit ?? "", itemKind: it?.kind ?? "consumable", itemActive: it?.isActive ?? false };
+      }
+      async listNorms() {
+        return this.db.consumptionNorms.map((n) => this.normView(n)).sort((a, b) => a.testName.localeCompare(b.testName) || a.itemName.localeCompare(b.itemName) || b.createdAt.localeCompare(a.createdAt));
+      }
+      async getNorm(id) {
+        const n = this.db.consumptionNorms.find((x) => x.id === id);
+        return n && this.normView(n);
+      }
+      async createNorm(input, actor) {
+        if (this.db.consumptionNorms.some((n2) => n2.testId === input.testId && n2.itemId === input.itemId && n2.status === "draft")) {
+          throw new StorageConflict(NORM_DRAFT_EXISTS);
+        }
+        const n = {
+          id: randomUUID(),
+          testId: input.testId,
+          itemId: input.itemId,
+          quantity: input.quantity,
+          status: "draft",
+          notes: input.notes ?? null,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          createdByName: actor.name,
+          updatedAt: null,
+          updatedBy: null,
+          approvedAt: null,
+          approvedBy: null,
+          approvedByName: null,
+          retiredAt: null,
+          retiredBy: null,
+          retiredByName: null,
+          retireReason: null
+        };
+        this.db.consumptionNorms.push(n);
+        await this.persist();
+        return this.normView(n);
+      }
+      async updateNorm(id, input, actor) {
+        const n = this.db.consumptionNorms.find((x) => x.id === id);
+        if (!n) return void 0;
+        if (n.status !== "draft") throw new StorageConflict(NORM_NOT_DRAFT);
+        if (input.quantity !== void 0) n.quantity = input.quantity;
+        if (input.notes !== void 0) n.notes = input.notes;
+        Object.assign(n, { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id });
+        await this.persist();
+        return this.normView(n);
+      }
+      async approveNorm(id, actor) {
+        const n = this.db.consumptionNorms.find((x) => x.id === id);
+        if (!n) return void 0;
+        if (n.status !== "draft") throw new StorageConflict(NORM_NOT_DRAFT);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const old = this.db.consumptionNorms.find((x) => x.testId === n.testId && x.itemId === n.itemId && x.status === "approved");
+        if (old) Object.assign(old, { status: "retired", retiredAt: now, retiredBy: actor.id, retiredByName: actor.name, retireReason: "Yangi norma tasdiqlandi" });
+        Object.assign(n, { status: "approved", approvedAt: now, approvedBy: actor.id, approvedByName: actor.name });
+        await this.persist();
+        return { norm: this.normView(n), replaced: old ? this.normView(old) : null };
+      }
+      async retireNorm(id, reason, actor) {
+        const n = this.db.consumptionNorms.find((x) => x.id === id);
+        if (!n) return void 0;
+        if (n.status === "retired") throw new StorageConflict(NORM_ALREADY_RETIRED);
+        Object.assign(n, { status: "retired", retiredAt: (/* @__PURE__ */ new Date()).toISOString(), retiredBy: actor.id, retiredByName: actor.name, retireReason: reason });
+        await this.persist();
+        return this.normView(n);
+      }
+      consumptionView(c) {
+        const it = this.db.inventoryItems.find((x) => x.id === c.itemId);
+        const value = this.db.stockMovements.filter((m) => m.consumptionId === c.id).reduce((s, m) => s + movementValue(m.quantity, this.db.inventoryBatches.find((b) => b.id === m.batchId)?.purchasePrice ?? 0), 0);
+        return {
+          ...c,
+          itemName: it?.name ?? "\u2014",
+          unit: it?.unit ?? "",
+          testName: c.testId ? this.db.tests.find((t) => t.id === c.testId)?.name ?? null : null,
+          orderNumber: c.orderId ? this.db.orders.find((o) => o.id === c.orderId)?.orderNumber ?? null : null,
+          value
+        };
+      }
+      async listConsumptions(query = {}) {
+        return this.db.labConsumptions.filter(
+          (c) => (!query.from || c.createdAt >= query.from) && (!query.to || c.createdAt < query.to) && (!query.shortOnly || !c.cancelledAt && shortOf(c) > 0)
+        ).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, query.limit ?? 5e3).map((c) => this.consumptionView(c));
+      }
+      /** As on Postgres: FEFO from usable batches, the rest stays a shortage. */
+      postConsumptions(entries, today, actor) {
+        const ids = new Set(entries.map((e) => e.c.itemId));
+        const batches = this.db.inventoryBatches.filter((b) => ids.has(b.itemId) && !b.cancelledAt);
+        const plan = planConsumptions(entries.map((e) => ({ key: e.c.id, itemId: e.c.itemId, quantity: e.need })), batches, today);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const p of plan) {
+          const e = entries.find((x) => x.c.id === p.key);
+          for (const a of p.allocations) {
+            const b = batches.find((x) => x.id === a.batchId);
+            b.remaining = b.remaining - a.quantity < QTY_EPSILON ? 0 : b.remaining - a.quantity;
+            this.db.stockMovements.push({
+              id: randomUUID(),
+              itemId: e.c.itemId,
+              batchId: a.batchId,
+              kind: "consumption",
+              quantity: -a.quantity,
+              receiptId: null,
+              issueId: null,
+              countId: null,
+              consumptionId: e.c.id,
+              note: null,
+              createdAt: now,
+              createdBy: actor.id,
+              createdByName: actor.name
+            });
+          }
+          e.c.posted = Number((e.c.posted + p.posted).toFixed(6));
+        }
+      }
+      async consumeVerified(scope, today, actor) {
+        const done = new Set(this.db.labConsumptions.filter((c) => c.kind === "norm").map((c) => `${c.orderTestId}|${c.itemId}`));
+        const created = [];
+        const lines = this.db.orderTests.filter((ot) => ot.verifiedAt && (!scope.orderId || ot.orderId === scope.orderId)).sort((a, b) => a.verifiedAt.localeCompare(b.verifiedAt));
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const ot of lines) {
+          for (const n of this.db.consumptionNorms) {
+            if (created.length >= MAX_CONSUME_BATCH) break;
+            if (n.testId !== ot.testId || !normInForce(n, ot.verifiedAt) || done.has(`${ot.id}|${n.itemId}`)) continue;
+            done.add(`${ot.id}|${n.itemId}`);
+            created.push({
+              id: randomUUID(),
+              kind: "norm",
+              orderId: ot.orderId,
+              orderTestId: ot.id,
+              testId: ot.testId,
+              itemId: n.itemId,
+              normId: n.id,
+              quantity: n.quantity,
+              posted: 0,
+              reason: null,
+              note: null,
+              createdAt: now,
+              createdBy: actor.id,
+              createdByName: actor.name,
+              settledAt: null,
+              settledByName: null,
+              cancelledAt: null,
+              cancelledBy: null,
+              cancelledByName: null,
+              cancelReason: null
+            });
+          }
+        }
+        if (created.length === 0) return [];
+        this.db.labConsumptions.push(...created);
+        this.postConsumptions(created.map((c) => ({ c, need: c.quantity })), today, actor);
+        await this.persist();
+        return created.map((c) => this.consumptionView(c));
+      }
+      async recordConsumption(input, today, actor) {
+        const c = {
+          id: randomUUID(),
+          kind: "extra",
+          orderId: null,
+          orderTestId: null,
+          testId: input.testId,
+          itemId: input.itemId,
+          normId: null,
+          quantity: input.quantity,
+          posted: 0,
+          reason: input.reason,
+          note: input.note ?? null,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          createdByName: actor.name,
+          settledAt: null,
+          settledByName: null,
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelledByName: null,
+          cancelReason: null
+        };
+        this.db.labConsumptions.push(c);
+        this.postConsumptions([{ c, need: c.quantity }], today, actor);
+        await this.persist();
+        return this.consumptionView(c);
+      }
+      async settleConsumptions(ids, today, actor) {
+        const wanted = ids ? new Set(ids) : null;
+        const short = this.db.labConsumptions.filter((c) => !c.cancelledAt && shortOf(c) > 0 && (!wanted || wanted.has(c.id))).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, MAX_CONSUME_BATCH);
+        if (short.length === 0) return [];
+        const before = new Map(short.map((c) => [c.id, c.posted]));
+        this.postConsumptions(short.map((c) => ({ c, need: shortOf(c) })), today, actor);
+        const moved = short.filter((c) => c.posted > before.get(c.id) + QTY_EPSILON);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const c of moved) Object.assign(c, { settledAt: now, settledByName: actor.name });
+        await this.persist();
+        return moved.map((c) => this.consumptionView(c));
+      }
+      async cancelConsumption(id, reason, actor) {
+        const c = this.db.labConsumptions.find((x) => x.id === id);
+        if (!c) return void 0;
+        if (c.kind !== "extra") throw new StorageConflict(NORM_CONSUMPTION_FINAL);
+        if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
+        const out = this.db.stockMovements.filter((m) => m.consumptionId === id && m.kind === "consumption");
+        if (this.countedSince(out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const m of out) {
+          const b = this.db.inventoryBatches.find((x) => x.id === m.batchId);
+          if (b) b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+          this.db.stockMovements.push({
+            id: randomUUID(),
+            itemId: m.itemId,
+            batchId: m.batchId,
+            kind: "consumption_cancel",
+            quantity: -m.quantity,
+            receiptId: null,
+            issueId: null,
+            countId: null,
+            consumptionId: id,
+            note: reason,
+            createdAt: now,
+            createdBy: actor.id,
+            createdByName: actor.name
+          });
+        }
+        Object.assign(c, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+        await this.persist();
+        return this.consumptionView(c);
       }
       async getLabBoard(day) {
         const all = this.db.orders.map((o) => this.hydrate(o));
@@ -12506,11 +13191,12 @@ function registerInventoryRoutes(app) {
     requirePermission("inventory.read"),
     handle(async (_req, res) => {
       const today = clockNow().date;
-      const [items, batches] = await Promise.all([
+      const [items, batches, short] = await Promise.all([
         storage.listInventoryItems().catch((e) => emptyIfMissing(e, [])),
-        storage.listBatches().catch((e) => emptyIfMissing(e, []))
+        storage.listBatches().catch((e) => emptyIfMissing(e, [])),
+        storage.listConsumptions({ shortOnly: true, limit: 1e3 }).catch((e) => emptyIfMissing(e, []))
       ]);
-      res.json(summarizeStock(items, batches, today));
+      res.json({ ...summarizeStock(items, batches, today), consumptionShort: short.length });
     })
   );
   app.get(
@@ -12596,7 +13282,172 @@ function registerInventoryRoutes(app) {
   );
 }
 
+// server/routes-consumption.ts
+init_schema();
+init_consumption();
+init_inventory();
+init_appointment();
+var DAY = /^\d{4}-\d{2}-\d{2}$/;
+var startOf = (day) => (/* @__PURE__ */ new Date(`${day}T00:00:00`)).toISOString();
+var nextDay = (day) => {
+  const d = /* @__PURE__ */ new Date(`${day}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+};
+function registerConsumptionRoutes(app) {
+  app.get(
+    "/api/consumption/norms",
+    requirePermission("inventory.read", "consumption.norms", "consumption.approve"),
+    handle(async (_req, res) => {
+      res.json(await storage.listNorms().catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.post(
+    "/api/consumption/norms",
+    requirePermission("consumption.norms"),
+    handle(async (req, res) => {
+      const input = insertNormSchema.parse(req.body);
+      const [test, item] = await Promise.all([storage.getTest(input.testId), storage.getInventoryItem(input.itemId)]);
+      if (!test) return res.status(400).json({ message: "Tahlil topilmadi" });
+      if (!item) return res.status(400).json({ message: "Mahsulot topilmadi" });
+      if (!item.isActive) return res.status(400).json({ message: `"${item.name}" faolsizlantirilgan` });
+      if (!CONSUMABLE_KINDS.includes(item.kind)) return res.status(400).json({ message: "Tahlil uchun reagent yoki sarf materialini tanlang" });
+      const norm2 = await storage.createNorm(input, actorOf(req));
+      await audit(req, "create", "inventory", norm2.id, `Sarf normasi taklif qilindi: "${test.name}" \u2014 ${item.name} ${fmtQty(norm2.quantity)} ${item.unit} (1 tahlilga)`);
+      res.status(201).json(norm2);
+    })
+  );
+  app.patch(
+    "/api/consumption/norms/:id",
+    requirePermission("consumption.norms"),
+    handle(async (req, res) => {
+      const input = updateNormSchema.parse(req.body);
+      const before = await storage.getNorm(req.params.id);
+      if (!before) return res.status(404).json({ message: "Norma topilmadi" });
+      const norm2 = await storage.updateNorm(before.id, input, actorOf(req));
+      if (!norm2) return res.status(404).json({ message: "Norma topilmadi" });
+      await audit(
+        req,
+        "update",
+        "inventory",
+        norm2.id,
+        `Sarf normasi (tasdiqlanmagan): "${norm2.testName}" \u2014 ${norm2.itemName} ${fmtQty(before.quantity)} \u2192 ${fmtQty(norm2.quantity)} ${norm2.unit}`
+      );
+      res.json(norm2);
+    })
+  );
+  app.post(
+    "/api/consumption/norms/:id/approve",
+    requirePermission("consumption.approve"),
+    handle(async (req, res) => {
+      const out = await storage.approveNorm(req.params.id, actorOf(req));
+      if (!out) return res.status(404).json({ message: "Norma topilmadi" });
+      const { norm: norm2, replaced } = out;
+      const own = norm2.createdBy && norm2.createdBy === req.user?.id ? " (o'zi taklif qilgan)" : "";
+      await audit(
+        req,
+        "verify",
+        "inventory",
+        norm2.id,
+        `Sarf normasi tasdiqlandi${own}: "${norm2.testName}" \u2014 ${norm2.itemName} ${fmtQty(norm2.quantity)} ${norm2.unit}` + (replaced ? ` (oldingi norma ${fmtQty(replaced.quantity)} ${replaced.unit} o'rniga)` : "")
+      );
+      res.json(out);
+    })
+  );
+  app.post(
+    "/api/consumption/norms/:id/retire",
+    requirePermission("consumption.norms", "consumption.approve"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const norm2 = await storage.retireNorm(req.params.id, reason, actorOf(req));
+      if (!norm2) return res.status(404).json({ message: "Norma topilmadi" });
+      await audit(req, "void", "inventory", norm2.id, `Sarf normasi bekor qilindi: "${norm2.testName}" \u2014 ${norm2.itemName} ${fmtQty(norm2.quantity)} ${norm2.unit}. Sabab: ${reason}`);
+      res.json(norm2);
+    })
+  );
+  app.get(
+    "/api/consumption",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      if (stringParam(req.query.short) === "1") {
+        const entries2 = await storage.listConsumptions({ shortOnly: true, limit: 1e3 }).catch((e) => emptyIfMissing(e, []));
+        return res.json({ entries: entries2 });
+      }
+      const today = clockNow().date;
+      const from = stringParam(req.query.from) ?? `${today.slice(0, 7)}-01`;
+      const to = stringParam(req.query.to) ?? today;
+      if (!DAY.test(from) || !DAY.test(to)) return res.status(400).json({ message: "Sanani YYYY-MM-DD ko'rinishida kiriting" });
+      if (from > to) return res.status(400).json({ message: "Davr boshi oxiridan keyin bo'lishi mumkin emas" });
+      const entries = await storage.listConsumptions({ from: startOf(from), to: nextDay(to) }).catch((e) => emptyIfMissing(e, []));
+      res.json({ from, to, report: summarizeConsumption(entries), entries: entries.slice(0, 500), total: entries.length });
+    })
+  );
+  app.post(
+    "/api/consumption",
+    requirePermission("consumption.record"),
+    handle(async (req, res) => {
+      const input = extraConsumptionSchema.parse(req.body);
+      if (input.reason === "other" && !input.note) return res.status(400).json({ message: "Sababni izohda yozing" });
+      const item = await storage.getInventoryItem(input.itemId);
+      if (!item) return res.status(400).json({ message: "Mahsulot topilmadi" });
+      if (input.testId && !await storage.getTest(input.testId)) return res.status(400).json({ message: "Tahlil topilmadi" });
+      const c = await storage.recordConsumption(input, clockNow().date, actorOf(req));
+      await audit(
+        req,
+        "create",
+        "inventory",
+        c.id,
+        `Qo'shimcha sarf (${EXTRA_REASON_LABELS[input.reason]}${c.testName ? `, ${c.testName}` : ""}): ${describeConsumption([c])}${input.note ? `. ${input.note}` : ""}`
+      );
+      res.status(201).json(c);
+    })
+  );
+  app.post(
+    "/api/consumption/:id/cancel",
+    requirePermission("consumption.approve"),
+    handle(async (req, res) => {
+      const { reason } = voidRecordSchema.parse(req.body);
+      const c = await storage.cancelConsumption(req.params.id, reason, actorOf(req));
+      if (!c) return res.status(404).json({ message: "Sarf topilmadi" });
+      await audit(req, "void", "inventory", c.id, `Qo'shimcha sarf bekor qilindi, mahsulot partiyalariga qaytarildi: ${c.itemName} ${fmtQty(c.quantity)} ${c.unit}. Sabab: ${reason}`);
+      res.json(c);
+    })
+  );
+  app.post(
+    "/api/consumption/reconcile",
+    requirePermission("inventory.issue", "consumption.approve"),
+    handle(async (req, res) => {
+      const today = clockNow().date;
+      const consumed = await storage.consumeVerified({}, today, actorOf(req));
+      const settled = await storage.settleConsumptions(null, today, actorOf(req));
+      const stillShort = (await storage.listConsumptions({ shortOnly: true, limit: 1e3 })).length;
+      if (consumed.length || settled.length) {
+        await audit(
+          req,
+          "update",
+          "inventory",
+          null,
+          `Reagent sarfi qayta hisoblandi: ${consumed.length} ta yangi sarf${consumed.length ? ` (${describeConsumption(consumed)})` : ""}, ${settled.length} ta yetishmovchilik yopildi${stillShort ? `, ${stillShort} tasi qoldi` : ""}`
+        );
+      }
+      res.json({ consumed: consumed.length, settled: settled.length, stillShort });
+    })
+  );
+}
+
+// server/reagent-consumption.ts
+init_appointment();
+async function consumeForOrder(orderId, orderNumber, actor) {
+  try {
+    return await storage.consumeVerified({ orderId }, clockNow().date, actor);
+  } catch (err) {
+    log(`[sarf] #${orderNumber}: reagent sarfi yozilmadi, "Qayta hisoblash" yozadi \u2014 ${err instanceof Error ? err.message : err}`);
+    return [];
+  }
+}
+
 // server/routes.ts
+init_consumption();
 async function registerRoutes(app) {
   setupAuth(app);
   console.log(`[db] ${usingPostgres ? "Postgres (Neon)" : "Mahalliy JSON (.data/db.json)"}`);
@@ -13344,6 +14195,10 @@ async function registerRoutes(app) {
         order.id,
         `#${order.orderNumber}: ${verified} ta natija tasdiqlandi${selfChecked ? ` (${selfChecked} tasini o'zi kiritgan)` : ""}${released ? " \u2014 buyurtma to'liq tasdiqlandi" : ""}`
       );
+      const consumed = await consumeForOrder(order.id, order.orderNumber, actorOf(req));
+      if (consumed.length) {
+        await audit(req, "create", "inventory", order.id, `Reagent sarfi #${order.orderNumber} (norma bo'yicha): ${describeConsumption(consumed)}`);
+      }
       const [delivery, doctorTold] = released ? await Promise.all([notifyIfReady(order), notifyOrderingDoctor(order, { kind: "released" })]) : [void 0, false];
       res.json({ ...order, telegram: delivery, doctorNotified: doctorTold });
     })
@@ -14375,6 +15230,7 @@ async function registerRoutes(app) {
   registerLabRoutes(app);
   registerQcRoutes(app);
   registerInventoryRoutes(app);
+  registerConsumptionRoutes(app);
   app.use("/api", (req, res, next) => {
     if (res.headersSent) return next();
     res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });
