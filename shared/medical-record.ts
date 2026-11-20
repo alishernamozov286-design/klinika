@@ -3,6 +3,7 @@
  * the screens: what makes a record signable, which fields a save or a
  * correction changed, and the diagnosis history drawn from signed records.
  */
+import { prescriptionProblem, sameTreatment } from "./prescription";
 import {
   RECORD_CODE_FIELDS,
   RECORD_CODE_LABELS,
@@ -10,15 +11,18 @@ import {
   RECORD_FIELD_LABELS,
   type DiagnosisEntry,
   type MedicalRecordWithDetails,
+  type PrescriptionLine,
   type RecordCodeField,
   type RecordField,
 } from "./schema";
 
-type Fields = Partial<Record<RecordField | RecordCodeField, string | null>>;
+type Fields = Partial<Record<RecordField | RecordCodeField, string | null>> & { prescriptions?: readonly PrescriptionLine[] | null };
 
-/** Every field a save or a correction carries: the six texts and the two MKB-10 codes. */
-export type AnyRecordField = RecordField | RecordCodeField;
-const ALL_FIELDS: readonly AnyRecordField[] = [...RECORD_FIELDS, ...RECORD_CODE_FIELDS];
+/** Every field a save or a correction carries: the six texts, the two MKB-10 codes and the treatment (B3.6). */
+export type AnyRecordField = RecordField | RecordCodeField | "prescriptions";
+type TextField = RecordField | RecordCodeField;
+const TEXT_FIELDS: readonly TextField[] = [...RECORD_FIELDS, ...RECORD_CODE_FIELDS];
+export const TREATMENT_LABEL = "Davolash (retsept)";
 
 const norm = (v: string | null | undefined) => (v ?? "").trim();
 
@@ -36,16 +40,27 @@ export function signProblem(fields: Fields): string | null {
   if (!norm(fields.preliminaryDiagnosis) && !norm(fields.finalDiagnosis) && !fields.preliminaryDiagnosisCode && !fields.finalDiagnosisCode) {
     return "Dastlabki yoki yakuniy tashxisni kiriting";
   }
-  return null;
+  // A half-written prescription is fine in a draft, never in a signed record.
+  return prescriptionProblem(fields.prescriptions);
 }
 
-/** Fields whose value differs between two versions, in form order — a changed MKB-10 code counts. */
+/**
+ * Fields whose value differs between two versions, in form order — a changed
+ * MKB-10 code counts, and so does any change to the treatment lines. A field
+ * one side does not carry is not compared (a text-only save leaves the treatment alone).
+ */
 export function changedFields(before: Fields, after: Fields): AnyRecordField[] {
-  return ALL_FIELDS.filter((f) => norm(before[f]) !== norm(after[f]));
+  const out: AnyRecordField[] = TEXT_FIELDS.filter((f) => norm(before[f]) !== norm(after[f]));
+  if (before.prescriptions !== undefined && after.prescriptions !== undefined && !sameTreatment(before.prescriptions, after.prescriptions)) {
+    // Treatment sits between the diagnoses and the recommendations on the form.
+    const at = out.indexOf("recommendations");
+    out.splice(at === -1 ? out.length : at, 0, "prescriptions");
+  }
+  return out;
 }
 
 const labelOf = (f: AnyRecordField) =>
-  (RECORD_FIELD_LABELS as Record<string, string>)[f] ?? (RECORD_CODE_LABELS as Record<string, string>)[f];
+  f === "prescriptions" ? TREATMENT_LABEL : ((RECORD_FIELD_LABELS as Record<string, string>)[f] ?? (RECORD_CODE_LABELS as Record<string, string>)[f]);
 
 /** "Shikoyatlar, Yakuniy tashxis" — for the audit line. */
 export const fieldList = (fields: AnyRecordField[]) => fields.map(labelOf).join(", ");
@@ -69,7 +84,10 @@ export function diagnosisHistory(records: MedicalRecordWithDetails[]): Diagnosis
   return out.sort((a, b) => b.date.localeCompare(a.date));
 }
 
-/** Picks the six texts and two codes out of anything that has them. */
-export function pickFields(source: Fields): Record<AnyRecordField, string | null> {
-  return Object.fromEntries(ALL_FIELDS.map((f) => [f, source[f] ?? null])) as Record<AnyRecordField, string | null>;
+/** Picks the six texts, two codes and the treatment out of anything that has them. */
+export function pickFields(source: Fields): Record<TextField, string | null> & { prescriptions: PrescriptionLine[] } {
+  return {
+    ...(Object.fromEntries(TEXT_FIELDS.map((f) => [f, source[f] ?? null])) as Record<TextField, string | null>),
+    prescriptions: [...(source.prescriptions ?? [])],
+  };
 }

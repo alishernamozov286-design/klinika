@@ -580,6 +580,7 @@ const appointmentsTableExists = (tx: Tx | typeof db) => tableExists(tx, "appoint
 const mapRecord = (row: typeof medicalRecords.$inferSelect): MedicalRecord => ({
   ...row,
   status: row.status as RecordStatus,
+  prescriptions: row.prescriptions ?? [],
   signedAt: iso(row.signedAt),
   amendedAt: iso(row.amendedAt),
   createdAt: iso(row.createdAt) ?? row.createdAt,
@@ -1241,6 +1242,7 @@ export class PgStorage implements IStorage {
         recommendations: current.recommendations,
         preliminaryDiagnosisCode: current.preliminaryDiagnosisCode,
         finalDiagnosisCode: current.finalDiagnosisCode,
+        prescriptions: current.prescriptions ?? [],
         signedAt: current.signedAt,
         signedBy: current.signedBy,
         replacedAt: now,
@@ -1274,6 +1276,7 @@ export class PgStorage implements IStorage {
       .orderBy(desc(medicalRecordVersions.version));
     return rows.map((r) => ({
       ...r.v,
+      prescriptions: r.v.prescriptions ?? [],
       signedAt: iso(r.v.signedAt),
       replacedAt: iso(r.v.replacedAt) ?? r.v.replacedAt,
       replacedByName: r.replacedByName ?? null,

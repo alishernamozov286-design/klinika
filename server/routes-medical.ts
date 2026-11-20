@@ -17,7 +17,11 @@ import {
   REFERRAL_KIND_LABELS,
   importIcdUzSchema,
   updateIcdUzSchema,
+  type InventoryItemView,
+  type PrescriptionCatalog,
+  type PrescriptionLine,
   type RecordCodeField,
+  type ServiceWithDetails,
   amendRecordSchema,
   cancelReferralSchema,
   createReferralSchema,
@@ -38,6 +42,7 @@ import { isExamServiceKind, referralSubject } from "@shared/referral";
 import { normalizeIcdCode, parseUzNames } from "@shared/icd10";
 import { releasedLines } from "@shared/lab-verification";
 import { changedFields, diagnosisHistory, fieldList, pickFields, signProblem } from "@shared/medical-record";
+import { describeLine, treatmentHistory } from "@shared/prescription";
 import { patientAge } from "@shared/patient-identity";
 import { hasPermission, requirePermission } from "./rbac";
 import { actorOf, audit, emptyIfMissing, handle, logPatientView, stringParam } from "./route-helpers";
@@ -91,6 +96,51 @@ async function icdCodeProblem(
   const ok = new Set(found.filter((r) => r.selectable).map((r) => r.code));
   const bad = wanted.filter((c) => !ok.has(c));
   return bad.length ? `MKB-10 katalogida tanlab bo'lmaydigan kod: ${bad.join(", ")}` : null;
+}
+
+/**
+ * B3.6: the treatment's catalogue references. A medicine with an itemId must
+ * be a warehouse "dori vositasi", a procedure with a serviceId a "muolaja"
+ * service; their names are taken from the catalogue (the doctor cannot rename
+ * a stocked medicine). Something no longer active may stay where it already
+ * was, but is not chosen anew — as with MKB-10 codes.
+ */
+async function checkTreatment(
+  lines: PrescriptionLine[] | undefined,
+  before: readonly PrescriptionLine[],
+): Promise<{ lines?: PrescriptionLine[]; error?: string }> {
+  if (!lines) return {};
+  const hadItem = new Set(before.map((l) => l.itemId).filter(Boolean));
+  const hadService = new Set(before.map((l) => l.serviceId).filter(Boolean));
+  const out: PrescriptionLine[] = [];
+  const seen = new Set<string>();
+  for (const [i, l] of lines.entries()) {
+    const at = `Davolash, ${i + 1}-qator`;
+    if (seen.has(l.id)) return { error: `${at}: qator takrorlangan` };
+    seen.add(l.id);
+    if (l.kind === "medicine") {
+      if (l.serviceId) return { error: `${at}: dori qatoriga xizmat biriktirib bo'lmaydi` };
+      if (l.itemId) {
+        const item = await storage.getInventoryItem(l.itemId).catch((e) => emptyIfMissing(e, undefined));
+        if (!item || item.kind !== "medicine") return { error: `${at}: dori ombor katalogida topilmadi` };
+        if (!item.isActive && !hadItem.has(item.id)) return { error: `${at}: "${item.name}" faolsizlantirilgan` };
+        out.push({ ...l, name: item.name, sessions: null });
+        continue;
+      }
+      out.push({ ...l, sessions: null });
+    } else {
+      if (l.itemId) return { error: `${at}: muolaja qatoriga dori biriktirib bo'lmaydi` };
+      if (l.serviceId) {
+        const svc = await storage.getService(l.serviceId).catch((e) => emptyIfMissing(e, undefined));
+        if (!svc || svc.kind !== "muolaja") return { error: `${at}: muolaja xizmatlar katalogida topilmadi` };
+        if (!svc.isActive && !hadService.has(svc.id)) return { error: `${at}: "${svc.name}" xizmati to'xtatilgan` };
+        out.push({ ...l, name: svc.name, dose: null, route: null });
+        continue;
+      }
+      out.push({ ...l, dose: null, route: null });
+    }
+  }
+  return { lines: out };
 }
 
 export function registerMedicalRoutes(app: Express) {
@@ -192,6 +242,29 @@ export function registerMedicalRoutes(app: Express) {
     }),
   );
 
+  /**
+   * B3.6: what a doctor may prescribe from — active medicines of the warehouse
+   * catalogue (with whether any is on the shelf) and active "muolaja" services.
+   * Only what the form needs: a doctor does not read the warehouse itself.
+   */
+  app.get(
+    "/api/prescription-catalog",
+    requirePermission("records.write", "records.amend"),
+    handle(async (_req, res) => {
+      const [items, services] = await Promise.all([
+        storage.listInventoryItems().catch((e) => emptyIfMissing(e, [] as InventoryItemView[])),
+        storage.listServices({ activeOnly: true }).catch((e) => emptyIfMissing(e, [] as ServiceWithDetails[])),
+      ]);
+      const catalog: PrescriptionCatalog = {
+        medicines: items
+          .filter((i) => i.kind === "medicine" && i.isActive)
+          .map((i) => ({ id: i.id, name: i.name, unit: i.unit, manufacturer: i.manufacturer, inStock: i.onHand > 0 })),
+        procedures: services.filter((x) => x.kind === "muolaja").map((x) => ({ id: x.id, name: x.name, price: x.price })),
+      };
+      res.json(catalog);
+    }),
+  );
+
   /** Opens the examination record for an appointment (idempotent). */
   app.post(
     "/api/appointments/:id/record",
@@ -234,6 +307,9 @@ export function registerMedicalRoutes(app: Express) {
       if (before.status !== "draft") {
         return res.status(409).json({ message: "Yozuv tasdiqlangan. O'zgartirish uchun \"Tuzatish kiritish\"dan foydalaning" });
       }
+      const treatment = await checkTreatment(fields.prescriptions, before.prescriptions);
+      if (treatment.error) return res.status(400).json({ message: treatment.error });
+      if (treatment.lines) fields.prescriptions = treatment.lines;
       const record = await storage.saveRecordDraft(before.id, revision, fields, { id: req.user!.id, name: req.user!.fullName });
       const changed = changedFields(before, { ...pickFields(before), ...fields });
       if (changed.length && shouldLogDraft(req, record.id)) {
@@ -260,7 +336,8 @@ export function registerMedicalRoutes(app: Express) {
         "update",
         "record",
         record.id,
-        `${patientLabel(record)} — ko'rik yozuvi tasdiqlandi (${record.finalDiagnosis ? "yakuniy tashxis" : "dastlabki tashxis"}: ${record.finalDiagnosis ?? record.preliminaryDiagnosis})`,
+        `${patientLabel(record)} — ko'rik yozuvi tasdiqlandi (${record.finalDiagnosis ? "yakuniy tashxis" : "dastlabki tashxis"}: ${record.finalDiagnosis ?? record.preliminaryDiagnosis})` +
+          (record.prescriptions.length ? `; davolash: ${record.prescriptions.map(describeLine).join("; ")}` : ""),
       );
       res.json(record);
     }),
@@ -277,6 +354,9 @@ export function registerMedicalRoutes(app: Express) {
       const codeError = await icdCodeProblem(fields, before);
       if (codeError) return res.status(400).json({ message: codeError });
       if (before.status !== "signed") return res.status(409).json({ message: "Qoralamani tuzatish shart emas — uni to'g'ridan-to'g'ri tahrirlang" });
+      const treatment = await checkTreatment(fields.prescriptions, before.prescriptions);
+      if (treatment.error) return res.status(400).json({ message: treatment.error });
+      if (treatment.lines) fields.prescriptions = treatment.lines;
       const changed = changedFields(before, fields);
       if (!changed.length) return res.status(400).json({ message: "Matnda o'zgarish yo'q" });
       const problem = signProblem(fields);
@@ -339,13 +419,9 @@ export function registerMedicalRoutes(app: Express) {
         generatedAt: new Date().toISOString(),
         generatedBy: req.user!.fullName,
       };
-      await audit(
-        req,
-        "export",
-        "record",
-        record.id,
-        `${patientLabel(record)} — ko'rik xulosasi chiqarildi (${record.date}, ${record.doctorName}, v${record.version})`,
-      );
+      // The same signed record makes two documents; the log says which one left the clinic.
+      const doc = stringParam(req.query.doc) === "prescription" ? "retsept" : "ko'rik xulosasi";
+      await audit(req, "export", "record", record.id, `${patientLabel(record)} — ${doc} chiqarildi (${record.date}, ${record.doctorName}, v${record.version})`);
       res.json(summary);
     }),
   );
@@ -381,6 +457,7 @@ export function registerMedicalRoutes(app: Express) {
         allergies,
         records: visible,
         diagnoses: diagnosisHistory(visible),
+        treatments: treatmentHistory(visible),
         labResults: orders ? labResults(orders.items) : null,
         referrals,
       };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { VisitSummary } from "@shared/schema";
-import { buildVisitSummaryPdf, visitSummaryFilename } from "./visit-summary-pdf";
+import { buildPrescriptionPdf, buildVisitSummaryPdf, prescriptionFilename, visitSummaryFilename } from "./visit-summary-pdf";
 
 function summary(overrides: Partial<VisitSummary["record"]> = {}): VisitSummary {
   const record = {
@@ -108,5 +108,29 @@ describe("visit summary PDF (B3.8)", () => {
 
   it("names the file after the patient and the day", () => {
     expect(visitSummaryFilename(summary())).toBe("xulosa-14-2026-11-06.pdf");
+  });
+
+  it("prints the treatment in the summary and on an A5 prescription (B3.6)", async () => {
+    const s = summary();
+    const rx = {
+      ...s,
+      record: {
+        ...s.record,
+        prescriptions: [
+          { id: "a", kind: "medicine" as const, itemId: null, serviceId: null, name: "Paratsetamol", dose: "500 mg", route: "oral" as const, regimen: "Kuniga 3 marta", days: 5, sessions: null, notes: "Harorat 38° dan oshsa" },
+          { id: "b", kind: "procedure" as const, itemId: null, serviceId: null, name: "Ingalyatsiya", dose: null, route: null, regimen: "Har kuni", days: null, sessions: 5, notes: null },
+        ],
+      },
+    };
+    // The treatment table may push the signature onto a new page; it is never split.
+    const sum = await buildVisitSummaryPdf(rx);
+    expect(sum.getNumberOfPages()).toBeLessThanOrEqual(2);
+    const sheet = await buildPrescriptionPdf(rx);
+    expect(sheet.getNumberOfPages()).toBe(1);
+    // A5 portrait: 420 × 595 pt.
+    expect(Math.round(sheet.internal.pageSize.getWidth())).toBe(420);
+    expect(prescriptionFilename(rx)).toBe("retsept-14-2026-11-06.pdf");
+    // No treatment still makes a valid sheet that says so.
+    expect((await buildPrescriptionPdf(summary())).getNumberOfPages()).toBe(1);
   });
 });

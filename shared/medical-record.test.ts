@@ -61,9 +61,10 @@ describe("changes between versions", () => {
     expect(fieldList(changed)).toBe("Yakuniy tashxis, Tavsiyalar");
   });
 
-  it("picks the six texts and the two MKB-10 codes", () => {
-    expect(Object.keys(pickFields({ complaints: "x" }))).toHaveLength(8);
+  it("picks the six texts, the two MKB-10 codes and the treatment (B3.6)", () => {
+    expect(Object.keys(pickFields({ complaints: "x" }))).toHaveLength(9);
     expect(pickFields({ finalDiagnosisCode: "I10" }).finalDiagnosisCode).toBe("I10");
+    expect(pickFields({}).prescriptions).toEqual([]);
   });
 
   it("a changed MKB-10 code is a change, named in the log (B3.4)", () => {

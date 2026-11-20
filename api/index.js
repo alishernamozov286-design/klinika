@@ -654,9 +654,9 @@ var init_lab_catalogue = __esm({
 
 // shared/lab-devices.ts
 function occurredAtProblem(occurredAt, now = Date.now()) {
-  const t = Date.parse(occurredAt);
-  if (Number.isNaN(t)) return "Vaqt noto'g'ri";
-  if (t > now + 6e4) return "Xato vaqti kelajakda bo'lishi mumkin emas";
+  const t2 = Date.parse(occurredAt);
+  if (Number.isNaN(t2)) return "Vaqt noto'g'ri";
+  if (t2 > now + 6e4) return "Xato vaqti kelajakda bo'lishi mumkin emas";
   return null;
 }
 var DEVICE_DIRECTIONS, DEVICE_DIRECTION_LABELS, DEVICE_CONNECTIONS, DEVICE_CONNECTION_LABELS, DEVICE_STATUSES, DEVICE_STATUS_LABELS, ERROR_SEVERITIES, ERROR_SEVERITY_LABELS, deviceNameKey, DEVICE_HAS_LOG, DEVICE_ERROR_ALREADY_RESOLVED;
@@ -1049,6 +1049,55 @@ var init_inventory = __esm({
   }
 });
 
+// shared/prescription.ts
+function prescriptionProblem(lines) {
+  for (const [i, l] of (lines ?? []).entries()) {
+    const at = `Davolash, ${i + 1}-qator`;
+    if (!t(l.name)) return `${at}: ${l.kind === "medicine" ? "dori nomini" : "muolajani"} kiriting`;
+    if (l.kind === "medicine" && !t(l.dose)) return `${at} (${t(l.name)}): dozani kiriting`;
+    if (!t(l.regimen)) return `${at} (${t(l.name)}): qabul qilish tartibini kiriting`;
+  }
+  return null;
+}
+function sameTreatment(a, b) {
+  return canonical(a) === canonical(b);
+}
+function lineDirections(l) {
+  const parts = [t(l.dose), l.route ? ADMIN_ROUTE_LABELS[l.route] : "", t(l.regimen)];
+  if (l.days) parts.push(`${l.days} kun`);
+  if (l.sessions) parts.push(`${l.sessions} seans`);
+  return parts.filter(Boolean).join(" \xB7 ");
+}
+function treatmentHistory(records) {
+  return records.filter((r) => r.status === "signed" && r.prescriptions.length > 0).map((r) => ({ recordId: r.id, date: r.date, doctorName: r.doctorName, specialty: r.specialty, version: r.version, lines: [...r.prescriptions] })).sort((a, b) => b.date.localeCompare(a.date));
+}
+var PRESCRIPTION_KINDS, ADMIN_ROUTES, ADMIN_ROUTE_LABELS, MAX_PRESCRIPTION_LINES, t, canonical, describeLine;
+var init_prescription = __esm({
+  "shared/prescription.ts"() {
+    "use strict";
+    PRESCRIPTION_KINDS = ["medicine", "procedure"];
+    ADMIN_ROUTES = ["oral", "sublingual", "im", "iv", "sc", "topical", "inhalation", "rectal", "eye_ear_nose", "other"];
+    ADMIN_ROUTE_LABELS = {
+      oral: "Ichishga",
+      sublingual: "Til ostiga",
+      im: "Mushak ichiga",
+      iv: "Vena ichiga",
+      sc: "Teri ostiga",
+      topical: "Tashqi (surtish)",
+      inhalation: "Ingalyatsiya",
+      rectal: "Rektal",
+      eye_ear_nose: "Ko'z / quloq / burun",
+      other: "Boshqa"
+    };
+    MAX_PRESCRIPTION_LINES = 30;
+    t = (s) => (s ?? "").trim();
+    canonical = (lines) => JSON.stringify(
+      (lines ?? []).map((l) => [l.kind, l.itemId ?? null, l.serviceId ?? null, t(l.name), t(l.dose), l.route ?? null, t(l.regimen), l.days ?? null, l.sessions ?? null, t(l.notes)])
+    );
+    describeLine = (l) => [t(l.name), lineDirections(l)].filter(Boolean).join(" \u2014 ");
+  }
+});
+
 // shared/consumption.ts
 function normInForce(n, at) {
   return !!n.approvedAt && n.approvedAt <= at && (!n.retiredAt || n.retiredAt > at);
@@ -1097,19 +1146,19 @@ function summarizeConsumption(entries) {
     it.value += e.value;
     items.set(e.itemId, it);
     if (e.testId) {
-      const t = tests2.get(e.testId) ?? { testId: e.testId, testName: e.testName ?? "\u2014", performed: 0, value: 0, lines: /* @__PURE__ */ new Set() };
-      t.value += e.value;
+      const t2 = tests2.get(e.testId) ?? { testId: e.testId, testName: e.testName ?? "\u2014", performed: 0, value: 0, lines: /* @__PURE__ */ new Set() };
+      t2.value += e.value;
       if (e.kind === "norm" && e.orderTestId) {
-        t.lines.add(e.orderTestId);
+        t2.lines.add(e.orderTestId);
         performed.add(e.orderTestId);
       }
-      tests2.set(e.testId, t);
+      tests2.set(e.testId, t2);
     }
   }
   const tidy2 = (n) => Number(n.toFixed(6));
   out.performed = performed.size;
   out.byItem = Array.from(items.values()).map((r) => ({ ...r, norm: tidy2(r.norm), extra: tidy2(r.extra), total: tidy2(r.total), short: tidy2(r.short) })).sort((a, b) => b.value - a.value || a.itemName.localeCompare(b.itemName));
-  out.byTest = Array.from(tests2.values()).map(({ lines, ...t }) => ({ ...t, performed: lines.size })).sort((a, b) => b.value - a.value || a.testName.localeCompare(b.testName));
+  out.byTest = Array.from(tests2.values()).map(({ lines, ...t2 }) => ({ ...t2, performed: lines.size })).sort((a, b) => b.value - a.value || a.testName.localeCompare(b.testName));
   return out;
 }
 var EXTRA_REASONS, EXTRA_REASON_LABELS, CONSUMABLE_KINDS, MAX_NORM_QUANTITY, MAX_CONSUME_BATCH, NORM_DRAFT_EXISTS, NORM_NOT_DRAFT, NORM_ALREADY_RETIRED, CONSUMPTION_ALREADY_CANCELLED, NORM_CONSUMPTION_FINAL, movementValue;
@@ -1248,6 +1297,7 @@ __export(schema_exports, {
   patientContacts: () => patientContacts,
   patients: () => patients,
   payments: () => payments,
+  prescriptionLineSchema: () => prescriptionLineSchema,
   previousRange: () => previousRange,
   qcMaterials: () => qcMaterials,
   qcResults: () => qcResults,
@@ -1321,15 +1371,15 @@ function previousRange(from, to) {
   const start = Date.parse(`${from}T00:00:00Z`);
   const end = Date.parse(`${to}T00:00:00Z`);
   const days = Math.max(0, Math.round((end - start) / day)) + 1;
-  const iso2 = (t) => new Date(t).toISOString().slice(0, 10);
+  const iso2 = (t2) => new Date(t2).toISOString().slice(0, 10);
   return { from: iso2(start - days * day), to: iso2(start - day) };
 }
 function daysBetween(from, to) {
   const out = [];
   const day = 864e5;
   const end = Date.parse(`${to}T00:00:00Z`);
-  for (let t = Date.parse(`${from}T00:00:00Z`); t <= end && out.length < 400; t += day) {
-    out.push(new Date(t).toISOString().slice(0, 10));
+  for (let t2 = Date.parse(`${from}T00:00:00Z`); t2 <= end && out.length < 400; t2 += day) {
+    out.push(new Date(t2).toISOString().slice(0, 10));
   }
   return out;
 }
@@ -1337,7 +1387,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, consumptionNorms, labConsumptions, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, normQuantity, insertNormSchema, updateNormSchema, extraConsumptionSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, consumptionNorms, labConsumptions, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, rxText, prescriptionLineSchema, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, normQuantity, insertNormSchema, updateNormSchema, extraConsumptionSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1347,6 +1397,7 @@ var init_schema = __esm({
     init_lab_devices();
     init_qc();
     init_inventory();
+    init_prescription();
     init_consumption();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
@@ -1550,7 +1601,7 @@ var init_schema = __esm({
         updatedAt: isoTimestamp("updated_at"),
         updatedBy: varchar("updated_by")
       },
-      (t) => ({ departmentIdx: index("IDX_doctors_department").on(t.departmentId) })
+      (t2) => ({ departmentIdx: index("IDX_doctors_department").on(t2.departmentId) })
     );
     services = pgTable(
       "services",
@@ -1570,7 +1621,7 @@ var init_schema = __esm({
         updatedAt: isoTimestamp("updated_at"),
         updatedBy: varchar("updated_by")
       },
-      (t) => ({ departmentIdx: index("IDX_services_department").on(t.departmentId) })
+      (t2) => ({ departmentIdx: index("IDX_services_department").on(t2.departmentId) })
     );
     appointments = pgTable(
       "appointments",
@@ -1606,15 +1657,15 @@ var init_schema = __esm({
         updatedAt: isoTimestamp("updated_at"),
         updatedBy: varchar("updated_by")
       },
-      (t) => ({
-        dayIdx: index("IDX_appointments_date_doctor").on(t.date, t.doctorId),
-        patientIdx: index("IDX_appointments_patient").on(t.patientId),
-        queueIdx: uniqueIndex("UQ_appointments_queue").on(t.doctorId, t.date, t.queueNumber),
+      (t2) => ({
+        dayIdx: index("IDX_appointments_date_doctor").on(t2.date, t2.doctorId),
+        patientIdx: index("IDX_appointments_patient").on(t2.patientId),
+        queueIdx: uniqueIndex("UQ_appointments_queue").on(t2.doctorId, t2.date, t2.queueNumber),
         // One live booking per doctor per start time — the database is the last
         // word when two registrars take the same slot at the same moment.
-        slotIdx: uniqueIndex("UQ_appointments_slot").on(t.doctorId, t.date, t.startTime).where(sql`status NOT IN ('cancelled', 'no_show')`),
+        slotIdx: uniqueIndex("UQ_appointments_slot").on(t2.doctorId, t2.date, t2.startTime).where(sql`status NOT IN ('cancelled', 'no_show')`),
         // One live booking per referral: two registrars cannot book it twice.
-        referralIdx: uniqueIndex("UQ_appointments_referral").on(t.referralId).where(sql`referral_id IS NOT NULL AND status NOT IN ('cancelled', 'no_show')`)
+        referralIdx: uniqueIndex("UQ_appointments_referral").on(t2.referralId).where(sql`referral_id IS NOT NULL AND status NOT IN ('cancelled', 'no_show')`)
       })
     );
     medicalRecords = pgTable(
@@ -1637,6 +1688,8 @@ var init_schema = __esm({
         /** MKB-10 codes for the two diagnoses (B3.4) — optional; the text stays the diagnosis. */
         preliminaryDiagnosisCode: varchar("preliminary_diagnosis_code"),
         finalDiagnosisCode: varchar("final_diagnosis_code"),
+        /** B3.6 treatment (TZ §5.1.5): medicines and procedures, versioned with the record. */
+        prescriptions: json("prescriptions").$type(),
         signedAt: isoTimestamp("signed_at"),
         signedBy: varchar("signed_by"),
         /** The last correction: when, and why. */
@@ -1647,10 +1700,10 @@ var init_schema = __esm({
         updatedAt: isoTimestamp("updated_at"),
         updatedBy: varchar("updated_by")
       },
-      (t) => ({
-        appointmentIdx: uniqueIndex("UQ_medical_records_appointment").on(t.appointmentId),
-        patientIdx: index("IDX_medical_records_patient").on(t.patientId),
-        doctorStatusIdx: index("IDX_medical_records_doctor_status").on(t.doctorId, t.status)
+      (t2) => ({
+        appointmentIdx: uniqueIndex("UQ_medical_records_appointment").on(t2.appointmentId),
+        patientIdx: index("IDX_medical_records_patient").on(t2.patientId),
+        doctorStatusIdx: index("IDX_medical_records_doctor_status").on(t2.doctorId, t2.status)
       })
     );
     medicalRecordVersions = pgTable(
@@ -1667,6 +1720,7 @@ var init_schema = __esm({
         recommendations: text("recommendations"),
         preliminaryDiagnosisCode: varchar("preliminary_diagnosis_code"),
         finalDiagnosisCode: varchar("final_diagnosis_code"),
+        prescriptions: json("prescriptions").$type(),
         signedAt: isoTimestamp("signed_at"),
         signedBy: varchar("signed_by"),
         /** Who replaced this version, when, and why. */
@@ -1674,7 +1728,7 @@ var init_schema = __esm({
         replacedBy: varchar("replaced_by"),
         replaceReason: text("replace_reason").notNull()
       },
-      (t) => ({ recordVersionIdx: uniqueIndex("UQ_medical_record_versions").on(t.recordId, t.version) })
+      (t2) => ({ recordVersionIdx: uniqueIndex("UQ_medical_record_versions").on(t2.recordId, t2.version) })
     );
     referrals = pgTable(
       "referrals",
@@ -1705,10 +1759,10 @@ var init_schema = __esm({
         cancelledBy: varchar("cancelled_by"),
         cancelReason: text("cancel_reason")
       },
-      (t) => ({
-        patientIdx: index("IDX_referrals_patient").on(t.patientId),
-        appointmentIdx: index("IDX_referrals_appointment").on(t.appointmentId),
-        statusIdx: index("IDX_referrals_status_kind").on(t.status, t.kind)
+      (t2) => ({
+        patientIdx: index("IDX_referrals_patient").on(t2.patientId),
+        appointmentIdx: index("IDX_referrals_appointment").on(t2.appointmentId),
+        statusIdx: index("IDX_referrals_status_kind").on(t2.status, t2.kind)
       })
     );
     icd10 = pgTable(
@@ -1727,7 +1781,7 @@ var init_schema = __esm({
         updatedAt: isoTimestamp("updated_at"),
         updatedBy: varchar("updated_by")
       },
-      (t) => ({ sortIdx: index("IDX_icd10_sort").on(t.sortOrder) })
+      (t2) => ({ sortIdx: index("IDX_icd10_sort").on(t2.sortOrder) })
     );
     notifications = pgTable(
       "notifications",
@@ -1747,7 +1801,7 @@ var init_schema = __esm({
         createdAt: isoTimestamp("created_at").defaultNow().notNull(),
         readAt: isoTimestamp("read_at")
       },
-      (t) => ({ userIdx: index("IDX_notifications_user").on(t.userId, t.createdAt) })
+      (t2) => ({ userIdx: index("IDX_notifications_user").on(t2.userId, t2.createdAt) })
     );
     patientAllergies = pgTable(
       "patient_allergies",
@@ -1763,7 +1817,7 @@ var init_schema = __esm({
         removedBy: varchar("removed_by"),
         removeReason: text("remove_reason")
       },
-      (t) => ({ patientIdx: index("IDX_patient_allergies_patient").on(t.patientId) })
+      (t2) => ({ patientIdx: index("IDX_patient_allergies_patient").on(t2.patientId) })
     );
     patients = pgTable("patients", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1806,7 +1860,7 @@ var init_schema = __esm({
         isEmergency: boolean("is_emergency").notNull().default(true),
         createdAt: isoTimestamp("created_at").defaultNow().notNull()
       },
-      (t) => ({ patientIdx: index("IDX_patient_contacts_patient").on(t.patientId) })
+      (t2) => ({ patientIdx: index("IDX_patient_contacts_patient").on(t2.patientId) })
     );
     tests = pgTable("tests", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1836,8 +1890,8 @@ var init_schema = __esm({
         createdAt: isoTimestamp("created_at").defaultNow().notNull(),
         createdBy: varchar("created_by")
       },
-      (t) => ({
-        patientDayIdx: uniqueIndex("UQ_visits_patient_day").on(t.patientId, t.visitDate)
+      (t2) => ({
+        patientDayIdx: uniqueIndex("UQ_visits_patient_day").on(t2.patientId, t2.visitDate)
       })
     );
     orders = pgTable("orders", {
@@ -1903,9 +1957,9 @@ var init_schema = __esm({
       returnReason: text("return_reason"),
       /** 1 for the value as first verified; each amendment adds one. */
       version: integer("version").notNull().default(1)
-    }, (t) => ({
+    }, (t2) => ({
       // Backs the "has any order used this test?" check that guards deletion.
-      testIdx: index("IDX_order_tests_test").on(t.testId)
+      testIdx: index("IDX_order_tests_test").on(t2.testId)
     }));
     orderTestVersions = pgTable(
       "order_test_versions",
@@ -1925,7 +1979,7 @@ var init_schema = __esm({
         replacedByName: text("replaced_by_name"),
         replaceReason: text("replace_reason").notNull()
       },
-      (t) => ({ lineVersionIdx: uniqueIndex("UQ_order_test_versions").on(t.orderTestId, t.version) })
+      (t2) => ({ lineVersionIdx: uniqueIndex("UQ_order_test_versions").on(t2.orderTestId, t2.version) })
     );
     samples = pgTable(
       "samples",
@@ -1956,9 +2010,9 @@ var init_schema = __esm({
       },
       // Every order screen loads its sample by orderId; the barcode index backs
       // the scanner lookup, which must stay fast with a full year of tubes in it.
-      (t) => ({
-        orderIdx: index("IDX_samples_order").on(t.orderId),
-        barcodeIdx: index("IDX_samples_barcode").on(t.barcode)
+      (t2) => ({
+        orderIdx: index("IDX_samples_order").on(t2.orderId),
+        barcodeIdx: index("IDX_samples_barcode").on(t2.barcode)
       })
     );
     payments = pgTable("payments", {
@@ -2010,7 +2064,7 @@ var init_schema = __esm({
         summary: text("summary").notNull(),
         createdAt: isoTimestamp("created_at").defaultNow().notNull()
       },
-      (t) => ({ createdIdx: index("IDX_audit_created").on(t.createdAt) })
+      (t2) => ({ createdIdx: index("IDX_audit_created").on(t2.createdAt) })
     );
     telegramContacts = pgTable("telegram_contacts", {
       chatId: text("chat_id").primaryKey(),
@@ -2027,7 +2081,7 @@ var init_schema = __esm({
         sess: json("sess").notNull(),
         expire: timestamp("expire", { precision: 6, mode: "date" }).notNull()
       },
-      (t) => ({ expireIdx: index("IDX_session_expire").on(t.expire) })
+      (t2) => ({ expireIdx: index("IDX_session_expire").on(t2.expire) })
     );
     appSettings = pgTable("app_settings", {
       key: varchar("key").primaryKey(),
@@ -2080,7 +2134,7 @@ var init_schema = __esm({
         resolvedByName: text("resolved_by_name"),
         resolution: text("resolution")
       },
-      (t) => [index("IDX_lab_device_errors_device").on(t.deviceId, t.occurredAt)]
+      (t2) => [index("IDX_lab_device_errors_device").on(t2.deviceId, t2.occurredAt)]
     );
     qcMaterials = pgTable("qc_materials", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -2138,7 +2192,7 @@ var init_schema = __esm({
         voidedByName: text("voided_by_name"),
         voidReason: text("void_reason")
       },
-      (t) => [index("IDX_qc_results_target").on(t.targetId, t.measuredAt)]
+      (t2) => [index("IDX_qc_results_target").on(t2.targetId, t2.measuredAt)]
     );
     calibrations = pgTable(
       "calibrations",
@@ -2158,7 +2212,7 @@ var init_schema = __esm({
         performedByName: text("performed_by_name"),
         createdAt: isoTimestamp("created_at").defaultNow().notNull()
       },
-      (t) => [index("IDX_calibrations_device").on(t.deviceId, t.performedAt)]
+      (t2) => [index("IDX_calibrations_device").on(t2.deviceId, t2.performedAt)]
     );
     deviceMaintenance = pgTable(
       "device_maintenance",
@@ -2174,7 +2228,7 @@ var init_schema = __esm({
         performedByName: text("performed_by_name"),
         createdAt: isoTimestamp("created_at").defaultNow().notNull()
       },
-      (t) => [index("IDX_device_maintenance_device").on(t.deviceId, t.performedAt)]
+      (t2) => [index("IDX_device_maintenance_device").on(t2.deviceId, t2.performedAt)]
     );
     eqaResults = pgTable("eqa_results", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -2253,7 +2307,7 @@ var init_schema = __esm({
         createdAt: isoTimestamp("created_at").defaultNow().notNull(),
         cancelledAt: isoTimestamp("cancelled_at")
       },
-      (t) => [index("IDX_inventory_batches_item").on(t.itemId), index("IDX_inventory_batches_receipt").on(t.receiptId)]
+      (t2) => [index("IDX_inventory_batches_item").on(t2.itemId), index("IDX_inventory_batches_receipt").on(t2.receiptId)]
     );
     stockIssues = pgTable("stock_issues", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -2297,7 +2351,7 @@ var init_schema = __esm({
         createdBy: varchar("created_by"),
         createdByName: text("created_by_name")
       },
-      (t) => [index("IDX_stock_movements_item").on(t.itemId, t.createdAt)]
+      (t2) => [index("IDX_stock_movements_item").on(t2.itemId, t2.createdAt)]
     );
     stockCounts = pgTable(
       "stock_counts",
@@ -2324,7 +2378,7 @@ var init_schema = __esm({
         cancelledByName: text("cancelled_by_name"),
         cancelReason: text("cancel_reason")
       },
-      (t) => [uniqueIndex("UQ_stock_counts_open").on(t.status).where(sql`status = 'open'`)]
+      (t2) => [uniqueIndex("UQ_stock_counts_open").on(t2.status).where(sql`status = 'open'`)]
     );
     consumptionNorms = pgTable(
       "consumption_norms",
@@ -2349,9 +2403,9 @@ var init_schema = __esm({
         retiredByName: text("retired_by_name"),
         retireReason: text("retire_reason")
       },
-      (t) => [
-        uniqueIndex("UQ_consumption_norms_live").on(t.testId, t.itemId, t.status).where(sql`status IN ('draft', 'approved')`),
-        index("IDX_consumption_norms_test").on(t.testId)
+      (t2) => [
+        uniqueIndex("UQ_consumption_norms_live").on(t2.testId, t2.itemId, t2.status).where(sql`status IN ('draft', 'approved')`),
+        index("IDX_consumption_norms_test").on(t2.testId)
       ]
     );
     labConsumptions = pgTable(
@@ -2380,9 +2434,9 @@ var init_schema = __esm({
         cancelledByName: text("cancelled_by_name"),
         cancelReason: text("cancel_reason")
       },
-      (t) => [
-        uniqueIndex("UQ_lab_consumptions_norm").on(t.orderTestId, t.itemId).where(sql`kind = 'norm'`),
-        index("IDX_lab_consumptions_created").on(t.createdAt)
+      (t2) => [
+        uniqueIndex("UQ_lab_consumptions_norm").on(t2.orderTestId, t2.itemId).where(sql`kind = 'norm'`),
+        index("IDX_lab_consumptions_created").on(t2.createdAt)
       ]
     );
     stockCountLines = pgTable(
@@ -2401,7 +2455,7 @@ var init_schema = __esm({
         countedBy: varchar("counted_by"),
         countedByName: text("counted_by_name")
       },
-      (t) => [uniqueIndex("UQ_stock_count_lines_batch").on(t.countId, t.batchId), index("IDX_stock_count_lines_batch").on(t.batchId)]
+      (t2) => [uniqueIndex("UQ_stock_count_lines_batch").on(t2.countId, t2.batchId), index("IDX_stock_count_lines_batch").on(t2.batchId)]
     );
     NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"];
     birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
@@ -2623,6 +2677,22 @@ var init_schema = __esm({
     });
     recordText = z.string().max(4e3, "Matn juda uzun (ko'pi bilan 4000 belgi)").nullish().transform((v) => v?.trim() ? v.trim() : null);
     icdCode = z.string().trim().toUpperCase().nullish().transform((v) => v || null).refine((v) => v === null || /^[A-Z]\d\d(\.\d{1,2})?$/.test(v), "MKB-10 kodi noto'g'ri (masalan: I10, E11.9)");
+    rxText = (max, label) => z.string().max(max, `${label}: juda uzun`).nullish().transform((v) => v?.trim() ? v.trim() : null);
+    prescriptionLineSchema = z.object({
+      id: z.string().min(1).max(40),
+      kind: z.enum(PRESCRIPTION_KINDS),
+      /** A medicine from the warehouse catalogue (B5.1), when it is one. */
+      itemId: z.string().min(1).nullish().transform((v) => v ?? null),
+      /** A procedure from the service catalogue (B2.6, type "muolaja"). */
+      serviceId: z.string().min(1).nullish().transform((v) => v ?? null),
+      name: z.string().max(160, "Nomi juda uzun").transform((v) => v.trim()),
+      dose: rxText(60, "Doza"),
+      route: z.enum(ADMIN_ROUTES).nullish().transform((v) => v ?? null),
+      regimen: rxText(160, "Qabul qilish tartibi"),
+      days: z.number().int().min(1, "Davomiylik kamida 1 kun").max(365, "Davomiylik ko'pi bilan 365 kun").nullish().transform((v) => v ?? null),
+      sessions: z.number().int().min(1, "Seanslar soni kamida 1").max(100, "Seanslar soni juda katta").nullish().transform((v) => v ?? null),
+      notes: rxText(300, "Izoh")
+    });
     recordFieldsSchema = z.object({
       complaints: recordText,
       anamnesis: recordText,
@@ -2631,7 +2701,8 @@ var init_schema = __esm({
       finalDiagnosis: recordText,
       recommendations: recordText,
       preliminaryDiagnosisCode: icdCode,
-      finalDiagnosisCode: icdCode
+      finalDiagnosisCode: icdCode,
+      prescriptions: z.array(prescriptionLineSchema).max(MAX_PRESCRIPTION_LINES, `Davolashda ko'pi bilan ${MAX_PRESCRIPTION_LINES} ta qator`).default([])
     });
     saveRecordSchema = recordFieldsSchema.partial().extend({
       revision: z.number().int().min(0)
@@ -3727,7 +3798,7 @@ var init_lab_rules = __esm({
 
 // shared/patient-links.ts
 function patientHistoryProblem(counts) {
-  const held = BLOCKING_TABLES.filter((t) => (counts[t] ?? 0) > 0).map((t) => PATIENT_LINKS[t].label);
+  const held = BLOCKING_TABLES.filter((t2) => (counts[t2] ?? 0) > 0).map((t2) => PATIENT_LINKS[t2].label);
   if (held.length === 0) return null;
   return `Bemor kartasida ${held.join(", ")} bor, uni o'chirib bo'lmaydi. Takroriy karta bo'lsa, uni asosiy kartaga birlashtiring.`;
 }
@@ -3746,7 +3817,7 @@ var init_patient_links = __esm({
       referrals: { merge: "move", delete: "block", label: "yo'llanmalar" }
     };
     BLOCKING_TABLES = Object.keys(PATIENT_LINKS).filter(
-      (t) => PATIENT_LINKS[t].delete === "block"
+      (t2) => PATIENT_LINKS[t2].delete === "block"
     );
   }
 });
@@ -3799,7 +3870,7 @@ function slotStarts(schedule, slotMinutes, date) {
   const starts = [];
   for (const w of schedule.filter((s) => s.day === day).sort((a, b) => a.start.localeCompare(b.start))) {
     const end = toMinutes(w.end);
-    for (let t = toMinutes(w.start); t + slotMinutes <= end; t += slotMinutes) starts.push(fromMinutes(t));
+    for (let t2 = toMinutes(w.start); t2 + slotMinutes <= end; t2 += slotMinutes) starts.push(fromMinutes(t2));
   }
   return starts;
 }
@@ -4191,6 +4262,7 @@ var init_storage_pg = __esm({
     mapRecord = (row) => ({
       ...row,
       status: row.status,
+      prescriptions: row.prescriptions ?? [],
       signedAt: iso(row.signedAt),
       amendedAt: iso(row.amendedAt),
       createdAt: iso(row.createdAt) ?? row.createdAt,
@@ -4237,14 +4309,14 @@ var init_storage_pg = __esm({
         let createdTests = 0;
         const [{ count: testCount }] = await db.select({ count: sql2`count(*)::int` }).from(tests);
         if (testCount === 0) {
-          const rows = defaultTests.map((t) => {
-            const ref = testReferences[t.id];
+          const rows = defaultTests.map((t2) => {
+            const ref = testReferences[t2.id];
             return {
-              id: t.id,
-              name: t.name,
-              price: t.price,
-              category: t.category,
-              ...classifyTest(t),
+              id: t2.id,
+              name: t2.name,
+              price: t2.price,
+              category: t2.category,
+              ...classifyTest(t2),
               unit: ref?.unit ?? null,
               referenceRange: ref?.referenceRange ?? null,
               isActive: true
@@ -4648,6 +4720,7 @@ var init_storage_pg = __esm({
             recommendations: current.recommendations,
             preliminaryDiagnosisCode: current.preliminaryDiagnosisCode,
             finalDiagnosisCode: current.finalDiagnosisCode,
+            prescriptions: current.prescriptions ?? [],
             signedAt: current.signedAt,
             signedBy: current.signedBy,
             replacedAt: now,
@@ -4672,6 +4745,7 @@ var init_storage_pg = __esm({
         const rows = await db.select({ v: medicalRecordVersions, replacedByName: users.fullName }).from(medicalRecordVersions).leftJoin(users, eq(users.id, medicalRecordVersions.replacedBy)).where(eq(medicalRecordVersions.recordId, recordId)).orderBy(desc(medicalRecordVersions.version));
         return rows.map((r) => ({
           ...r.v,
+          prescriptions: r.v.prescriptions ?? [],
           signedAt: iso(r.v.signedAt),
           replacedAt: iso(r.v.replacedAt) ?? r.v.replacedAt,
           replacedByName: r.replacedByName ?? null
@@ -5547,7 +5621,7 @@ var init_storage_pg = __esm({
        * lab referral (createReferrals), so both make exactly the same order.
        */
       async insertOrderTx(tx, input, selected, referralId) {
-        const subtotal = selected.reduce((sum, t) => sum + t.price, 0);
+        const subtotal = selected.reduce((sum, t2) => sum + t2.price, 0);
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
         const opening = Math.min(input.paidAmount, total);
@@ -5566,14 +5640,14 @@ var init_storage_pg = __esm({
             createdBy: input.createdBy ?? null
           }).returning({ id: orders.id, orderNumber: orders.orderNumber });
           await tx.insert(orderTests).values(
-            selected.map((t) => ({
+            selected.map((t2) => ({
               orderId: order.id,
-              testId: t.id,
-              testName: t.name,
-              price: t.price,
-              unit: t.unit,
-              referenceRange: t.referenceRange,
-              sampleType: t.sampleType
+              testId: t2.id,
+              testName: t2.name,
+              price: t2.price,
+              unit: t2.unit,
+              referenceRange: t2.referenceRange,
+              sampleType: t2.sampleType
             }))
           );
           await tx.insert(samples).values({
@@ -5631,21 +5705,21 @@ var init_storage_pg = __esm({
         const wanted = new Set(testIds);
         const drop = current.filter((i) => !wanted.has(i.testId) && !i.result).map((i) => i.id);
         const present = new Set(current.filter((i) => !drop.includes(i.id)).map((i) => i.testId));
-        const addIds = testIds.filter((t) => !present.has(t));
+        const addIds = testIds.filter((t2) => !present.has(t2));
         const toAdd = addIds.length ? await db.select().from(tests).where(inArray(tests.id, addIds)) : [];
         if (drop.length === 0 && toAdd.length === 0) return;
         await db.transaction(async (tx) => {
           if (drop.length) await tx.delete(orderTests).where(inArray(orderTests.id, drop));
           if (toAdd.length) {
             await tx.insert(orderTests).values(
-              toAdd.map((t) => ({
+              toAdd.map((t2) => ({
                 orderId,
-                testId: t.id,
-                testName: t.name,
-                price: t.price,
-                unit: t.unit,
-                referenceRange: t.referenceRange,
-                sampleType: t.sampleType
+                testId: t2.id,
+                testName: t2.name,
+                price: t2.price,
+                unit: t2.unit,
+                referenceRange: t2.referenceRange,
+                sampleType: t2.sampleType
               }))
             );
           }
@@ -7474,16 +7548,16 @@ function buildTurnover(items, totals) {
     }
     return r;
   };
-  for (const t of totals) {
-    const r = rowOf(t.itemId);
-    if (t.period === "before") {
-      r.opening.qty += t.quantity;
-      r.opening.value += t.value;
+  for (const t2 of totals) {
+    const r = rowOf(t2.itemId);
+    if (t2.period === "before") {
+      r.opening.qty += t2.quantity;
+      r.opening.value += t2.value;
       continue;
     }
-    const sign = OUT_BUCKETS.includes(t.bucket) ? -1 : 1;
-    r[t.bucket].qty += sign * t.quantity;
-    r[t.bucket].value += sign * t.value;
+    const sign = OUT_BUCKETS.includes(t2.bucket) ? -1 : 1;
+    r[t2.bucket].qty += sign * t2.quantity;
+    r[t2.bucket].value += sign * t2.value;
   }
   const sum = { opening: 0, receipt: 0, department: 0, writeoff: 0, consumption: 0, count: 0, closing: 0 };
   const rows = [];
@@ -7527,7 +7601,7 @@ function summarizeDepartments(lines) {
 }
 function monthFigures(totals) {
   const out = { receipt: 0, department: 0, writeoff: 0, consumption: 0, count: 0 };
-  for (const t of totals) if (t.period === "in") out[t.bucket] += (OUT_BUCKETS.includes(t.bucket) ? -1 : 1) * t.value;
+  for (const t2 of totals) if (t2.period === "in") out[t2.bucket] += (OUT_BUCKETS.includes(t2.bucket) ? -1 : 1) * t2.value;
   for (const k of TURNOVER_BUCKETS) out[k] = Math.round(out[k]);
   return out;
 }
@@ -7727,14 +7801,14 @@ var init_storage_file = __esm({
       async seed() {
         let createdTests = 0;
         if (this.db.tests.length === 0) {
-          this.db.tests = defaultTests.map((t) => {
-            const ref = testReferences[t.id];
+          this.db.tests = defaultTests.map((t2) => {
+            const ref = testReferences[t2.id];
             return {
-              id: t.id,
-              name: t.name,
-              price: t.price,
-              category: t.category,
-              ...classifyTest(t),
+              id: t2.id,
+              name: t2.name,
+              price: t2.price,
+              category: t2.category,
+              ...classifyTest(t2),
               unit: ref?.unit ?? null,
               referenceRange: ref?.referenceRange ?? null,
               isActive: true,
@@ -8162,6 +8236,8 @@ var init_storage_file = __esm({
         const patient = this.db.patients.find((p) => p.id === r.patientId);
         return {
           ...r,
+          // db.json written before B3.6 has no treatment field.
+          prescriptions: r.prescriptions ?? [],
           patientNumber: patient?.patientNumber ?? 0,
           patientName: patient?.fullName ?? "\u2014",
           doctorName: user?.fullName ?? "\u2014",
@@ -8213,6 +8289,7 @@ var init_storage_file = __esm({
           recommendations: null,
           preliminaryDiagnosisCode: null,
           finalDiagnosisCode: null,
+          prescriptions: [],
           signedAt: null,
           signedBy: null,
           amendedAt: null,
@@ -8262,6 +8339,8 @@ var init_storage_file = __esm({
           recommendations: r.recommendations,
           preliminaryDiagnosisCode: r.preliminaryDiagnosisCode ?? null,
           finalDiagnosisCode: r.finalDiagnosisCode ?? null,
+          // Records written before B3.6 have no treatment field in db.json.
+          prescriptions: r.prescriptions ?? [],
           signedAt: r.signedAt,
           signedBy: r.signedBy,
           replacedAt: now,
@@ -8283,7 +8362,7 @@ var init_storage_file = __esm({
         return this.recordDetails({ ...r });
       }
       async listRecordVersions(recordId) {
-        return this.db.medicalRecordVersions.filter((v) => v.recordId === recordId).sort((a, b) => b.version - a.version).map((v) => ({ ...v, replacedByName: this.db.users.find((u) => u.id === v.replacedBy)?.fullName ?? null }));
+        return this.db.medicalRecordVersions.filter((v) => v.recordId === recordId).sort((a, b) => b.version - a.version).map((v) => ({ ...v, prescriptions: v.prescriptions ?? [], replacedByName: this.db.users.find((u) => u.id === v.replacedBy)?.fullName ?? null }));
       }
       // ------------------------------------------------------------- allergies
       allergyDetails(a) {
@@ -8530,7 +8609,7 @@ var init_storage_file = __esm({
         };
         let made;
         if (input.kind === "lab") {
-          if (!input.testIds.some((id) => this.db.tests.some((t) => t.id === id))) throw new Error("Tanlangan tahlillar topilmadi");
+          if (!input.testIds.some((id) => this.db.tests.some((t2) => t2.id === id))) throw new Error("Tanlangan tahlillar topilmadi");
           const ref = make({ kind: "lab" });
           this.db.referrals.push(ref);
           await this.placeOrder(
@@ -8731,7 +8810,7 @@ var init_storage_file = __esm({
             (a) => a.patientId === p.id && a.arrivedAt && ATTENDED_STATUSES.includes(a.status)
           );
           const times = [...live.map((o) => o.createdAt), ...attended.map((a) => a.arrivedAt)];
-          const last = times.reduce((m, t) => !m || t > m ? t : m, null);
+          const last = times.reduce((m, t2) => !m || t2 > m ? t2 : m, null);
           const days = /* @__PURE__ */ new Set([
             ...live.map((o) => o.visitId ?? localDay(o.createdAt)),
             ...attended.map((a) => a.visitId ?? `day:${a.date}`)
@@ -8901,11 +8980,11 @@ var init_storage_file = __esm({
       }
       // ---------------------------------------------------------------- tests
       async listTests(opts = {}) {
-        const rows = opts.activeOnly ? this.db.tests.filter((t) => t.isActive) : [...this.db.tests];
+        const rows = opts.activeOnly ? this.db.tests.filter((t2) => t2.isActive) : [...this.db.tests];
         return rows.sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
       }
       async getTest(id) {
-        return this.db.tests.find((t) => t.id === id);
+        return this.db.tests.find((t2) => t2.id === id);
       }
       async createTest(input, actor) {
         const test = {
@@ -8928,7 +9007,7 @@ var init_storage_file = __esm({
         return test;
       }
       async updateTest(id, input, actor) {
-        const test = this.db.tests.find((t) => t.id === id);
+        const test = this.db.tests.find((t2) => t2.id === id);
         if (!test) return void 0;
         const fields = ["name", "price", "category", "group", "sampleType", "unit", "referenceRange", "isActive"];
         if (fields.some((k) => input[k] !== void 0)) {
@@ -8949,7 +9028,7 @@ var init_storage_file = __esm({
       async deleteTest(id) {
         if (this.db.orderTests.some((i) => i.testId === id)) throw new StorageConflict(TEST_IN_USE);
         const before = this.db.tests.length;
-        this.db.tests = this.db.tests.filter((t) => t.id !== id);
+        this.db.tests = this.db.tests.filter((t2) => t2.id !== id);
         if (this.db.tests.length === before) return false;
         await this.persist();
         return true;
@@ -8963,7 +9042,7 @@ var init_storage_file = __esm({
           patient: this.db.patients.find((p) => p.id === order.patientId) ?? null,
           items: this.db.orderTests.filter((ot) => ot.orderId === order.id),
           groups: orderGroups(
-            this.db.orderTests.filter((ot) => ot.orderId === order.id).map((ot) => this.db.tests.find((t) => t.id === ot.testId)?.group)
+            this.db.orderTests.filter((ot) => ot.orderId === order.id).map((ot) => this.db.tests.find((t2) => t2.id === ot.testId)?.group)
           ),
           // Null for orders created before sample tracking existed.
           sample: this.db.samples.find((s) => s.orderId === order.id) ?? null
@@ -9037,9 +9116,9 @@ var init_storage_file = __esm({
         if (!this.db.patients.some((p) => p.id === input.patientId)) {
           throw new Error("Bemor topilmadi");
         }
-        const selected = input.testIds.map((id) => this.db.tests.find((t) => t.id === id)).filter((t) => Boolean(t));
+        const selected = input.testIds.map((id) => this.db.tests.find((t2) => t2.id === id)).filter((t2) => Boolean(t2));
         if (selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
-        const subtotal = selected.reduce((sum, t) => sum + t.price, 0);
+        const subtotal = selected.reduce((sum, t2) => sum + t2.price, 0);
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
         this.db.counters.orderNumber += 1;
@@ -9100,16 +9179,16 @@ var init_storage_file = __esm({
           });
         }
         this.syncPaid(order.id);
-        for (const t of selected) {
+        for (const t2 of selected) {
           const item = {
             id: randomUUID(),
             orderId: order.id,
-            testId: t.id,
-            testName: t.name,
-            price: t.price,
-            unit: t.unit,
-            referenceRange: t.referenceRange,
-            sampleType: t.sampleType,
+            testId: t2.id,
+            testName: t2.name,
+            price: t2.price,
+            unit: t2.unit,
+            referenceRange: t2.referenceRange,
+            sampleType: t2.sampleType,
             result: null,
             flag: null,
             notes: null,
@@ -9170,17 +9249,17 @@ var init_storage_file = __esm({
         );
         for (const testId of testIds) {
           if (present.has(testId)) continue;
-          const t = this.db.tests.find((x) => x.id === testId);
-          if (!t) continue;
+          const t2 = this.db.tests.find((x) => x.id === testId);
+          if (!t2) continue;
           this.db.orderTests.push({
             id: randomUUID(),
             orderId,
-            testId: t.id,
-            testName: t.name,
-            price: t.price,
-            unit: t.unit,
-            referenceRange: t.referenceRange,
-            sampleType: t.sampleType,
+            testId: t2.id,
+            testName: t2.name,
+            price: t2.price,
+            unit: t2.unit,
+            referenceRange: t2.referenceRange,
+            sampleType: t2.sampleType,
             result: null,
             flag: null,
             notes: null,
@@ -9725,20 +9804,20 @@ var init_storage_file = __esm({
           (a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name) || a.level.localeCompare(b.level)
         );
         const targets = [];
-        for (const t of this.db.qcTargets) {
-          const m = this.db.qcMaterials.find((x) => x.id === t.materialId);
+        for (const t2 of this.db.qcTargets) {
+          const m = this.db.qcMaterials.find((x) => x.id === t2.materialId);
           if (!m) continue;
-          const runs = this.db.qcResults.filter((r) => r.targetId === t.id && !r.voidedAt).sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt));
+          const runs = this.db.qcResults.filter((r) => r.targetId === t2.id && !r.voidedAt).sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt));
           const last = runs.at(-1);
           targets.push({
-            ...t,
+            ...t2,
             materialName: m.name,
             level: m.level,
             lotNumber: m.lotNumber,
             materialExpiresOn: m.expiresOn,
             materialActive: m.isActive,
-            testName: this.db.tests.find((x) => x.id === t.testId)?.name ?? "\u2014",
-            deviceName: t.deviceId ? this.db.labDevices.find((x) => x.id === t.deviceId)?.name ?? null : null,
+            testName: this.db.tests.find((x) => x.id === t2.testId)?.name ?? "\u2014",
+            deviceName: t2.deviceId ? this.db.labDevices.find((x) => x.id === t2.deviceId)?.name ?? null : null,
             lastResult: last ? { value: last.value, z: last.z, status: last.status, measuredAt: last.measuredAt } : null,
             runs: runs.length,
             runsToday: runs.filter((r) => localDay(r.measuredAt) === day).length,
@@ -9780,15 +9859,15 @@ var init_storage_file = __esm({
         return { ...m };
       }
       async getQcTarget(id) {
-        const t = this.db.qcTargets.find((x) => x.id === id);
-        return t && { ...t };
+        const t2 = this.db.qcTargets.find((x) => x.id === id);
+        return t2 && { ...t2 };
       }
       async createQcTarget(input, actor) {
         const dup = this.db.qcTargets.some(
-          (t2) => t2.materialId === input.materialId && t2.testId === input.testId && (t2.deviceId ?? null) === (input.deviceId ?? null)
+          (t3) => t3.materialId === input.materialId && t3.testId === input.testId && (t3.deviceId ?? null) === (input.deviceId ?? null)
         );
         if (dup) throw new StorageConflict(QC_TARGET_EXISTS);
-        const t = {
+        const t2 = {
           id: randomUUID(),
           materialId: input.materialId,
           testId: input.testId,
@@ -9802,17 +9881,17 @@ var init_storage_file = __esm({
           updatedAt: null,
           updatedBy: actor.id
         };
-        this.db.qcTargets.push(t);
+        this.db.qcTargets.push(t2);
         await this.persist();
-        return { ...t };
+        return { ...t2 };
       }
       async updateQcTarget(id, input, actor) {
-        const t = this.db.qcTargets.find((x) => x.id === id);
-        if (!t) return void 0;
-        for (const [k, v] of Object.entries(input)) if (v !== void 0) t[k] = v;
-        Object.assign(t, { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id });
+        const t2 = this.db.qcTargets.find((x) => x.id === id);
+        if (!t2) return void 0;
+        for (const [k, v] of Object.entries(input)) if (v !== void 0) t2[k] = v;
+        Object.assign(t2, { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id });
         await this.persist();
-        return { ...t };
+        return { ...t2 };
       }
       async listQcResults(targetId, limit = 60) {
         return this.db.qcResults.filter((r) => r.targetId === targetId).sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt)).slice(-limit).map((r) => ({ ...r, rules: [...r.rules] }));
@@ -9875,7 +9954,7 @@ var init_storage_file = __esm({
         return this.db.calibrations.filter((c) => !query.deviceId || c.deviceId === query.deviceId).sort((a, b) => b.performedAt.localeCompare(a.performedAt)).slice(0, query.limit ?? 200).map((c) => ({
           ...c,
           deviceName: this.db.labDevices.find((d) => d.id === c.deviceId)?.name ?? "\u2014",
-          testName: c.testId ? this.db.tests.find((t) => t.id === c.testId)?.name ?? null : null
+          testName: c.testId ? this.db.tests.find((t2) => t2.id === c.testId)?.name ?? null : null
         }));
       }
       async addCalibration(input, actor) {
@@ -9923,7 +10002,7 @@ var init_storage_file = __esm({
       async listEqa(query = {}) {
         return [...this.db.eqaResults].sort((a, b) => b.sampleDate.localeCompare(a.sampleDate) || b.createdAt.localeCompare(a.createdAt)).slice(0, query.limit ?? 200).map((e) => ({
           ...e,
-          testName: this.db.tests.find((t) => t.id === e.testId)?.name ?? "\u2014",
+          testName: this.db.tests.find((t2) => t2.id === e.testId)?.name ?? "\u2014",
           deviceName: e.deviceId ? this.db.labDevices.find((d) => d.id === e.deviceId)?.name ?? null : null
         }));
       }
@@ -10427,9 +10506,9 @@ var init_storage_file = __esm({
       }
       // ---------------------------------------------------------- consumption (B5.6)
       normView(n) {
-        const t = this.db.tests.find((x) => x.id === n.testId);
+        const t2 = this.db.tests.find((x) => x.id === n.testId);
         const it = this.db.inventoryItems.find((x) => x.id === n.itemId);
-        return { ...n, testName: t?.name ?? "\u2014", itemName: it?.name ?? "\u2014", unit: it?.unit ?? "", itemKind: it?.kind ?? "consumable", itemActive: it?.isActive ?? false };
+        return { ...n, testName: t2?.name ?? "\u2014", itemName: it?.name ?? "\u2014", unit: it?.unit ?? "", itemKind: it?.kind ?? "consumable", itemActive: it?.isActive ?? false };
       }
       async listNorms() {
         return this.db.consumptionNorms.map((n) => this.normView(n)).sort((a, b) => a.testName.localeCompare(b.testName) || a.itemName.localeCompare(b.itemName) || b.createdAt.localeCompare(a.createdAt));
@@ -10502,7 +10581,7 @@ var init_storage_file = __esm({
           ...c,
           itemName: it?.name ?? "\u2014",
           unit: it?.unit ?? "",
-          testName: c.testId ? this.db.tests.find((t) => t.id === c.testId)?.name ?? null : null,
+          testName: c.testId ? this.db.tests.find((t2) => t2.id === c.testId)?.name ?? null : null,
           orderNumber: c.orderId ? this.db.orders.find((o) => o.id === c.orderId)?.orderNumber ?? null : null,
           value
         };
@@ -10670,10 +10749,10 @@ var init_storage_file = __esm({
         for (const x of this.ledgerBefore(range.to)) {
           const period = x.m.createdAt < range.from ? "before" : "in";
           const key = `${x.m.itemId}|${x.bucket}|${period}`;
-          const t = acc.get(key) ?? { itemId: x.m.itemId, bucket: x.bucket, period, quantity: 0, value: 0 };
-          t.quantity += x.m.quantity;
-          t.value += x.value;
-          acc.set(key, t);
+          const t2 = acc.get(key) ?? { itemId: x.m.itemId, bucket: x.bucket, period, quantity: 0, value: 0 };
+          t2.quantity += x.m.quantity;
+          t2.value += x.value;
+          acc.set(key, t2);
         }
         return Array.from(acc.values());
       }
@@ -10768,10 +10847,10 @@ var init_storage_file = __esm({
         const testAgg = /* @__PURE__ */ new Map();
         const catAgg = /* @__PURE__ */ new Map();
         for (const item of items) {
-          const t = testAgg.get(item.testName) ?? { count: 0, revenue: 0 };
-          t.count += 1;
-          t.revenue += item.price;
-          testAgg.set(item.testName, t);
+          const t2 = testAgg.get(item.testName) ?? { count: 0, revenue: 0 };
+          t2.count += 1;
+          t2.revenue += item.price;
+          testAgg.set(item.testName, t2);
           const category = this.db.tests.find((x) => x.id === item.testId)?.category ?? "Boshqa";
           const c = catAgg.get(category) ?? { count: 0, revenue: 0 };
           c.count += 1;
@@ -11949,14 +12028,14 @@ function registerClinicRoutes(app) {
           price: s.price,
           isActive: s.isActive
         })),
-        ...tests2.map((t) => ({
+        ...tests2.map((t2) => ({
           source: "test",
-          id: t.id,
-          name: t.name,
+          id: t2.id,
+          name: t2.name,
           kind: "laboratoriya",
-          group: t.category,
-          price: t.price,
-          isActive: t.isActive
+          group: t2.category,
+          price: t2.price,
+          isActive: t2.isActive
         }))
       ];
       res.json(items);
@@ -12371,20 +12450,27 @@ init_icd10();
 init_lab_verification();
 
 // shared/medical-record.ts
+init_prescription();
 init_schema();
-var ALL_FIELDS = [...RECORD_FIELDS, ...RECORD_CODE_FIELDS];
+var TEXT_FIELDS = [...RECORD_FIELDS, ...RECORD_CODE_FIELDS];
+var TREATMENT_LABEL = "Davolash (retsept)";
 var norm = (v) => (v ?? "").trim();
 function signProblem(fields) {
   if (!norm(fields.complaints)) return "Shikoyatlarni kiriting";
   if (!norm(fields.preliminaryDiagnosis) && !norm(fields.finalDiagnosis) && !fields.preliminaryDiagnosisCode && !fields.finalDiagnosisCode) {
     return "Dastlabki yoki yakuniy tashxisni kiriting";
   }
-  return null;
+  return prescriptionProblem(fields.prescriptions);
 }
 function changedFields(before, after) {
-  return ALL_FIELDS.filter((f) => norm(before[f]) !== norm(after[f]));
+  const out = TEXT_FIELDS.filter((f) => norm(before[f]) !== norm(after[f]));
+  if (before.prescriptions !== void 0 && after.prescriptions !== void 0 && !sameTreatment(before.prescriptions, after.prescriptions)) {
+    const at = out.indexOf("recommendations");
+    out.splice(at === -1 ? out.length : at, 0, "prescriptions");
+  }
+  return out;
 }
-var labelOf = (f) => RECORD_FIELD_LABELS[f] ?? RECORD_CODE_LABELS[f];
+var labelOf = (f) => f === "prescriptions" ? TREATMENT_LABEL : RECORD_FIELD_LABELS[f] ?? RECORD_CODE_LABELS[f];
 var fieldList = (fields) => fields.map(labelOf).join(", ");
 function diagnosisHistory(records) {
   const out = [];
@@ -12400,10 +12486,14 @@ function diagnosisHistory(records) {
   return out.sort((a, b) => b.date.localeCompare(a.date));
 }
 function pickFields(source) {
-  return Object.fromEntries(ALL_FIELDS.map((f) => [f, source[f] ?? null]));
+  return {
+    ...Object.fromEntries(TEXT_FIELDS.map((f) => [f, source[f] ?? null])),
+    prescriptions: [...source.prescriptions ?? []]
+  };
 }
 
 // server/routes-medical.ts
+init_prescription();
 init_patient_identity();
 init_storage_types();
 var WRITABLE_APPOINTMENT = /* @__PURE__ */ new Set(["in_progress", "completed"]);
@@ -12429,6 +12519,40 @@ async function icdCodeProblem(fields, before) {
   const ok = new Set(found.filter((r) => r.selectable).map((r) => r.code));
   const bad = wanted.filter((c) => !ok.has(c));
   return bad.length ? `MKB-10 katalogida tanlab bo'lmaydigan kod: ${bad.join(", ")}` : null;
+}
+async function checkTreatment(lines, before) {
+  if (!lines) return {};
+  const hadItem = new Set(before.map((l) => l.itemId).filter(Boolean));
+  const hadService = new Set(before.map((l) => l.serviceId).filter(Boolean));
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const [i, l] of lines.entries()) {
+    const at = `Davolash, ${i + 1}-qator`;
+    if (seen.has(l.id)) return { error: `${at}: qator takrorlangan` };
+    seen.add(l.id);
+    if (l.kind === "medicine") {
+      if (l.serviceId) return { error: `${at}: dori qatoriga xizmat biriktirib bo'lmaydi` };
+      if (l.itemId) {
+        const item = await storage.getInventoryItem(l.itemId).catch((e) => emptyIfMissing(e, void 0));
+        if (!item || item.kind !== "medicine") return { error: `${at}: dori ombor katalogida topilmadi` };
+        if (!item.isActive && !hadItem.has(item.id)) return { error: `${at}: "${item.name}" faolsizlantirilgan` };
+        out.push({ ...l, name: item.name, sessions: null });
+        continue;
+      }
+      out.push({ ...l, sessions: null });
+    } else {
+      if (l.itemId) return { error: `${at}: muolaja qatoriga dori biriktirib bo'lmaydi` };
+      if (l.serviceId) {
+        const svc = await storage.getService(l.serviceId).catch((e) => emptyIfMissing(e, void 0));
+        if (!svc || svc.kind !== "muolaja") return { error: `${at}: muolaja xizmatlar katalogida topilmadi` };
+        if (!svc.isActive && !hadService.has(svc.id)) return { error: `${at}: "${svc.name}" xizmati to'xtatilgan` };
+        out.push({ ...l, name: svc.name, dose: null, route: null });
+        continue;
+      }
+      out.push({ ...l, dose: null, route: null });
+    }
+  }
+  return { lines: out };
 }
 function registerMedicalRoutes(app) {
   app.get(
@@ -12505,6 +12629,21 @@ function registerMedicalRoutes(app) {
       res.json(data);
     })
   );
+  app.get(
+    "/api/prescription-catalog",
+    requirePermission("records.write", "records.amend"),
+    handle(async (_req, res) => {
+      const [items, services2] = await Promise.all([
+        storage.listInventoryItems().catch((e) => emptyIfMissing(e, [])),
+        storage.listServices({ activeOnly: true }).catch((e) => emptyIfMissing(e, []))
+      ]);
+      const catalog = {
+        medicines: items.filter((i) => i.kind === "medicine" && i.isActive).map((i) => ({ id: i.id, name: i.name, unit: i.unit, manufacturer: i.manufacturer, inStock: i.onHand > 0 })),
+        procedures: services2.filter((x) => x.kind === "muolaja").map((x) => ({ id: x.id, name: x.name, price: x.price }))
+      };
+      res.json(catalog);
+    })
+  );
   app.post(
     "/api/appointments/:id/record",
     requirePermission("records.write"),
@@ -12542,6 +12681,9 @@ function registerMedicalRoutes(app) {
       if (before.status !== "draft") {
         return res.status(409).json({ message: `Yozuv tasdiqlangan. O'zgartirish uchun "Tuzatish kiritish"dan foydalaning` });
       }
+      const treatment = await checkTreatment(fields.prescriptions, before.prescriptions);
+      if (treatment.error) return res.status(400).json({ message: treatment.error });
+      if (treatment.lines) fields.prescriptions = treatment.lines;
       const record = await storage.saveRecordDraft(before.id, revision, fields, { id: req.user.id, name: req.user.fullName });
       const changed = changedFields(before, { ...pickFields(before), ...fields });
       if (changed.length && shouldLogDraft(req, record.id)) {
@@ -12566,7 +12708,7 @@ function registerMedicalRoutes(app) {
         "update",
         "record",
         record.id,
-        `${patientLabel2(record)} \u2014 ko'rik yozuvi tasdiqlandi (${record.finalDiagnosis ? "yakuniy tashxis" : "dastlabki tashxis"}: ${record.finalDiagnosis ?? record.preliminaryDiagnosis})`
+        `${patientLabel2(record)} \u2014 ko'rik yozuvi tasdiqlandi (${record.finalDiagnosis ? "yakuniy tashxis" : "dastlabki tashxis"}: ${record.finalDiagnosis ?? record.preliminaryDiagnosis})` + (record.prescriptions.length ? `; davolash: ${record.prescriptions.map(describeLine).join("; ")}` : "")
       );
       res.json(record);
     })
@@ -12581,6 +12723,9 @@ function registerMedicalRoutes(app) {
       const codeError = await icdCodeProblem(fields, before);
       if (codeError) return res.status(400).json({ message: codeError });
       if (before.status !== "signed") return res.status(409).json({ message: "Qoralamani tuzatish shart emas \u2014 uni to'g'ridan-to'g'ri tahrirlang" });
+      const treatment = await checkTreatment(fields.prescriptions, before.prescriptions);
+      if (treatment.error) return res.status(400).json({ message: treatment.error });
+      if (treatment.lines) fields.prescriptions = treatment.lines;
       const changed = changedFields(before, fields);
       if (!changed.length) return res.status(400).json({ message: "Matnda o'zgarish yo'q" });
       const problem = signProblem(fields);
@@ -12635,13 +12780,8 @@ function registerMedicalRoutes(app) {
         generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
         generatedBy: req.user.fullName
       };
-      await audit(
-        req,
-        "export",
-        "record",
-        record.id,
-        `${patientLabel2(record)} \u2014 ko'rik xulosasi chiqarildi (${record.date}, ${record.doctorName}, v${record.version})`
-      );
+      const doc = stringParam(req.query.doc) === "prescription" ? "retsept" : "ko'rik xulosasi";
+      await audit(req, "export", "record", record.id, `${patientLabel2(record)} \u2014 ${doc} chiqarildi (${record.date}, ${record.doctorName}, v${record.version})`);
       res.json(summary);
     })
   );
@@ -12666,6 +12806,7 @@ function registerMedicalRoutes(app) {
         allergies,
         records: visible,
         diagnoses: diagnosisHistory(visible),
+        treatments: treatmentHistory(visible),
         labResults: orders2 ? labResults(orders2.items) : null,
         referrals: referrals2
       };
@@ -12691,7 +12832,7 @@ function registerMedicalRoutes(app) {
       };
       let batch;
       if (input.kind === "lab") {
-        const catalogue = new Map((await storage.listTests()).map((t) => [t.id, t]));
+        const catalogue = new Map((await storage.listTests()).map((t2) => [t2.id, t2]));
         const missing = input.testIds.filter((id) => !catalogue.get(id)?.isActive);
         if (missing.length) return res.status(400).json({ message: "Tanlangan tahlillardan biri katalogda yo'q yoki to'xtatilgan" });
         batch = { ...origin, kind: "lab", testIds: input.testIds, referrer: `${appointment.doctorName}, ${appointment.specialty}` };
@@ -13034,15 +13175,15 @@ function registerQcRoutes(app) {
       if (!material) return res.status(400).json({ message: "Material topilmadi" });
       if (!test) return res.status(400).json({ message: "Tahlil topilmadi" });
       if (input.deviceId && !device) return res.status(400).json({ message: "Qurilma topilmadi" });
-      const t = await storage.createQcTarget({ ...input, unit: input.unit ?? test.unit ?? null }, actorOf(req));
+      const t2 = await storage.createQcTarget({ ...input, unit: input.unit ?? test.unit ?? null }, actorOf(req));
       await audit(
         req,
         "create",
         "qc",
-        t.id,
-        `Nazorat seriyasi: ${test.name} \u2014 ${material.name} ${material.level}${device ? `, ${device.name}` : ""}; o'rtacha ${fmt(t.mean)}, SD ${fmt(t.sd)}`
+        t2.id,
+        `Nazorat seriyasi: ${test.name} \u2014 ${material.name} ${material.level}${device ? `, ${device.name}` : ""}; o'rtacha ${fmt(t2.mean)}, SD ${fmt(t2.sd)}`
       );
-      res.status(201).json(t);
+      res.status(201).json(t2);
     })
   );
   app.patch(
@@ -13052,16 +13193,16 @@ function registerQcRoutes(app) {
       const input = updateQcTargetSchema.parse(req.body);
       const before = await storage.getQcTarget(req.params.id);
       if (!before) return res.status(404).json({ message: "Nazorat seriyasi topilmadi" });
-      const t = await storage.updateQcTarget(before.id, input, actorOf(req));
-      if (!t) return res.status(404).json({ message: "Nazorat seriyasi topilmadi" });
-      const test = await storage.getTest(t.testId);
+      const t2 = await storage.updateQcTarget(before.id, input, actorOf(req));
+      if (!t2) return res.status(404).json({ message: "Nazorat seriyasi topilmadi" });
+      const test = await storage.getTest(t2.testId);
       const changes = [];
-      if (t.mean !== before.mean) changes.push(`o'rtacha ${fmt(before.mean)} \u2192 ${fmt(t.mean)}`);
-      if (t.sd !== before.sd) changes.push(`SD ${fmt(before.sd)} \u2192 ${fmt(t.sd)}`);
-      if (t.isActive !== before.isActive) changes.push(t.isActive ? "qayta faollashtirildi" : "to'xtatildi");
-      if (t.unit !== before.unit) changes.push(`birlik: ${t.unit ?? "\u2014"}`);
-      await audit(req, "update", "qc", t.id, `Nazorat seriyasi ${test?.name ?? ""} \u2014 ${changes.join(", ") || "o'zgarishsiz"}`);
-      res.json(t);
+      if (t2.mean !== before.mean) changes.push(`o'rtacha ${fmt(before.mean)} \u2192 ${fmt(t2.mean)}`);
+      if (t2.sd !== before.sd) changes.push(`SD ${fmt(before.sd)} \u2192 ${fmt(t2.sd)}`);
+      if (t2.isActive !== before.isActive) changes.push(t2.isActive ? "qayta faollashtirildi" : "to'xtatildi");
+      if (t2.unit !== before.unit) changes.push(`birlik: ${t2.unit ?? "\u2014"}`);
+      await audit(req, "update", "qc", t2.id, `Nazorat seriyasi ${test?.name ?? ""} \u2014 ${changes.join(", ") || "o'zgarishsiz"}`);
+      res.json(t2);
     })
   );
   app.get(

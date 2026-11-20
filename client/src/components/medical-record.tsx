@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   Stethoscope,
   X,
+  Pill,
 } from "lucide-react";
 import {
   RECORD_CODE_FOR,
@@ -31,6 +32,7 @@ import {
   type MedicalRecordWithDetails,
   type PatientAllergy,
   type RecordField,
+  type PrescriptionLine,
 } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +48,7 @@ import { cn } from "@/lib/utils";
 import { ReferralList } from "@/components/referrals";
 import { IcdCodeBadge, useIcdLabels } from "@/components/icd-picker";
 import { VisitSummaryDialog } from "@/components/visit-summary-dialog";
+import { TreatmentHistory, TreatmentView } from "@/components/treatment";
 
 // ------------------------------------------------------------------ status
 
@@ -80,16 +83,33 @@ export function RecordReadView({
   record,
   dense,
 }: {
-  record: Partial<Record<RecordField | RecordCodeField, string | null>>;
+  record: Partial<Record<RecordField | RecordCodeField, string | null>> & { prescriptions?: readonly PrescriptionLine[] | null };
   dense?: boolean;
 }) {
   const codeOf = (f: RecordField) => (f === "preliminaryDiagnosis" || f === "finalDiagnosis" ? record[RECORD_CODE_FOR[f]] ?? null : null);
   const labels = useIcdLabels([record.preliminaryDiagnosisCode, record.finalDiagnosisCode]);
   const filled = RECORD_FIELDS.filter((f) => record[f]?.trim() || codeOf(f));
-  if (filled.length === 0) return <p className="text-sm text-muted-foreground">Yozuv bo'sh.</p>;
+  const treatment = record.prescriptions ?? [];
+  if (filled.length === 0 && treatment.length === 0) return <p className="text-sm text-muted-foreground">Yozuv bo'sh.</p>;
+  // B3.6: the treatment reads between the diagnoses and the recommendations, as it is written.
+  const treatmentBlock = treatment.length ? (
+    <div key="__treatment" className={cn(!dense && "sm:col-span-2", "rounded-lg border border-sky-500/15 bg-sky-500/[0.04] px-3 py-2.5")}>
+      <dt className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Davolash</dt>
+      <dd>
+        <TreatmentView lines={treatment} dense={dense} />
+      </dd>
+    </div>
+  ) : null;
+  const before = filled.filter((f) => f !== "recommendations");
+  const after = filled.filter((f) => f === "recommendations");
   return (
     <dl className={cn("grid gap-x-6", dense ? "gap-y-3" : "gap-y-4 sm:grid-cols-2")}>
-      {filled.map((f) => (
+      {[...before.map((f) => fieldBlock(f)), treatmentBlock, ...after.map((f) => fieldBlock(f))]}
+    </dl>
+  );
+
+  function fieldBlock(f: RecordField) {
+    return (
         <div
           key={f}
           className={cn(
@@ -107,9 +127,8 @@ export function RecordReadView({
             <dd className={cn("mt-1 whitespace-pre-wrap text-sm leading-relaxed", DIAGNOSIS_FIELDS.has(f) && "font-medium")}>{record[f]}</dd>
           )}
         </div>
-      ))}
-    </dl>
-  );
+    );
+  }
 }
 
 /** "Tasdiqladi: Karimov A., 05.11.2026 14:20 · tuzatish: sabab" */
@@ -458,6 +477,7 @@ export function MedicalCardPanel({ patientId }: { patientId: string }) {
   const [versionsOf, setVersionsOf] = useState<MedicalRecordWithDetails | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [summaryOf, setSummaryOf] = useState<string | null>(null);
+  const [prescriptionOf, setPrescriptionOf] = useState<string | null>(null);
 
   if (isLoading || !data) {
     return (
@@ -475,6 +495,9 @@ export function MedicalCardPanel({ patientId }: { patientId: string }) {
           <AllergyPanel patientId={patientId} allergies={data.allergies} canEdit={false} />
           <SectionCard icon={ClipboardList} title="Tashxislar tarixi" description="Tasdiqlangan ko'riklardan">
             <DiagnosisTimeline diagnoses={data.diagnoses} />
+          </SectionCard>
+          <SectionCard icon={Pill} title="Davolash tarixi" description="Tasdiqlangan ko'riklarda belgilangan dori va muolajalar">
+            <TreatmentHistory entries={data.treatments ?? []} />
           </SectionCard>
         </div>
 
@@ -507,10 +530,18 @@ export function MedicalCardPanel({ patientId }: { patientId: string }) {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <RecordSignature record={r} />
                           {r.status === "signed" && (
-                            <Button size="sm" variant="outline" onClick={() => setSummaryOf(r.id)} data-testid={`button-summary-${r.id}`}>
-                              <FileText className="mr-1.5 h-3.5 w-3.5" />
-                              Xulosa (PDF)
-                            </Button>
+                            <div className="flex flex-wrap gap-2">
+                              <Button size="sm" variant="outline" onClick={() => setSummaryOf(r.id)} data-testid={`button-summary-${r.id}`}>
+                                <FileText className="mr-1.5 h-3.5 w-3.5" />
+                                Xulosa (PDF)
+                              </Button>
+                              {r.prescriptions.length > 0 && (
+                                <Button size="sm" variant="outline" onClick={() => setPrescriptionOf(r.id)} data-testid={`button-prescription-${r.id}`}>
+                                  <Pill className="mr-1.5 h-3.5 w-3.5" />
+                                  Retsept
+                                </Button>
+                              )}
+                            </div>
                           )}
                           {r.version > 1 && (
                             <Button size="sm" variant="ghost" onClick={() => setVersionsOf(r)}>
@@ -548,6 +579,7 @@ export function MedicalCardPanel({ patientId }: { patientId: string }) {
 
       <RecordVersionsDialog record={versionsOf} onOpenChange={(o) => !o && setVersionsOf(null)} />
       <VisitSummaryDialog recordId={summaryOf} onOpenChange={(o) => !o && setSummaryOf(null)} />
+      <VisitSummaryDialog recordId={prescriptionOf} doc="prescription" onOpenChange={(o) => !o && setPrescriptionOf(null)} />
     </div>
   );
 }

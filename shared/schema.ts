@@ -37,6 +37,7 @@ import {
   type MovementKind,
   type WriteoffReason,
 } from "./inventory";
+import { ADMIN_ROUTES, MAX_PRESCRIPTION_LINES, PRESCRIPTION_KINDS, type TreatmentEntry } from "./prescription";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -520,6 +521,8 @@ export const medicalRecords = pgTable(
     /** MKB-10 codes for the two diagnoses (B3.4) — optional; the text stays the diagnosis. */
     preliminaryDiagnosisCode: varchar("preliminary_diagnosis_code"),
     finalDiagnosisCode: varchar("final_diagnosis_code"),
+    /** B3.6 treatment (TZ §5.1.5): medicines and procedures, versioned with the record. */
+    prescriptions: json("prescriptions").$type<PrescriptionLine[]>(),
     signedAt: isoTimestamp("signed_at"),
     signedBy: varchar("signed_by"),
     /** The last correction: when, and why. */
@@ -555,6 +558,7 @@ export const medicalRecordVersions = pgTable(
     recommendations: text("recommendations"),
     preliminaryDiagnosisCode: varchar("preliminary_diagnosis_code"),
     finalDiagnosisCode: varchar("final_diagnosis_code"),
+    prescriptions: json("prescriptions").$type<PrescriptionLine[]>(),
     signedAt: isoTimestamp("signed_at"),
     signedBy: varchar("signed_by"),
     /** Who replaced this version, when, and why. */
@@ -1656,7 +1660,11 @@ export type DoctorCabinet = {
   draftRecords: MedicalRecordWithDetails[];
 };
 
-export type MedicalRecord = Omit<typeof medicalRecords.$inferSelect, "status"> & { status: RecordStatus };
+export type MedicalRecord = Omit<typeof medicalRecords.$inferSelect, "status" | "prescriptions"> & {
+  status: RecordStatus;
+  /** Never null to readers: a record without treatment has none. */
+  prescriptions: PrescriptionLine[];
+};
 
 /** A record with what every screen prints next to it. */
 export type MedicalRecordWithDetails = MedicalRecord & {
@@ -1671,7 +1679,10 @@ export type MedicalRecordWithDetails = MedicalRecord & {
   signedByName: string | null;
 };
 
-export type MedicalRecordVersion = typeof medicalRecordVersions.$inferSelect & { replacedByName: string | null };
+export type MedicalRecordVersion = Omit<typeof medicalRecordVersions.$inferSelect, "prescriptions"> & {
+  prescriptions: PrescriptionLine[];
+  replacedByName: string | null;
+};
 
 export type PatientAllergy = typeof patientAllergies.$inferSelect & { createdByName: string | null };
 
@@ -1883,6 +1894,8 @@ export type MedicalCard = {
   /** Newest first. Drafts appear only to the doctor who is writing them. */
   records: MedicalRecordWithDetails[];
   diagnoses: DiagnosisEntry[];
+  /** B3.6 "Davolash tarixi": the treatment of each signed examination, newest first. */
+  treatments: TreatmentEntry[];
   /** Null when the viewer may not see lab orders. */
   labResults: LabResultEntry[] | null;
   /** UZI, examinations, consultations and lab referrals (TZ §5.1.2); null without referrals.read. */
@@ -2496,6 +2509,40 @@ const icdCode = z
   .transform((v) => v || null)
   .refine((v) => v === null || /^[A-Z]\d\d(\.\d{1,2})?$/.test(v), "MKB-10 kodi noto'g'ri (masalan: I10, E11.9)");
 
+const rxText = (max: number, label: string) =>
+  z
+    .string()
+    .max(max, `${label}: juda uzun`)
+    .nullish()
+    .transform((v) => (v?.trim() ? v.trim() : null));
+
+/**
+ * One treatment line (B3.6). Lenient on purpose: a draft saves half-written
+ * lines while the doctor types; signing checks completeness
+ * (shared/prescription.ts prescriptionProblem).
+ */
+export const prescriptionLineSchema = z.object({
+  id: z.string().min(1).max(40),
+  kind: z.enum(PRESCRIPTION_KINDS),
+  /** A medicine from the warehouse catalogue (B5.1), when it is one. */
+  itemId: z.string().min(1).nullish().transform((v) => v ?? null),
+  /** A procedure from the service catalogue (B2.6, type "muolaja"). */
+  serviceId: z.string().min(1).nullish().transform((v) => v ?? null),
+  name: z.string().max(160, "Nomi juda uzun").transform((v) => v.trim()),
+  dose: rxText(60, "Doza"),
+  route: z.enum(ADMIN_ROUTES).nullish().transform((v) => v ?? null),
+  regimen: rxText(160, "Qabul qilish tartibi"),
+  days: z.number().int().min(1, "Davomiylik kamida 1 kun").max(365, "Davomiylik ko'pi bilan 365 kun").nullish().transform((v) => v ?? null),
+  sessions: z.number().int().min(1, "Seanslar soni kamida 1").max(100, "Seanslar soni juda katta").nullish().transform((v) => v ?? null),
+  notes: rxText(300, "Izoh"),
+});
+export type PrescriptionLine = z.infer<typeof prescriptionLineSchema>;
+/** What the treatment form chooses from (B3.6): only the facts a doctor needs. */
+export type PrescriptionCatalog = {
+  medicines: { id: string; name: string; unit: string; manufacturer: string | null; inStock: boolean }[];
+  procedures: { id: string; name: string; price: number }[];
+};
+
 export const recordFieldsSchema = z.object({
   complaints: recordText,
   anamnesis: recordText,
@@ -2505,6 +2552,7 @@ export const recordFieldsSchema = z.object({
   recommendations: recordText,
   preliminaryDiagnosisCode: icdCode,
   finalDiagnosisCode: icdCode,
+  prescriptions: z.array(prescriptionLineSchema).max(MAX_PRESCRIPTION_LINES, `Davolashda ko'pi bilan ${MAX_PRESCRIPTION_LINES} ta qator`).default([]),
 });
 export type RecordFields = z.infer<typeof recordFieldsSchema>;
 

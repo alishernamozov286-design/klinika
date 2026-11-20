@@ -1,15 +1,17 @@
 /**
- * Ko'rik xulosasi as a PDF (TZ §5.2 "ko'rik xulosasini PDF shaklida
- * chiqarish"; B3.8).
+ * Ko'rik xulosasi (TZ §5.2, B3.8) and the prescription (TZ §5.1.5, B3.6) as
+ * PDFs, from one signed examination record.
  *
- * The one layout: the dialog previews this same file, prints it and saves it,
- * so what the doctor sees is exactly what the patient takes home. Roboto is
- * embedded (lib/pdf-font) so Cyrillic names and Uzbek text render as text.
+ * One layout per document: the dialog previews this same file, prints it and
+ * saves it, so what the doctor sees is exactly what the patient takes home.
+ * Both share the letterhead, the electronic-signature stamp and the footer.
+ * Roboto is embedded (lib/pdf-font) so Cyrillic names and Uzbek text render as text.
  */
 import type { jsPDF as JsPdf } from "jspdf";
-import { RECORD_CODE_FOR, RECORD_FIELDS, RECORD_FIELD_LABELS, REFERRAL_KIND_LABELS, REFERRAL_STAGE_LABELS, type VisitSummary } from "@shared/schema";
+import { RECORD_CODE_FOR, RECORD_FIELDS, RECORD_FIELD_LABELS, REFERRAL_KIND_LABELS, REFERRAL_STAGE_LABELS, type PrescriptionLine, type VisitSummary } from "@shared/schema";
 import { patientAge } from "@shared/patient-identity";
 import { referralSubject } from "@shared/referral";
+import { ADMIN_ROUTE_LABELS, lineDirections } from "@shared/prescription";
 import { pdfSafe } from "./export";
 
 const BRAND: [number, number, number] = [15, 118, 178];
@@ -17,6 +19,7 @@ const INK: [number, number, number] = [15, 23, 42];
 const MUTED: [number, number, number] = [100, 116, 139];
 const RULE: [number, number, number] = [226, 232, 240];
 const ALERT: [number, number, number] = [190, 18, 60];
+const SIGNED: [number, number, number] = [4, 120, 87];
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const day = (v: string | null | undefined) => {
@@ -36,151 +39,244 @@ const gender = (g: string | null | undefined) => (g === "erkak" ? "Erkak" : g ==
 export function visitSummaryFilename(s: VisitSummary): string {
   return `xulosa-${s.record.patientNumber}-${s.record.date}.pdf`;
 }
+export function prescriptionFilename(s: VisitSummary): string {
+  return `retsept-${s.record.patientNumber}-${s.record.date}.pdf`;
+}
 
-export async function buildVisitSummaryPdf(s: VisitSummary): Promise<JsPdf> {
+type Rgb = [number, number, number];
+type TextOpts = { size?: number; bold?: boolean; color?: Rgb; align?: "left" | "right" | "center" };
+
+/** A page set up for one of the record's documents, with the drawing helpers both use. */
+async function startDocument(s: VisitSummary, opts: { format: "a4" | "a5"; title: string; margin: number }) {
   const [{ jsPDF }, autoTableModule, font] = await Promise.all([import("jspdf"), import("jspdf-autotable"), import("./pdf-font")]);
   const autoTable = autoTableModule.default;
-
-  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: opts.format });
   pdf.addFileToVFS("Roboto-Regular.ttf", font.ROBOTO_REGULAR_BASE64);
   pdf.addFont("Roboto-Regular.ttf", "Roboto", "normal");
   pdf.addFileToVFS("Roboto-Bold.ttf", font.ROBOTO_BOLD_BASE64);
   pdf.addFont("Roboto-Bold.ttf", "Roboto", "bold");
   pdf.setProperties({
-    title: pdfSafe(`Ko'rik xulosasi — ${s.record.patientName}`),
-    subject: "Ko'rik xulosasi",
+    title: pdfSafe(`${opts.title} — ${s.record.patientName}`),
+    subject: opts.title,
     author: pdfSafe(s.record.doctorName),
     creator: pdfSafe(s.clinic.labName),
   });
 
   const W = pdf.internal.pageSize.getWidth();
   const H = pdf.internal.pageSize.getHeight();
-  const M = 42;
+  const M = opts.margin;
   const FOOT = 44;
   const contentW = W - M * 2;
-  let y = M;
+  const k = opts.format === "a5" ? 0.86 : 1;
+  const st = { y: M };
 
-  const text = (value: string, x: number, at: number, opts: { size?: number; bold?: boolean; color?: [number, number, number]; align?: "left" | "right" | "center" } = {}) => {
-    pdf.setFont("Roboto", opts.bold ? "bold" : "normal");
-    pdf.setFontSize(opts.size ?? 10);
-    pdf.setTextColor(...(opts.color ?? INK));
-    pdf.text(pdfSafe(value), x, at, { align: opts.align ?? "left" });
+  const text = (value: string, x: number, at: number, o: TextOpts = {}) => {
+    pdf.setFont("Roboto", o.bold ? "bold" : "normal");
+    pdf.setFontSize((o.size ?? 10) * k);
+    pdf.setTextColor(...(o.color ?? INK));
+    pdf.text(pdfSafe(value), x, at, { align: o.align ?? "left" });
   };
   const ensure = (needed: number) => {
-    if (y + needed > H - FOOT) {
+    if (st.y + needed > H - FOOT) {
       pdf.addPage();
-      y = M;
+      st.y = M;
     }
   };
   /** A wrapped paragraph that may run over pages, line by line. */
-  const paragraph = (value: string, opts: { size?: number; color?: [number, number, number]; indent?: number } = {}) => {
-    const size = opts.size ?? 10.5;
+  const paragraph = (value: string, o: { size?: number; color?: Rgb; indent?: number; bold?: boolean } = {}) => {
+    const size = (o.size ?? 10.5) * k;
     const lh = size * 1.42;
-    pdf.setFont("Roboto", "normal");
+    pdf.setFont("Roboto", o.bold ? "bold" : "normal");
     pdf.setFontSize(size);
-    const lines: string[] = pdf.splitTextToSize(pdfSafe(value), contentW - (opts.indent ?? 0));
+    const lines: string[] = pdf.splitTextToSize(pdfSafe(value), contentW - (o.indent ?? 0));
     for (const line of lines) {
       ensure(lh);
-      pdf.setTextColor(...(opts.color ?? INK));
-      pdf.text(line, M + (opts.indent ?? 0), y);
-      y += lh;
+      pdf.setFont("Roboto", o.bold ? "bold" : "normal");
+      pdf.setFontSize(size);
+      pdf.setTextColor(...(o.color ?? INK));
+      pdf.text(line, M + (o.indent ?? 0), st.y);
+      st.y += lh;
     }
   };
   const heading = (value: string) => {
     ensure(34);
-    y += 8;
-    text(value.toUpperCase(), M, y, { size: 9, bold: true, color: BRAND });
-    y += 6;
+    st.y += 8;
+    text(value.toUpperCase(), M, st.y, { size: 9, bold: true, color: BRAND });
+    st.y += 6;
     pdf.setDrawColor(...RULE);
     pdf.setLineWidth(0.6);
-    pdf.line(M, y, W - M, y);
-    y += 15;
+    pdf.line(M, st.y, W - M, st.y);
+    st.y += 15;
   };
 
-  // ------------------------------------------------------------- letterhead
-  pdf.setFillColor(...BRAND);
-  pdf.rect(0, 0, W, 5, "F");
-  // B4.7: the clinic's logo, fitted into a 120×40 pt box beside the name.
-  let nameX = M;
-  if (s.logo) {
-    try {
-      const { width, height } = pdf.getImageProperties(s.logo);
-      const k = Math.min(120 / width, 40 / height);
-      const w = width * k;
-      const h = height * k;
-      pdf.addImage(s.logo, s.logo.startsWith("data:image/png") ? "PNG" : "JPEG", M, y + 20 - h / 2, w, h);
-      nameX = M + w + 12;
-    } catch {
-      // A logo that cannot be drawn leaves the name alone rather than the document unmade.
+  /** Clinic name, logo (B4.7) and contacts, then the document's title and date. */
+  const letterhead = (title: string) => {
+    pdf.setFillColor(...BRAND);
+    pdf.rect(0, 0, W, 5, "F");
+    let nameX = M;
+    if (s.logo) {
+      try {
+        const { width, height } = pdf.getImageProperties(s.logo);
+        const fit = Math.min((120 * k) / width, (40 * k) / height);
+        const w = width * fit;
+        const h = height * fit;
+        pdf.addImage(s.logo, s.logo.startsWith("data:image/png") ? "PNG" : "JPEG", M, st.y + 20 * k - h / 2, w, h);
+        nameX = M + w + 12;
+      } catch {
+        // A logo that cannot be drawn leaves the name alone rather than the document unmade.
+      }
     }
-  }
-  text(s.clinic.labName, nameX, y + 16, { size: 19, bold: true });
-  text(s.clinic.tagline, nameX, y + 32, { size: 9.5, color: MUTED });
-  const contact = [s.clinic.address, s.clinic.phone ? `Tel: ${s.clinic.phone}` : null, s.clinic.licenseNumber ? `Litsenziya: ${s.clinic.licenseNumber}` : null].filter(
-    (v): v is string => Boolean(v),
-  );
-  contact.forEach((line, i) => text(line, W - M, y + 12 + i * 12, { size: 8.5, color: MUTED, align: "right" }));
-  y += 46;
-  pdf.setDrawColor(...INK);
-  pdf.setLineWidth(1.2);
-  pdf.line(M, y, W - M, y);
-  y += 28;
+    text(s.clinic.labName, nameX, st.y + 16 * k, { size: 19, bold: true });
+    text(s.clinic.tagline, nameX, st.y + 32 * k, { size: 9.5, color: MUTED });
+    const contact = [s.clinic.address, s.clinic.phone ? `Tel: ${s.clinic.phone}` : null, s.clinic.licenseNumber ? `Litsenziya: ${s.clinic.licenseNumber}` : null].filter(
+      (v): v is string => Boolean(v),
+    );
+    contact.forEach((line, i) => text(line, W - M, st.y + (12 + i * 12) * k, { size: 8.5, color: MUTED, align: "right" }));
+    st.y += 46 * k;
+    pdf.setDrawColor(...INK);
+    pdf.setLineWidth(1.2);
+    pdf.line(M, st.y, W - M, st.y);
+    st.y += 28 * k;
+    text(title, M, st.y, { size: 15, bold: true });
+    text(`Sana: ${day(s.record.date)}`, W - M, st.y, { size: 10, align: "right" });
+    st.y += 20 * k;
+  };
 
-  text("KO'RIK XULOSASI", M, y, { size: 15, bold: true });
-  text(`Sana: ${day(s.record.date)}`, W - M, y, { size: 10, align: "right" });
-  y += 20;
+  /** The patient block: two columns of label: value. */
+  const patientBox = (rows: [string, string][]) => {
+    const top = st.y;
+    const colW = contentW / 2;
+    const rowH = 17 * k;
+    const boxH = Math.ceil(rows.length / 2) * rowH + 14 * k;
+    pdf.setDrawColor(...RULE);
+    pdf.setLineWidth(0.8);
+    pdf.roundedRect(M, top, contentW, boxH, 4, 4, "S");
+    rows.forEach(([label, value], i) => {
+      const x = M + 12 + (i % 2) * colW;
+      const at = top + 20 * k + Math.floor(i / 2) * rowH;
+      text(`${label}:`, x, at, { size: 9, color: MUTED });
+      pdf.setFont("Roboto", "normal");
+      pdf.setFontSize(9 * k);
+      const labelW = pdf.getTextWidth(pdfSafe(`${label}: `));
+      const fitted = pdf.splitTextToSize(pdfSafe(value), colW - 24 - labelW)[0] ?? "";
+      text(fitted, x + labelW, at, { size: 9.5, bold: true });
+    });
+    st.y = top + boxH + 16 * k;
+  };
 
-  // ---------------------------------------------------------------- patient
+  /** Allergies in red: the first thing whoever reads a prescription must see. */
+  const allergyLine = () => {
+    if (!s.allergies.length) return;
+    ensure(24);
+    const list = s.allergies.map((x) => (x.reaction ? `${x.allergen} (${x.reaction})` : x.allergen)).join("; ");
+    text("Allergiya:", M, st.y, { size: 10, bold: true, color: ALERT });
+    pdf.setFont("Roboto", "bold");
+    pdf.setFontSize(10 * k);
+    const lw = pdf.getTextWidth("Allergiya: ");
+    pdf.setFont("Roboto", "normal");
+    const lines: string[] = pdf.splitTextToSize(pdfSafe(list), contentW - lw);
+    lines.forEach((line, i) => {
+      if (i > 0) ensure(14);
+      text(line, M + lw, st.y, { size: 10, color: ALERT });
+      st.y += 14 * k;
+    });
+    st.y += 4;
+  };
+
+  /** Doctor, a line to sign on, and the electronic-signature stamp (who signed, when, which version). */
+  const signature = () => {
+    ensure(96);
+    st.y += 18;
+    text(`Shifokor: ${s.record.doctorName}`, M, st.y, { size: 10 });
+    text(s.record.specialty, M, st.y + 13 * k, { size: 8.5, color: MUTED });
+    pdf.setDrawColor(...MUTED);
+    pdf.setLineWidth(0.5);
+    pdf.line(W - M - 150, st.y + 2, W - M, st.y + 2);
+    text("imzo", W - M - 75, st.y + 13 * k, { size: 7.5, color: MUTED, align: "center" });
+    st.y += 32;
+    const signer = s.record.signedByName ?? s.record.doctorName;
+    const stamp = `Elektron tasdiqlangan · ${signer} · ${dateTime(s.record.signedAt)}${s.record.version > 1 ? ` · v${s.record.version}` : ""}`;
+    pdf.setFont("Roboto", "bold");
+    pdf.setFontSize(8.5 * k);
+    const stampW = pdf.getTextWidth(pdfSafe(stamp)) + 18;
+    pdf.setDrawColor(...SIGNED);
+    pdf.setLineWidth(0.8);
+    pdf.roundedRect(M, st.y - 11, stampW, 17, 3, 3, "S");
+    text(stamp, M + 9, st.y + 1, { size: 8.5, bold: true, color: SIGNED });
+    st.y += 18;
+    if (s.record.version > 1 && s.record.amendReason) {
+      paragraph(`Tuzatilgan nusxa (${dateTime(s.record.amendedAt)}). Sabab: ${s.record.amendReason}`, { size: 8.5, color: MUTED });
+    }
+  };
+
+  const footer = (line: string) => {
+    const pages = pdf.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      pdf.setPage(i);
+      pdf.setDrawColor(...RULE);
+      pdf.setLineWidth(0.5);
+      pdf.line(M, H - 32, W - M, H - 32);
+      text(line, M, H - 20, { size: 7.5, color: MUTED });
+      text(`${i} / ${pages}`, W - M, H - 20, { size: 7.5, color: MUTED, align: "right" });
+    }
+  };
+
+  const lastY = () => (pdf as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? st.y;
+
+  return { pdf, autoTable, W, H, M, FOOT, contentW, st, text, ensure, paragraph, heading, letterhead, patientBox, allergyLine, signature, footer, lastY };
+}
+
+/** Patient facts shared by both documents. */
+function patientRows(s: VisitSummary): [string, string][] {
   const a = s.appointment;
   const age = a ? patientAge({ birthDate: a.patientBirthDate, age: a.patientAge }) : null;
-  const rows: [string, string][] = [
+  return [
     ["Bemor", s.record.patientName],
     ["Bemor ID", `#${s.record.patientNumber}`],
     ["Tug'ilgan sana", a?.patientBirthDate ? `${day(a.patientBirthDate)}${age !== null ? ` (${age} yosh)` : ""}` : age !== null ? `~${age} yosh` : "—"],
     ["Jinsi", gender(a?.patientGender)],
+  ];
+}
+
+const treatmentOf = (s: VisitSummary): PrescriptionLine[] => s.record.prescriptions ?? [];
+
+export async function buildVisitSummaryPdf(s: VisitSummary): Promise<JsPdf> {
+  const d = await startDocument(s, { format: "a4", title: "Ko'rik xulosasi", margin: 42 });
+  const { pdf, autoTable, M, FOOT, st, text, ensure, paragraph, heading } = d;
+  const a = s.appointment;
+  d.letterhead("KO'RIK XULOSASI");
+  d.patientBox([
+    ...patientRows(s),
     ["Qabul", `${day(s.record.date)}, ${s.record.startTime}${a?.serviceName ? ` · ${a.serviceName}` : ""}`],
     ["Shifokor", `${s.record.doctorName} (${s.record.specialty})${a?.room ? `, ${a.room}-xona` : ""}`],
-  ];
-  const boxTop = y;
-  const colW = contentW / 2;
-  const rowH = 17;
-  const boxH = Math.ceil(rows.length / 2) * rowH + 14;
-  pdf.setDrawColor(...RULE);
-  pdf.setLineWidth(0.8);
-  pdf.roundedRect(M, boxTop, contentW, boxH, 4, 4, "S");
-  rows.forEach(([label, value], i) => {
-    const x = M + 12 + (i % 2) * colW;
-    const at = boxTop + 20 + Math.floor(i / 2) * rowH;
-    text(`${label}:`, x, at, { size: 9, color: MUTED });
-    pdf.setFont("Roboto", "normal");
-    pdf.setFontSize(9);
-    const labelW = pdf.getTextWidth(pdfSafe(`${label}: `));
-    const fitted = pdf.splitTextToSize(pdfSafe(value), colW - 24 - labelW)[0] ?? "";
-    text(fitted, x + labelW, at, { size: 9.5, bold: true });
-  });
-  y = boxTop + boxH + 16;
-
-  // -------------------------------------------------------------- allergies
-  if (s.allergies.length) {
-    ensure(24);
-    const list = s.allergies.map((x) => (x.reaction ? `${x.allergen} (${x.reaction})` : x.allergen)).join("; ");
-    text("Allergiya:", M, y, { size: 10, bold: true, color: ALERT });
-    pdf.setFont("Roboto", "bold");
-    const lw = pdf.getTextWidth("Allergiya: ");
-    pdf.setFont("Roboto", "normal");
-    pdf.setFontSize(10);
-    const lines: string[] = pdf.splitTextToSize(pdfSafe(list), contentW - lw);
-    lines.forEach((line, i) => {
-      if (i > 0) ensure(14);
-      text(line, M + lw, y, { size: 10, color: ALERT });
-      y += 14;
-    });
-    y += 4;
-  }
+  ]);
+  d.allergyLine();
 
   // ------------------------------------------------------------ the record
   const icd = new Map(s.icd.map((x) => [x.code, x]));
+  const treatment = treatmentOf(s);
   for (const field of RECORD_FIELDS) {
+    // B3.6: the treatment sits between the diagnoses and the recommendations, as on the form.
+    if (field === "recommendations" && treatment.length) {
+      heading("Davolash");
+      ensure(40);
+      autoTable(pdf, {
+        startY: st.y - 4,
+        margin: { left: M, right: M, bottom: FOOT + 6 },
+        head: [["№", "Dori / muolaja", "Doza", "Qabul qilish tartibi", "Davomiyligi"]],
+        body: treatment.map((l, i) => [
+          String(i + 1),
+          pdfSafe(`${l.name}${l.kind === "procedure" ? " (muolaja)" : ""}${l.notes ? `\n${l.notes}` : ""}`),
+          pdfSafe(l.dose ?? "—"),
+          pdfSafe([l.route ? ADMIN_ROUTE_LABELS[l.route] : "", l.regimen ?? ""].filter(Boolean).join(", ")),
+          pdfSafe([l.days ? `${l.days} kun` : "", l.sessions ? `${l.sessions} seans` : ""].filter(Boolean).join(", ") || "—"),
+        ]),
+        styles: { font: "Roboto", fontSize: 9, cellPadding: 4, textColor: INK, lineColor: RULE, lineWidth: 0.5, valign: "top" },
+        headStyles: { font: "Roboto", fontStyle: "bold", fillColor: [241, 245, 249], textColor: INK },
+        columnStyles: { 0: { cellWidth: 22 }, 1: { fontStyle: "bold" } },
+      });
+      st.y = d.lastY() + 14;
+    }
     const value = s.record[field]?.trim();
     const code = field === "preliminaryDiagnosis" || field === "finalDiagnosis" ? s.record[RECORD_CODE_FOR[field]] : null;
     if (!value && !code) continue;
@@ -189,8 +285,8 @@ export async function buildVisitSummaryPdf(s: VisitSummary): Promise<JsPdf> {
       // The code and its name in both languages: the patient's next doctor may read either.
       const label = icd.get(code);
       ensure(16);
-      text(`MKB-10: ${code}`, M, y, { size: 10.5, bold: true, color: BRAND });
-      y += 15;
+      text(`MKB-10: ${code}`, M, st.y, { size: 10.5, bold: true, color: BRAND });
+      st.y += 15;
       if (label?.nameUz) paragraph(label.nameUz, { size: 9.5 });
       if (label?.nameRu && label.nameRu !== value) paragraph(label.nameRu, { size: 9.5, color: MUTED });
     }
@@ -209,7 +305,7 @@ export async function buildVisitSummaryPdf(s: VisitSummary): Promise<JsPdf> {
       if (r.order && r.order.results.length) {
         ensure(40);
         autoTable(pdf, {
-          startY: y - 4,
+          startY: st.y - 4,
           margin: { left: M + 12, right: M, bottom: FOOT + 6 },
           head: [["Tahlil", "Natija", "Birlik", "Me'yor"]],
           body: r.order.results.map((x) => [
@@ -228,54 +324,71 @@ export async function buildVisitSummaryPdf(s: VisitSummary): Promise<JsPdf> {
             }
           },
         });
-        y = ((pdf as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 14;
+        st.y = d.lastY() + 14;
         if (r.order.verified < r.order.tests) {
           paragraph(`Yana ${r.order.tests - r.order.verified} ta tahlil natijasi hali tayyor emas.`, { size: 8.5, color: MUTED, indent: 12 });
         }
       }
-      y += 2;
+      st.y += 2;
     }
   }
 
-  // -------------------------------------------------------------- signature
-  ensure(96);
-  y += 18;
-  text(`Shifokor: ${s.record.doctorName}`, M, y, { size: 10 });
-  text(s.record.specialty, M, y + 13, { size: 8.5, color: MUTED });
-  pdf.setDrawColor(...MUTED);
-  pdf.setLineWidth(0.5);
-  pdf.line(W - M - 170, y + 2, W - M, y + 2);
-  text("imzo", W - M - 85, y + 13, { size: 7.5, color: MUTED, align: "center" });
-  y += 32;
+  d.signature();
+  d.footer(`Xulosa elektron tibbiy karta asosida tayyorlandi · ${dateTime(s.generatedAt)} · ${s.generatedBy}`);
+  return pdf;
+}
 
-  const signer = s.record.signedByName ?? s.record.doctorName;
-  const stamp = `Elektron tasdiqlangan · ${signer} · ${dateTime(s.record.signedAt)}${s.record.version > 1 ? ` · v${s.record.version}` : ""}`;
-  pdf.setFont("Roboto", "bold");
-  pdf.setFontSize(8.5);
-  const stampW = pdf.getTextWidth(pdfSafe(stamp)) + 18;
-  pdf.setDrawColor(4, 120, 87);
-  pdf.setLineWidth(0.8);
-  pdf.roundedRect(M, y - 11, stampW, 17, 3, 3, "S");
-  text(stamp, M + 9, y + 1, { size: 8.5, bold: true, color: [4, 120, 87] });
-  y += 18;
-  if (s.record.version > 1 && s.record.amendReason) {
-    paragraph(`Tuzatilgan nusxa (${dateTime(s.record.amendedAt)}). Sabab: ${s.record.amendReason}`, { size: 8.5, color: MUTED });
+/**
+ * Retsept (B3.6): an A5 sheet the patient takes to the pharmacy — the
+ * allergies first, the diagnosis, then each medicine with how to take it and
+ * the procedures, signed electronically like the record it comes from.
+ */
+export async function buildPrescriptionPdf(s: VisitSummary): Promise<JsPdf> {
+  const d = await startDocument(s, { format: "a5", title: "Retsept", margin: 30 });
+  const { M, W, st, text, ensure, paragraph, heading, pdf } = d;
+  const lines = treatmentOf(s);
+  const medicines = lines.filter((l) => l.kind === "medicine");
+  const procedures = lines.filter((l) => l.kind === "procedure");
+  d.letterhead("RETSEPT");
+  d.patientBox(patientRows(s));
+  d.allergyLine();
+
+  const diagnosis = s.record.finalDiagnosis ?? s.record.preliminaryDiagnosis;
+  const code = s.record.finalDiagnosisCode ?? s.record.preliminaryDiagnosisCode;
+  if (diagnosis || code) {
+    paragraph(`Tashxis: ${[code, diagnosis].filter(Boolean).join(" — ")}`, { size: 9.5 });
+    st.y += 4;
   }
 
-  // ----------------------------------------------------------------- footer
-  const pages = pdf.getNumberOfPages();
-  for (let i = 1; i <= pages; i++) {
-    pdf.setPage(i);
-    pdf.setDrawColor(...RULE);
-    pdf.setLineWidth(0.5);
-    pdf.line(M, H - 32, W - M, H - 32);
-    text(
-      `Xulosa elektron tibbiy karta asosida tayyorlandi · ${dateTime(s.generatedAt)} · ${s.generatedBy}`,
-      M,
-      H - 20,
-      { size: 7.5, color: MUTED },
-    );
-    text(`${i} / ${pages}`, W - M, H - 20, { size: 7.5, color: MUTED, align: "right" });
+  const item = (l: PrescriptionLine, n: number) => {
+    ensure(40);
+    // The number beside the name (same baseline), the directions under it, any note muted.
+    text(`${n}.`, M, st.y, { size: 10.5, bold: true, color: BRAND });
+    paragraph(l.name, { size: 10.5, bold: true, indent: 16 });
+    const how = lineDirections(l);
+    if (how) paragraph(how, { size: 9.5, indent: 16 });
+    if (l.notes) paragraph(l.notes, { size: 8.5, color: MUTED, indent: 16 });
+    st.y += 5;
+  };
+
+  if (medicines.length) {
+    heading("Rp. Dori vositalari");
+    medicines.forEach((l, i) => item(l, i + 1));
   }
+  if (procedures.length) {
+    heading("Muolajalar");
+    procedures.forEach((l, i) => item(l, i + 1));
+  }
+  if (!lines.length) paragraph("Bu ko'rikda davolash belgilanmagan.", { size: 10, color: MUTED });
+  if (s.record.recommendations?.trim()) {
+    heading("Tavsiyalar");
+    paragraph(s.record.recommendations.trim(), { size: 9.5 });
+  }
+
+  d.signature();
+  // A short reminder for the pharmacy counter.
+  ensure(16);
+  text("Dori faqat shifokor ko'rsatgan doza va muddatda qabul qilinadi.", W / 2, st.y + 6, { size: 7.5, color: MUTED, align: "center" });
+  d.footer(`Retsept elektron tibbiy karta asosida · ${dateTime(s.generatedAt)} · ${s.generatedBy}`);
   return pdf;
 }

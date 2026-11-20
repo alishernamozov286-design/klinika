@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useParams } from "wouter";
 import {
@@ -16,6 +16,7 @@ import {
   Loader2,
   NotebookPen,
   PencilLine,
+  Pill,
   RefreshCw,
   Stethoscope,
 } from "lucide-react";
@@ -27,11 +28,13 @@ import {
   type ExaminationData,
   type MedicalCard,
   type MedicalRecordWithDetails,
+  type PrescriptionLine,
   type RecordField,
 } from "@shared/schema";
 import { changedFields, fieldList, signProblem, type AnyRecordField } from "@shared/medical-record";
 import { icdDisplayName } from "@shared/icd10";
 import { IcdPicker } from "@/components/icd-picker";
+import { TreatmentEditor } from "@/components/treatment";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,8 +68,9 @@ import { useToast } from "@/hooks/use-toast";
 import { ageGender, formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-/** The six texts and the two optional MKB-10 codes ("" when none). */
-type Fields = Record<AnyRecordField, string>;
+type TextField = Exclude<AnyRecordField, "prescriptions">;
+/** The six texts and the two optional MKB-10 codes ("" when none), and the treatment lines (B3.6). */
+type Fields = Record<TextField, string> & { prescriptions: PrescriptionLine[] };
 
 const PLACEHOLDERS: Record<RecordField, string> = {
   complaints: "Bemor nimadan shikoyat qiladi, qachondan beri…",
@@ -74,7 +78,7 @@ const PLACEHOLDERS: Record<RecordField, string> = {
   examination: "Obyektiv ko'rik: umumiy holat, AQB, puls, harorat, a'zolar bo'yicha topilmalar…",
   preliminaryDiagnosis: "Dastlabki tashxis",
   finalDiagnosis: "Yakuniy tashxis",
-  recommendations: "Davolash, tavsiyalar, qayta ko'rik muddati…",
+  recommendations: "Tavsiyalar: parhez, rejim, qayta ko'rik muddati…",
 };
 
 const ROWS: Record<RecordField, number> = {
@@ -86,8 +90,10 @@ const ROWS: Record<RecordField, number> = {
   recommendations: 4,
 };
 
-const toFields = (r: Partial<Record<AnyRecordField, string | null>> | null | undefined): Fields =>
-  Object.fromEntries([...RECORD_FIELDS, ...RECORD_CODE_FIELDS].map((f) => [f, r?.[f] ?? ""])) as Fields;
+const toFields = (r: (Partial<Record<TextField, string | null>> & { prescriptions?: PrescriptionLine[] | null }) | null | undefined): Fields => ({
+  ...(Object.fromEntries([...RECORD_FIELDS, ...RECORD_CODE_FIELDS].map((f) => [f, r?.[f] ?? ""])) as Record<TextField, string>),
+  prescriptions: [...(r?.prescriptions ?? [])],
+});
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error" | "conflict";
 
@@ -299,6 +305,7 @@ function RecordEditor({
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [amending, setAmending] = useState(false);
   const [summaryOf, setSummaryOf] = useState<string | null>(null);
+  const [prescriptionOf, setPrescriptionOf] = useState<string | null>(null);
 
   if (record.status === "signed" && !amending) {
     return (
@@ -312,6 +319,12 @@ function RecordEditor({
               <FileText className="mr-1.5 h-3.5 w-3.5" />
               Xulosa
             </Button>
+            {record.prescriptions.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setPrescriptionOf(record.id)} data-testid="button-prescription">
+                <Pill className="mr-1.5 h-3.5 w-3.5" />
+                Retsept
+              </Button>
+            )}
             {record.version > 1 && (
               <Button size="sm" variant="ghost" onClick={() => setVersionsOpen(true)} data-testid="button-record-history" aria-label="Tarix">
                 <History className="h-3.5 w-3.5 sm:mr-1.5" />
@@ -334,6 +347,7 @@ function RecordEditor({
         </div>
         <RecordVersionsDialog record={versionsOpen ? record : null} onOpenChange={setVersionsOpen} />
         <VisitSummaryDialog recordId={summaryOf} onOpenChange={(o) => !o && setSummaryOf(null)} />
+        <VisitSummaryDialog recordId={prescriptionOf} doc="prescription" onOpenChange={(o) => !o && setPrescriptionOf(null)} />
         {appointmentStatus === "in_progress" && canWrite && <FinishAppointment appointment={appointment} onFinished={onFinished} />}
       </SectionCard>
     );
@@ -412,7 +426,7 @@ function DraftForm({
         const res = await apiRequest("PATCH", `/api/records/${record.id}`, body);
         const saved = (await res.json()) as MedicalRecordWithDetails;
         revision.current = saved.revision;
-        for (const f of changed) server.current[f] = sent[f];
+        for (const f of changed) (server.current as Record<string, unknown>)[f] = sent[f];
         setSavedAt(saved.updatedAt);
         setState(changedFields(server.current, latest.current).length ? "dirty" : "saved");
         return true;
@@ -526,6 +540,7 @@ function DraftForm({
       <FieldGrid
         fields={fields}
         onChange={(f, v) => setFields((x) => ({ ...x, [f]: v }))}
+        onTreatment={(lines) => setFields((x) => ({ ...x, prescriptions: lines }))}
         disabled={state === "conflict"}
         autoFocusFirst
       />
@@ -573,12 +588,14 @@ const LAYOUT: RecordField[][] = [
 function FieldGrid({
   fields,
   onChange,
+  onTreatment,
   disabled,
   autoFocusFirst,
   highlight = [],
 }: {
   fields: Fields;
-  onChange: (field: AnyRecordField, value: string) => void;
+  onChange: (field: TextField, value: string) => void;
+  onTreatment: (lines: PrescriptionLine[]) => void;
   disabled?: boolean;
   autoFocusFirst?: boolean;
   /** Fields changed against the signed text — outlined while correcting. */
@@ -587,7 +604,12 @@ function FieldGrid({
   return (
     <div className="space-y-5">
       {LAYOUT.map((row) => (
-        <div key={row.join()} className={cn(row.length > 1 && "grid gap-5 sm:grid-cols-2")}>
+        <Fragment key={row.join()}>
+        {/* B3.6: treatment comes after the diagnoses, before the recommendations (TZ §5.1.5). */}
+        {row[0] === "recommendations" && (
+          <TreatmentEditor lines={fields.prescriptions} onChange={onTreatment} disabled={disabled} highlight={highlight.includes("prescriptions")} />
+        )}
+        <div className={cn(row.length > 1 && "grid gap-5 sm:grid-cols-2")}>
           {row.map((f) => (
             <div
               key={f}
@@ -620,6 +642,7 @@ function FieldGrid({
             </div>
           ))}
         </div>
+        </Fragment>
       ))}
     </div>
   );
@@ -723,7 +746,12 @@ function AmendForm({ record, examKey, onDone }: { record: MedicalRecordWithDetai
         Tasdiqlangan tibbiy hujjat o'zgartirilmoqda. Tuzatish sizning nomingizdan qayta tasdiqlanadi va audit jurnaliga yoziladi.
       </div>
       <div className="space-y-5">
-        <FieldGrid fields={fields} onChange={(f, v) => setFields((x) => ({ ...x, [f]: v }))} highlight={changed} />
+        <FieldGrid
+          fields={fields}
+          onChange={(f, v) => setFields((x) => ({ ...x, [f]: v }))}
+          onTreatment={(lines) => setFields((x) => ({ ...x, prescriptions: lines }))}
+          highlight={changed}
+        />
         <div className="space-y-1.5">
           <Label htmlFor="amend-reason">Tuzatish sababi</Label>
           <Input

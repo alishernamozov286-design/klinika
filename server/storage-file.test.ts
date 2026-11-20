@@ -2409,3 +2409,66 @@ describe("warehouse home page and reports (B5.7)", () => {
     expect(r1.total).toBe(950000);
   });
 });
+
+describe("treatment on the examination record (B3.6)", () => {
+  const line = (over: Record<string, unknown> = {}) => ({
+    id: "rx1",
+    kind: "medicine" as const,
+    itemId: null,
+    serviceId: null,
+    name: "Paratsetamol",
+    dose: "500 mg",
+    route: "oral" as const,
+    regimen: "Kuniga 3 marta",
+    days: 5,
+    sessions: null,
+    notes: null,
+    ...over,
+  });
+
+  it("is saved with the draft, signed with it, and kept in the version a correction replaces", async () => {
+    const user = await storage.createUser({ username: "dr36", password: "parol123", fullName: "Rahimova Dilfuza", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      { userId: user.id, departmentId: null, specialty: "Terapevt", consultationPrice: 80000, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const patient = await storage.createPatient({ fullName: "Usmonov Bekzod", phone: "+998907777777", gender: "erkak", age: 41, address: null });
+    const appt = await storage.createAppointment(
+      { patientId: patient.id, doctorId: doctor.id, serviceId: null, date: "2026-11-20", startTime: "11:00", reason: null, durationMinutes: 20, price: 80000 },
+      ACTOR,
+      () => null,
+    );
+    const r = await storage.openRecord({ patientId: patient.id, appointmentId: appt.id, doctorId: doctor.id, visitId: null }, ACTOR);
+    expect(r.prescriptions).toEqual([]);
+
+    let saved = await storage.saveRecordDraft(r.id, 0, { complaints: "Isitma", preliminaryDiagnosis: "O'RVI", prescriptions: [line()] }, ACTOR);
+    expect(saved.prescriptions).toEqual([line()]);
+    // A text-only save leaves the treatment as it is.
+    saved = await storage.saveRecordDraft(r.id, 1, { recommendations: "Ko'p suyuqlik" }, ACTOR);
+    expect(saved.prescriptions).toHaveLength(1);
+    const signed = await storage.signRecord(r.id, saved.revision, ACTOR);
+    expect(signed.prescriptions[0]).toMatchObject({ name: "Paratsetamol", dose: "500 mg" });
+    await expect(storage.saveRecordDraft(r.id, signed.revision, { prescriptions: [] }, ACTOR)).rejects.toThrow(/tasdiqlangan/);
+
+    const fields = {
+      complaints: "Isitma",
+      anamnesis: null,
+      examination: null,
+      preliminaryDiagnosis: "O'RVI",
+      finalDiagnosis: null,
+      recommendations: "Ko'p suyuqlik",
+      preliminaryDiagnosisCode: null,
+      finalDiagnosisCode: null,
+      prescriptions: [line({ dose: "1000 mg", days: 3 }), line({ id: "rx2", kind: "procedure", name: "Ingalyatsiya", dose: null, route: null, regimen: "Har kuni", days: null, sessions: 5 })],
+    };
+    const amended = await storage.amendRecord(r.id, signed.revision, fields, "Doza aniqlashtirildi", ACTOR);
+    expect(amended.version).toBe(2);
+    expect(amended.prescriptions.map((l) => [l.name, l.dose])).toEqual([
+      ["Paratsetamol", "1000 mg"],
+      ["Ingalyatsiya", null],
+    ]);
+    const [v1] = await storage.listRecordVersions(r.id);
+    expect(v1.version).toBe(1);
+    expect(v1.prescriptions).toEqual([line()]);
+  });
+});

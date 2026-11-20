@@ -1,17 +1,33 @@
 /**
- * Ko'rik xulosasi (B3.8): the signed examination as a PDF — previewed here
- * exactly as it will print and save, then printed or downloaded.
+ * Ko'rik xulosasi (B3.8) and the prescription (B3.6): a signed examination as
+ * a PDF — previewed here exactly as it will print and save, then printed or
+ * downloaded. Issuing either is logged by the server, naming which.
  */
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileText, Loader2, Printer } from "lucide-react";
+import { Download, FileText, Loader2, Pill, Printer } from "lucide-react";
 import type { VisitSummary } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { buildVisitSummaryPdf, visitSummaryFilename } from "@/lib/visit-summary-pdf";
+import { buildPrescriptionPdf, buildVisitSummaryPdf, prescriptionFilename, visitSummaryFilename } from "@/lib/visit-summary-pdf";
 
-export function VisitSummaryDialog({ recordId, onOpenChange }: { recordId: string | null; onOpenChange: (open: boolean) => void }) {
+export type RecordDocument = "summary" | "prescription";
+const DOCS: Record<RecordDocument, { title: string; build: typeof buildVisitSummaryPdf; filename: (s: VisitSummary) => string; query: string }> = {
+  summary: { title: "Ko'rik xulosasi", build: buildVisitSummaryPdf, filename: visitSummaryFilename, query: "" },
+  prescription: { title: "Retsept", build: buildPrescriptionPdf, filename: prescriptionFilename, query: "?doc=prescription" },
+};
+
+export function VisitSummaryDialog({
+  recordId,
+  onOpenChange,
+  doc = "summary",
+}: {
+  recordId: string | null;
+  onOpenChange: (open: boolean) => void;
+  doc?: RecordDocument;
+}) {
+  const meta = DOCS[doc];
   const { toast } = useToast();
   const [url, setUrl] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
@@ -21,7 +37,7 @@ export function VisitSummaryDialog({ recordId, onOpenChange }: { recordId: strin
   // Fetched fresh each time: issuing a document is logged, and must show the
   // record as it stands now (a correction may have landed since).
   const { data, error, isFetching } = useQuery<VisitSummary>({
-    queryKey: [`/api/records/${recordId}/summary`],
+    queryKey: [`/api/records/${recordId}/summary${meta.query}`],
     enabled: Boolean(recordId),
     staleTime: 0,
     gcTime: 0,
@@ -33,7 +49,7 @@ export function VisitSummaryDialog({ recordId, onOpenChange }: { recordId: strin
     let cancelled = false;
     let made: string | null = null;
     setBuilding(true);
-    buildVisitSummaryPdf(data)
+    meta.build(data)
       .then((pdf) => {
         if (cancelled) return;
         pdfRef.current = pdf;
@@ -49,7 +65,7 @@ export function VisitSummaryDialog({ recordId, onOpenChange }: { recordId: strin
       pdfRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, recordId]);
+  }, [data, recordId, doc]);
 
   const loading = isFetching || building || (!url && !error);
 
@@ -58,8 +74,8 @@ export function VisitSummaryDialog({ recordId, onOpenChange }: { recordId: strin
       <DialogContent className="flex h-[92vh] max-w-4xl flex-col gap-0 p-0">
         <DialogHeader className="border-b px-6 py-4">
           <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-primary" />
-            Ko'rik xulosasi
+            {doc === "prescription" ? <Pill className="h-5 w-5 text-primary" /> : <FileText className="h-5 w-5 text-primary" />}
+            {meta.title}
           </DialogTitle>
           <DialogDescription>
             {data ? `${data.record.patientName} · ${data.record.doctorName} · v${data.record.version}` : "Tayyorlanmoqda…"}
@@ -75,7 +91,7 @@ export function VisitSummaryDialog({ recordId, onOpenChange }: { recordId: strin
               PDF tayyorlanmoqda…
             </div>
           ) : (
-            <iframe ref={frameRef} src={url!} title="Ko'rik xulosasi" className="h-full w-full border-0" data-testid="frame-visit-summary" />
+            <iframe ref={frameRef} src={url!} title={meta.title} className="h-full w-full border-0" data-testid={doc === "prescription" ? "frame-prescription" : "frame-visit-summary"} />
           )}
         </div>
 
@@ -102,7 +118,7 @@ export function VisitSummaryDialog({ recordId, onOpenChange }: { recordId: strin
           </Button>
           <Button
             disabled={loading || Boolean(error)}
-            onClick={() => data && pdfRef.current?.save(visitSummaryFilename(data))}
+            onClick={() => data && pdfRef.current?.save(meta.filename(data))}
             data-testid="button-download-summary"
           >
             <Download className="mr-2 h-4 w-4" />

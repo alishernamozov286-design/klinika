@@ -817,6 +817,8 @@ export class FileStorage implements IStorage {
     const patient = this.db.patients.find((p) => p.id === r.patientId);
     return {
       ...r,
+      // db.json written before B3.6 has no treatment field.
+      prescriptions: r.prescriptions ?? [],
       patientNumber: patient?.patientNumber ?? 0,
       patientName: patient?.fullName ?? "—",
       doctorName: user?.fullName ?? "—",
@@ -884,6 +886,7 @@ export class FileStorage implements IStorage {
       recommendations: null,
       preliminaryDiagnosisCode: null,
       finalDiagnosisCode: null,
+      prescriptions: [],
       signedAt: null,
       signedBy: null,
       amendedAt: null,
@@ -947,6 +950,8 @@ export class FileStorage implements IStorage {
       recommendations: r.recommendations,
       preliminaryDiagnosisCode: r.preliminaryDiagnosisCode ?? null,
       finalDiagnosisCode: r.finalDiagnosisCode ?? null,
+      // Records written before B3.6 have no treatment field in db.json.
+      prescriptions: r.prescriptions ?? [],
       signedAt: r.signedAt,
       signedBy: r.signedBy,
       replacedAt: now,
@@ -972,7 +977,7 @@ export class FileStorage implements IStorage {
     return this.db.medicalRecordVersions
       .filter((v) => v.recordId === recordId)
       .sort((a, b) => b.version - a.version)
-      .map((v) => ({ ...v, replacedByName: this.db.users.find((u) => u.id === v.replacedBy)?.fullName ?? null }));
+      .map((v) => ({ ...v, prescriptions: v.prescriptions ?? [], replacedByName: this.db.users.find((u) => u.id === v.replacedBy)?.fullName ?? null }));
   }
 
   // ------------------------------------------------------------- allergies
