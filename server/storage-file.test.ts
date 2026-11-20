@@ -2472,3 +2472,81 @@ describe("treatment on the examination record (B3.6)", () => {
     expect(v1.prescriptions).toEqual([line()]);
   });
 });
+
+describe("patient bill (B7.1)", () => {
+  async function visitWithTwoServices() {
+    const user = await storage.createUser({ username: "dr71", password: "parol123", fullName: "Karimov Anvar", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor(
+      { userId: user.id, departmentId: null, specialty: "Terapevt", consultationPrice: 80000, slotMinutes: 20, schedule: [], isActive: true },
+      ACTOR,
+    );
+    const patient = await storage.createPatient({ fullName: "Toshmatova Gulnora", phone: "+998903333333", gender: "ayol", age: 29, address: null });
+    const today = new Date().toISOString().slice(0, 10);
+    const appt = await storage.createAppointment(
+      { patientId: patient.id, doctorId: doctor.id, serviceId: null, date: today, startTime: "09:00", reason: null, durationMinutes: 20, price: 80000 },
+      ACTOR,
+      () => null,
+    );
+    const arrived = await storage.setAppointmentStatus(appt.id, { from: "scheduled", to: "arrived" }, ACTOR);
+    // A lab order the same day joins the same visit.
+    const order = await storage.createOrder({ patientId: patient.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: ACTOR.id });
+    return { patient, appt: arrived, order, visitId: arrived.visitId! };
+  }
+
+  it("one bill for the visit; one payment split oldest first; the order's own ledger follows", async () => {
+    const { visitId, order, appt, patient } = await visitWithTwoServices();
+    expect(order.visitId).toBe(visitId);
+    let bill = (await storage.getBill(visitId))!;
+    expect(bill.invoice).toBeNull();
+    expect(bill.lines.map((l) => [l.source, l.amount])).toEqual([
+      ["appointment", 80000],
+      ["order", order.totalAmount],
+    ]);
+    expect(bill.totals).toMatchObject({ amount: 80000 + order.totalAmount, due: 80000 + order.totalAmount, status: "unpaid" });
+
+    // Partial: the consultation first, part of the order after it.
+    const first = (await storage.payBill(visitId, { amount: 90000, method: "naqd", note: null }, ACTOR))!;
+    expect(first.taken).toBe(90000);
+    expect(first.bill.invoice?.number).toBe(1);
+    expect(first.bill.receipts[0]).toMatchObject({ number: 1, amount: 90000, method: "naqd" });
+    expect(first.bill.receipts[0].shares.map((s) => [s.source, s.amount])).toEqual([
+      ["appointment", 80000],
+      ["order", 10000],
+    ]);
+    expect((await storage.getOrder(order.id))!.paidAmount).toBe(10000);
+    expect(first.bill.totals.status).toBe("partial");
+
+    // The rest, overpaid: cut to the debt.
+    const second = (await storage.payBill(visitId, { amount: 1_000_000, method: "karta", note: null }, ACTOR))!;
+    expect(second.taken).toBe(order.totalAmount - 10000);
+    expect(second.bill.totals).toMatchObject({ due: 0, status: "paid" });
+    await expect(storage.payBill(visitId, { amount: 5000, method: "naqd", note: null }, ACTOR)).rejects.toThrow(/to'liq to'langan/);
+
+    // A share is never voided alone; the receipt is, whole — and the order's paid follows.
+    const share = (await storage.getOrder(order.id))!.payments!.find((p) => p.invoicePaymentId)!;
+    await expect(storage.voidPayment(share.id, "xato kiritilgan", ACTOR)).rejects.toThrow(/kvitansiyani butunligicha/);
+    const afterVoid = (await storage.voidReceipt(first.receiptId, "Noto'g'ri bemor", ACTOR))!;
+    expect(afterVoid.receipts.find((r) => r.id === first.receiptId)).toMatchObject({ voidReason: "Noto'g'ri bemor" });
+    expect(afterVoid.totals.due).toBe(90000);
+    expect((await storage.getOrder(order.id))!.paidAmount).toBe(order.totalAmount - 10000);
+    await expect(storage.voidReceipt(first.receiptId, "yana", ACTOR)).rejects.toThrow(/allaqachon/);
+
+    // The desk's list and the patient card both see the consultation now.
+    bill = (await storage.getBill(visitId))!;
+    const listed = await storage.listBills({ status: "due" });
+    expect(listed.map((b) => [b.visitId, b.totals.due, b.appointments, b.orders])).toEqual([[visitId, 90000, 1, 1]]);
+    expect(await storage.listBills({ status: "settled" })).toEqual([]);
+    const card = (await storage.getPatientCard(patient.id))!;
+    expect(card.totals).toMatchObject({ billed: 80000 + order.totalAmount, debt: 90000 });
+    expect(card.payments.some((p) => p.label.startsWith("Qabul") && p.appointmentId === appt.id)).toBe(true);
+    expect(card.payments.some((p) => p.label === `Laboratoriya #${order.orderNumber}`)).toBe(true);
+  });
+
+  it("opening gives the number once; a visit without services is an empty bill", async () => {
+    const { visitId } = await visitWithTwoServices();
+    const a = (await storage.openInvoice(visitId, ACTOR))!;
+    const b = (await storage.openInvoice(visitId, ACTOR))!;
+    expect(a.invoice!.number).toBe(b.invoice!.number);
+    expect(await storage.getBill("missing")).toBeUndefined();
+  });
+});

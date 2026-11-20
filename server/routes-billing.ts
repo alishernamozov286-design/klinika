@@ -1,0 +1,98 @@
+/**
+ * Kassa: bemor hisobvarag'i (B7.1, TZ §9.1, §9.2, §11).
+ *
+ *   payments.create | finance.view   read bills and the debtors list
+ *   payments.create                  open a bill (its number), take a payment on it
+ *   payments.delete                  void a receipt, whole, with a reason
+ *
+ * A refund is not taken here: it stays with payments.refund (B7.4).
+ * Rules: shared/invoice.ts.
+ */
+import type { Express } from "express";
+import { payBillSchema, voidPaymentSchema, PAYMENT_METHOD_LABELS } from "@shared/schema";
+import { BILL_FILTERS, describeShares, type BillFilter } from "@shared/invoice";
+import { requirePermission } from "./rbac";
+import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
+import { storage } from "./storage";
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const sum = (n: number) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
+
+export function registerBillingRoutes(app: Express) {
+  /** The cash desk's list: bills of a period (visit days), or every bill still owing. */
+  app.get(
+    "/api/bills",
+    requirePermission("payments.create", "finance.view"),
+    handle(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      if ((from && !DAY.test(from)) || (to && !DAY.test(to))) return res.status(400).json({ message: "Sanani YYYY-MM-DD ko'rinishida kiriting" });
+      if (from && to && from > to) return res.status(400).json({ message: "Davr boshi oxiridan keyin bo'lishi mumkin emas" });
+      const status = stringParam(req.query.status) as BillFilter | undefined;
+      if (status && !BILL_FILTERS.includes(status)) return res.status(400).json({ message: "Noma'lum filtr" });
+      res.json(await storage.listBills({ from, to, status, patientId: stringParam(req.query.patientId) }).catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  app.get(
+    "/api/bills/:visitId",
+    requirePermission("payments.create", "finance.view"),
+    handle(async (req, res) => {
+      const bill = await storage.getBill(req.params.visitId);
+      if (!bill) return res.status(404).json({ message: "Tashrif topilmadi" });
+      res.json(bill);
+    }),
+  );
+
+  /** Gives the bill its number before it is printed (idempotent). */
+  app.post(
+    "/api/bills/:visitId/open",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const before = await storage.getBill(req.params.visitId);
+      if (!before) return res.status(404).json({ message: "Tashrif topilmadi" });
+      const bill = (await storage.openInvoice(req.params.visitId, actorOf(req)))!;
+      if (!before.invoice && bill.invoice) {
+        await audit(req, "create", "invoice", bill.invoice.id, `Hisobvaraq №${bill.invoice.number} ochildi: №${bill.patient.patientNumber} ${bill.patient.fullName}, ${bill.visitDate}`);
+      }
+      res.json(bill);
+    }),
+  );
+
+  /** One payment for several services (TZ §9.2): split across the lines that owe, oldest first. */
+  app.post(
+    "/api/bills/:visitId/payments",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const input = payBillSchema.parse(req.body);
+      const before = await storage.getBill(req.params.visitId);
+      if (!before) return res.status(404).json({ message: "Tashrif topilmadi" });
+      // Nothing owed is refused inside the storage too, on locked rows (409).
+      const out = (await storage.payBill(req.params.visitId, input, actorOf(req)))!;
+      const receipt = out.bill.receipts.find((r) => r.id === out.receiptId)!;
+      await audit(
+        req,
+        "payment",
+        "invoice",
+        out.bill.invoice!.id,
+        `Hisobvaraq №${out.bill.invoice!.number}, kvitansiya №${receipt.number}: ${sum(out.taken)} (${PAYMENT_METHOD_LABELS[input.method]}) — ${describeShares(receipt.shares, out.bill.lines)}` +
+          `${input.amount > out.taken ? `; qarzdan ortig'i ${sum(input.amount - out.taken)} qaytim` : ""}${out.bill.totals.due ? `; qoldi ${sum(out.bill.totals.due)}` : "; to'liq to'landi"}`,
+      );
+      res.status(201).json({ bill: out.bill, receiptId: out.receiptId, taken: out.taken, change: input.amount - out.taken });
+    }),
+  );
+
+  /** A receipt taken by mistake is voided whole, with a reason; it stays on the bill struck out. */
+  app.post(
+    "/api/receipts/:id/void",
+    requirePermission("payments.delete"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const bill = await storage.voidReceipt(req.params.id, reason, actorOf(req));
+      if (!bill) return res.status(404).json({ message: "Kvitansiya topilmadi" });
+      const r = bill.receipts.find((x) => x.id === req.params.id)!;
+      await audit(req, "void", "invoice", bill.invoice!.id, `Hisobvaraq №${bill.invoice!.number}, kvitansiya №${r.number} (${sum(r.amount)}) bekor qilindi: ${reason}`);
+      res.json(bill);
+    }),
+  );
+}

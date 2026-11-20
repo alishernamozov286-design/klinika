@@ -82,6 +82,7 @@ const ACTION_LABELS: Record<string, string> = {
 const ENTITIES = [
   { value: "all", label: "Hammasi" },
   { value: "order", label: "Buyurtmalar" },
+  { value: "invoice", label: "Hisobvaraqlar va kvitansiyalar" },
   { value: "patient", label: "Bemorlar" },
   { value: "test", label: "Tahlillar" },
   { value: "user", label: "Xodimlar" },

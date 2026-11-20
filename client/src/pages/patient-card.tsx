@@ -449,7 +449,7 @@ export default function PatientCardPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Sana</TableHead>
-                        <TableHead>Buyurtma</TableHead>
+                        <TableHead>Xizmat</TableHead>
                         <TableHead>Usul</TableHead>
                         <TableHead className="hidden md:table-cell">Qabul qildi</TableHead>
                         <TableHead className="hidden md:table-cell">Izoh</TableHead>
@@ -460,7 +460,7 @@ export default function PatientCardPage() {
                       {card.payments.map((pay) => (
                         <TableRow key={pay.id} className={cn(pay.voidedAt && "opacity-60")}>
                           <TableCell className="tabular text-muted-foreground">{formatDateTime(pay.createdAt)}</TableCell>
-                          <TableCell className="tabular">#{pay.orderNumber}</TableCell>
+                          <TableCell className="tabular">{pay.label}</TableCell>
                           <TableCell>{PAYMENT_METHOD_LABELS[pay.method as PaymentMethod] ?? pay.method}</TableCell>
                           <TableCell className="hidden text-muted-foreground md:table-cell">{pay.createdByName ?? "—"}</TableCell>
                           <TableCell className="hidden text-muted-foreground md:table-cell">{pay.note ?? "—"}</TableCell>

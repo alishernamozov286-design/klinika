@@ -116,8 +116,23 @@ import {
   planConsumptions,
   shortOf,
 } from "@shared/consumption";
+import {
+  BILL_PAID,
+  PAYMENT_IS_RECEIPT_SHARE,
+  RECEIPT_ALREADY_VOIDED,
+  allocatePayment,
+  billTotals,
+  buildBillLines,
+  filterBills,
+  type BillLine,
+} from "@shared/invoice";
 import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type DepartmentLine, type MovementTotal } from "@shared/inventory-reports";
 import type {
+  Bill,
+  BillSummary,
+  Invoice,
+  InvoiceReceipt,
+  PayBillInput,
   ConsumptionNorm,
   ConsumptionNormView,
   ExtraConsumptionInput,
@@ -220,6 +235,7 @@ import {
   type PatientQuery,
   type ResultInput,
   resolveFlag,
+  type BillQuery,
 } from "./storage-types";
 import type { LockState } from "@shared/lockout";
 
@@ -1527,12 +1543,13 @@ export class FileStorage implements IStorage {
     const details = await this.getPatientDetails(id);
     if (!details) return undefined;
     const { items } = await this.listOrders({ patientId: id });
-    const numbers = new Map(items.map((o) => [o.id, o.orderNumber]));
-    const payments = this.db.payments
-      .filter((p) => numbers.has(p.orderId))
-      .map((p) => ({ ...p, orderNumber: numbers.get(p.orderId)! }));
+    const appointments = await this.listAppointments({ patientId: id });
+    const orderIds = new Set(items.map((o) => o.id));
+    const apptIds = new Set(appointments.map((a) => a.id));
+    // B7.1: the ledger holds lab orders and appointments alike.
+    const payments = this.db.payments.filter((p) => (p.orderId && orderIds.has(p.orderId)) || (p.appointmentId && apptIds.has(p.appointmentId)));
     const visits = this.db.visits.filter((v) => v.patientId === id);
-    return buildPatientCard(details, items, visits, payments, await this.listAppointments({ patientId: id }));
+    return buildPatientCard(details, items, visits, payments, appointments);
   }
 
   async findPatientCandidates(q: PatientCandidateQuery): Promise<Patient[]> {
@@ -1600,6 +1617,13 @@ export class FileStorage implements IStorage {
         for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
         for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
         for (const r of this.db.referrals) if (r.visitId === v.id) r.visitId = same.id;
+        // Bills (B7.1): the target's bill of the day takes the duplicate's receipts; otherwise the bill moves.
+        const theirs = this.db.invoices.find((i) => i.visitId === v.id);
+        const ours = this.db.invoices.find((i) => i.visitId === same.id);
+        if (theirs && ours) {
+          for (const r of this.db.invoicePayments) if (r.invoiceId === theirs.id) r.invoiceId = ours.id;
+          this.db.invoices = this.db.invoices.filter((i) => i.id !== theirs.id);
+        } else if (theirs) theirs.visitId = same.id;
         this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
       } else {
         v.patientId = targetId;
@@ -1618,6 +1642,8 @@ export class FileStorage implements IStorage {
     for (const r of this.db.medicalRecords) if (r.patientId === sourceId) r.patientId = targetId;
     for (const a of this.db.patientAllergies) if (a.patientId === sourceId) a.patientId = targetId;
     for (const r of this.db.referrals) if (r.patientId === sourceId) r.patientId = targetId;
+    for (const i of this.db.invoices) if (i.patientId === sourceId) i.patientId = targetId;
+    for (const r of this.db.invoicePayments) if (r.patientId === sourceId) r.patientId = targetId;
     this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
     await this.persist();
     return { orders, contacts, appointments };
@@ -1689,6 +1715,8 @@ export class FileStorage implements IStorage {
       medical_records: mine(this.db.medicalRecords),
       patient_allergies: mine(this.db.patientAllergies),
       referrals: mine(this.db.referrals),
+      invoices: mine(this.db.invoices),
+      invoice_payments: mine(this.db.invoicePayments),
     });
     if (problem) throw new StorageConflict(problem);
     const before = this.db.patients.length;
@@ -1937,6 +1965,8 @@ export class FileStorage implements IStorage {
       this.db.payments.push({
         id: randomUUID(),
         orderId: order.id,
+        appointmentId: null,
+        invoicePaymentId: null,
         amount: opening,
         method: "naqd",
         note: null,
@@ -2309,6 +2339,8 @@ export class FileStorage implements IStorage {
     this.db.payments.push({
       id: randomUUID(),
       orderId,
+      appointmentId: null,
+      invoicePaymentId: null,
       amount,
       method: input.method,
       note: input.note?.trim() || null,
@@ -2327,13 +2359,15 @@ export class FileStorage implements IStorage {
     const row = this.db.payments.find((p) => p.id === paymentId);
     if (!row) return undefined;
     if (row.voidedAt) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
+    // A share of a bill receipt goes with its receipt (B7.1), never alone.
+    if (row.invoicePaymentId || !row.orderId) throw new StorageConflict(PAYMENT_IS_RECEIPT_SHARE);
     row.voidedAt = new Date().toISOString();
     row.voidedBy = actor.id;
     row.voidedByName = actor.name;
     row.voidReason = reason;
     const order = this.db.orders.find((o) => o.id === row.orderId);
     if (order) this.touchOrder(order, actor);
-    this.syncPaid(row.orderId);
+    this.syncPaid(row.orderId!);
     await this.persist();
     return order && this.hydrate(order, true);
   }
@@ -3784,6 +3818,173 @@ export class FileStorage implements IStorage {
         value: signedValue(m.quantity, batches.get(m.batchId)?.purchasePrice ?? 0),
         issue: m.issueId ? issues.get(m.issueId) : undefined,
       }));
+  }
+
+  // ------------------------------------------------------------ bills (B7.1)
+
+  private billLinesOf(visitId: string): BillLine[] {
+    const orders = this.db.orders
+      .filter((o) => o.visitId === visitId)
+      .map((o) => ({ ...o, tests: this.db.orderTests.filter((t) => t.orderId === o.id).length }));
+    const appts = this.db.appointments
+      .filter((a) => a.visitId === visitId)
+      .map((a) => {
+        const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
+        const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : undefined;
+        return {
+          ...a,
+          serviceName: a.serviceId ? (this.db.services.find((s) => s.id === a.serviceId)?.name ?? null) : null,
+          doctorName: user?.fullName ?? "—",
+          specialty: doctor?.specialty ?? "Shifokor",
+          paid: this.db.payments.filter((p) => p.appointmentId === a.id && !p.voidedAt).reduce((s, p) => s + p.amount, 0),
+        };
+      });
+    return buildBillLines(orders, appts);
+  }
+
+  async getBill(visitId: string): Promise<Bill | undefined> {
+    const visit = this.db.visits.find((v) => v.id === visitId);
+    if (!visit) return undefined;
+    const patient = this.db.patients.find((p) => p.id === visit.patientId);
+    const lines = this.billLinesOf(visitId);
+    const invoice = this.db.invoices.find((i) => i.visitId === visitId) ?? null;
+    const receipts: InvoiceReceipt[] = invoice
+      ? this.db.invoicePayments
+          .filter((r) => r.invoiceId === invoice.id)
+          .sort((a, b) => b.number - a.number)
+          .map((r) => ({
+            ...r,
+            shares: this.db.payments
+              .filter((p) => p.invoicePaymentId === r.id)
+              .map((p) => {
+                const source = p.orderId ? ("order" as const) : ("appointment" as const);
+                const sourceId = (p.orderId ?? p.appointmentId)!;
+                return { source, sourceId, title: lines.find((l) => l.source === source && l.sourceId === sourceId)?.title ?? "—", amount: p.amount };
+              }),
+          }))
+      : [];
+    return {
+      visitId,
+      visitDate: visit.visitDate,
+      patient: { id: visit.patientId, patientNumber: patient?.patientNumber ?? 0, fullName: patient?.fullName ?? "—", phone: patient?.phone ?? null },
+      invoice: invoice ? { ...invoice } : null,
+      lines,
+      receipts,
+      totals: billTotals(lines),
+    };
+  }
+
+  private ensureInvoice(visitId: string, patientId: string, actor: Actor): Invoice {
+    let inv = this.db.invoices.find((i) => i.visitId === visitId);
+    if (!inv) {
+      this.db.counters.invoiceNumber += 1;
+      inv = { id: randomUUID(), number: this.db.counters.invoiceNumber, patientId, visitId, createdAt: new Date().toISOString(), createdBy: actor.id, createdByName: actor.name };
+      this.db.invoices.push(inv);
+    }
+    return inv;
+  }
+
+  async openInvoice(visitId: string, actor: Actor): Promise<Bill | undefined> {
+    const visit = this.db.visits.find((v) => v.id === visitId);
+    if (!visit) return undefined;
+    const had = this.db.invoices.some((i) => i.visitId === visitId);
+    this.ensureInvoice(visitId, visit.patientId, actor);
+    if (!had) await this.persist();
+    return this.getBill(visitId);
+  }
+
+  async payBill(visitId: string, input: PayBillInput, actor: Actor): Promise<{ bill: Bill; receiptId: string; taken: number } | undefined> {
+    const visit = this.db.visits.find((v) => v.id === visitId);
+    if (!visit) return undefined;
+    const lines = this.billLinesOf(visitId);
+    const { shares, taken } = allocatePayment(lines, input.amount);
+    if (taken === 0) throw new StorageConflict(BILL_PAID);
+    const invoice = this.ensureInvoice(visitId, visit.patientId, actor);
+    const now = new Date().toISOString();
+    this.db.counters.invoiceReceiptNumber += 1;
+    const receipt = {
+      id: randomUUID(),
+      number: this.db.counters.invoiceReceiptNumber,
+      invoiceId: invoice.id,
+      patientId: visit.patientId,
+      amount: taken,
+      method: input.method,
+      note: input.note ?? null,
+      createdAt: now,
+      createdBy: actor.id,
+      createdByName: actor.name,
+      voidedAt: null,
+      voidedBy: null,
+      voidedByName: null,
+      voidReason: null,
+    };
+    this.db.invoicePayments.push(receipt);
+    for (const s of shares) {
+      this.db.payments.push({
+        id: randomUUID(),
+        orderId: s.source === "order" ? s.sourceId : null,
+        appointmentId: s.source === "appointment" ? s.sourceId : null,
+        invoicePaymentId: receipt.id,
+        amount: s.amount,
+        method: input.method,
+        note: `Hisobvaraq №${invoice.number}, kvitansiya №${receipt.number}`,
+        createdBy: actor.id,
+        createdByName: actor.name,
+        createdAt: now,
+        ...UNVOIDED,
+      });
+      if (s.source === "order") {
+        const order = this.db.orders.find((o) => o.id === s.sourceId);
+        if (order) this.touchOrder(order, actor);
+        this.syncPaid(s.sourceId);
+      }
+    }
+    await this.persist();
+    return { bill: (await this.getBill(visitId))!, receiptId: receipt.id, taken };
+  }
+
+  async voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined> {
+    const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
+    if (!rec) return undefined;
+    if (rec.voidedAt) throw new StorageConflict(RECEIPT_ALREADY_VOIDED);
+    const now = new Date().toISOString();
+    Object.assign(rec, { voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
+    for (const p of this.db.payments.filter((x) => x.invoicePaymentId === receiptId && !x.voidedAt)) {
+      Object.assign(p, { voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
+      if (p.orderId) {
+        const order = this.db.orders.find((o) => o.id === p.orderId);
+        if (order) this.touchOrder(order, actor);
+        this.syncPaid(p.orderId);
+      }
+    }
+    await this.persist();
+    const inv = this.db.invoices.find((i) => i.id === rec.invoiceId);
+    return inv ? this.getBill(inv.visitId) : undefined;
+  }
+
+  async listBills(query: BillQuery): Promise<BillSummary[]> {
+    const from = query.from ?? "0000-01-01";
+    const to = query.to ?? "9999-12-31";
+    const rows: BillSummary[] = [];
+    for (const v of this.db.visits) {
+      if (v.visitDate < from || v.visitDate > to || (query.patientId && v.patientId !== query.patientId)) continue;
+      const lines = this.billLinesOf(v.id);
+      if (lines.length === 0) continue;
+      const p = this.db.patients.find((x) => x.id === v.patientId);
+      rows.push({
+        visitId: v.id,
+        visitDate: v.visitDate,
+        patientId: v.patientId,
+        patientNumber: p?.patientNumber ?? 0,
+        patientName: p?.fullName ?? "—",
+        invoiceNumber: this.db.invoices.find((i) => i.visitId === v.id)?.number ?? null,
+        appointments: lines.filter((l) => l.source === "appointment" && !l.cancelled).length,
+        orders: lines.filter((l) => l.source === "order" && !l.cancelled).length,
+        totals: billTotals(lines),
+      });
+    }
+    rows.sort((a, b) => b.visitDate.localeCompare(a.visitDate) || a.patientName.localeCompare(b.patientName));
+    return filterBills(rows, query.status).slice(0, query.limit ?? 500);
   }
 
   async movementTotals(range: { from: string; to: string }): Promise<MovementTotal[]> {

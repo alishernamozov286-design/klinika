@@ -18,6 +18,8 @@ import {
   stockIssues,
   stockCounts,
   stockCountLines,
+  invoices,
+  invoicePayments,
   consumptionNorms,
   labConsumptions,
   auditLog,
@@ -160,6 +162,17 @@ import {
   planConsumptions,
   shortOf,
 } from "@shared/consumption";
+import {
+  BILL_PAID,
+  PAYMENT_IS_RECEIPT_SHARE,
+  RECEIPT_ALREADY_VOIDED,
+  allocatePayment,
+  billStatus,
+  billTotals,
+  buildBillLines,
+  filterBills,
+  type BillLine,
+} from "@shared/invoice";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
@@ -173,6 +186,11 @@ import {
   zScore,
 } from "@shared/qc";
 import type {
+  Bill,
+  BillSummary,
+  Invoice,
+  InvoiceReceipt,
+  PayBillInput,
   ConsumptionNorm,
   ConsumptionNormView,
   ExtraConsumptionInput,
@@ -270,6 +288,7 @@ import {
   type PatientQuery,
   type ResultInput,
   resolveFlag,
+  type BillQuery,
 } from "./storage-types";
 import type { LockState } from "@shared/lockout";
 
@@ -1936,11 +1955,13 @@ export class PgStorage implements IStorage {
       this.getPatientDetails(id),
       this.listOrders({ patientId: id }),
       db.select().from(visits).where(eq(visits.patientId, id)),
+      // B7.1: the ledger holds lab orders and appointments alike.
       db
-        .select({ payment: payments, orderNumber: orders.orderNumber })
+        .select({ payment: payments })
         .from(payments)
-        .innerJoin(orders, eq(orders.id, payments.orderId))
-        .where(eq(orders.patientId, id)),
+        .leftJoin(orders, eq(orders.id, payments.orderId))
+        .leftJoin(appointments, eq(appointments.id, payments.appointmentId))
+        .where(or(eq(orders.patientId, id), eq(appointments.patientId, id))),
       (await this.hasAppointmentsTable()) ? this.listAppointments({ patientId: id }) : Promise.resolve([]),
     ]);
     if (!details) return undefined;
@@ -1948,7 +1969,7 @@ export class PgStorage implements IStorage {
       details,
       list.items,
       visitRows.map((v) => ({ ...v, createdAt: iso(v.createdAt) ?? v.createdAt })),
-      paymentRows.map((r) => ({ ...mapPayment(r.payment), orderNumber: r.orderNumber })),
+      paymentRows.map((r) => mapPayment(r.payment)),
       appointmentList,
     );
   }
@@ -2079,6 +2100,27 @@ export class PgStorage implements IStorage {
           FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
           WHERE sv.patient_id = ${sourceId} AND rf.visit_id = sv.id`);
         await tx.update(referrals).set({ patientId: targetId }).where(eq(referrals.patientId, sourceId));
+      }
+      // Bills (B7.1): a day both cards have becomes one bill — the target's when it has one.
+      // The duplicate's receipts move onto it; its bill, now holding nothing, goes with its visit.
+      if (await tableExists(tx, "invoices")) {
+        await tx.execute(sql`
+          UPDATE invoice_payments ip SET invoice_id = ti.id
+          FROM invoices si
+          JOIN ${visits} sv ON sv.id = si.visit_id
+          JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          JOIN invoices ti ON ti.visit_id = tv.id
+          WHERE sv.patient_id = ${sourceId} AND ip.invoice_id = si.id`);
+        await tx.execute(sql`
+          DELETE FROM invoices si USING ${visits} sv, ${visits} tv, invoices ti
+          WHERE si.visit_id = sv.id AND sv.patient_id = ${sourceId}
+            AND tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId} AND ti.visit_id = tv.id`);
+        await tx.execute(sql`
+          UPDATE invoices si SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND si.visit_id = sv.id`);
+        await tx.update(invoices).set({ patientId: targetId }).where(eq(invoices.patientId, sourceId));
+        await tx.update(invoicePayments).set({ patientId: targetId }).where(eq(invoicePayments.patientId, sourceId));
       }
       await tx.execute(sql`
         DELETE FROM ${visits} sv USING ${visits} tv
@@ -2980,12 +3022,14 @@ export class PgStorage implements IStorage {
           voidReason: reason,
         })
         .where(and(eq(payments.id, paymentId), isNull(payments.voidedAt)))
-        .returning({ orderId: payments.orderId });
+        .returning({ orderId: payments.orderId, invoicePaymentId: payments.invoicePaymentId });
       if (!row) {
         const [exists] = await tx.select({ id: payments.id }).from(payments).where(eq(payments.id, paymentId)).limit(1);
         if (exists) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
         return undefined;
       }
+      // A share of a bill receipt goes with its receipt (B7.1), never alone; throwing undoes the update.
+      if (row.invoicePaymentId || !row.orderId) throw new StorageConflict(PAYMENT_IS_RECEIPT_SHARE);
       await this.syncPaid(tx as unknown as typeof db, row.orderId, actor);
       return row.orderId;
     });
@@ -4609,6 +4653,228 @@ export class PgStorage implements IStorage {
   }
 
   // ------------------------------------------------------- reports (B5.7)
+
+  // ------------------------------------------------------------ bills (B7.1)
+
+  /** The visit's orders and appointments as bill lines, read on `exec` (locked by the caller when paying). */
+  private async billLines(exec: typeof db, visitId: string, lock = false): Promise<BillLine[]> {
+    const orderQuery = exec
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        status: orders.status,
+        totalAmount: orders.totalAmount,
+        paidAmount: orders.paidAmount,
+        createdAt: orders.createdAt,
+        tests: sql<number>`(SELECT count(*)::int FROM order_tests ot WHERE ot.order_id = "orders"."id")`,
+      })
+      .from(orders)
+      .where(eq(orders.visitId, visitId))
+      .orderBy(asc(orders.id));
+    const orderRows = lock ? await orderQuery.for("update", { of: orders }) : await orderQuery;
+    const apptRows = await exec
+      .select({
+        id: appointments.id,
+        status: appointments.status,
+        price: appointments.price,
+        startTime: appointments.startTime,
+        createdAt: appointments.createdAt,
+        serviceName: services.name,
+        doctorName: users.fullName,
+        specialty: doctors.specialty,
+        paid: sql<number>`(SELECT coalesce(sum(p.amount), 0)::int FROM payments p
+                            WHERE p.appointment_id = "appointments"."id" AND p.voided_at IS NULL)`,
+      })
+      .from(appointments)
+      .leftJoin(services, eq(services.id, appointments.serviceId))
+      .leftJoin(doctors, eq(doctors.id, appointments.doctorId))
+      .leftJoin(users, eq(users.id, doctors.userId))
+      .where(eq(appointments.visitId, visitId));
+    return buildBillLines(
+      orderRows.map((o) => ({ ...o, createdAt: iso(o.createdAt) ?? o.createdAt, tests: Number(o.tests) })),
+      apptRows.map((a) => ({
+        ...a,
+        createdAt: iso(a.createdAt) ?? a.createdAt,
+        paid: Number(a.paid),
+        doctorName: a.doctorName ?? "—",
+        specialty: a.specialty ?? "Shifokor",
+      })),
+    );
+  }
+
+  async getBill(visitId: string): Promise<Bill | undefined> {
+    const [v] = await db
+      .select({ visit: visits, patientNumber: patients.patientNumber, fullName: patients.fullName, phone: patients.phone })
+      .from(visits)
+      .innerJoin(patients, eq(patients.id, visits.patientId))
+      .where(eq(visits.id, visitId))
+      .limit(1);
+    if (!v) return undefined;
+    const [lines, [invoice]] = await Promise.all([this.billLines(db, visitId), db.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1)]);
+    let receipts: InvoiceReceipt[] = [];
+    if (invoice) {
+      const recs = await db.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoice.id)).orderBy(desc(invoicePayments.number));
+      const shares = recs.length
+        ? await db
+            .select({ p: payments })
+            .from(payments)
+            .where(inArray(payments.invoicePaymentId, recs.map((r) => r.id)))
+        : [];
+      receipts = recs.map((r) => ({
+        ...r,
+        createdAt: iso(r.createdAt) ?? r.createdAt,
+        voidedAt: iso(r.voidedAt),
+        method: r.method as InvoiceReceipt["method"],
+        shares: shares
+          .filter((x) => x.p.invoicePaymentId === r.id)
+          .map((x) => {
+            const source = x.p.orderId ? ("order" as const) : ("appointment" as const);
+            const sourceId = (x.p.orderId ?? x.p.appointmentId)!;
+            return { source, sourceId, title: lines.find((l) => l.source === source && l.sourceId === sourceId)?.title ?? "—", amount: x.p.amount };
+          }),
+      }));
+    }
+    return {
+      visitId,
+      visitDate: v.visit.visitDate,
+      patient: { id: v.visit.patientId, patientNumber: v.patientNumber, fullName: v.fullName, phone: v.phone ?? null },
+      invoice: invoice ? { ...invoice, createdAt: iso(invoice.createdAt) ?? invoice.createdAt } : null,
+      lines,
+      receipts,
+      totals: billTotals(lines),
+    };
+  }
+
+  private async ensureInvoice(exec: typeof db, visitId: string, patientId: string, actor: Actor): Promise<Invoice> {
+    await exec
+      .insert(invoices)
+      .values({ visitId, patientId, createdBy: actor.id, createdByName: actor.name })
+      .onConflictDoNothing({ target: invoices.visitId });
+    const [row] = await exec.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1);
+    return row;
+  }
+
+  async openInvoice(visitId: string, actor: Actor): Promise<Bill | undefined> {
+    const [v] = await db.select().from(visits).where(eq(visits.id, visitId)).limit(1);
+    if (!v) return undefined;
+    await this.ensureInvoice(db, visitId, v.patientId, actor);
+    return this.getBill(visitId);
+  }
+
+  async payBill(visitId: string, input: PayBillInput, actor: Actor): Promise<{ bill: Bill; receiptId: string; taken: number } | undefined> {
+    const out = await db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      // The visit row serialises payments on one bill; the orders are locked against a payment taken on the order itself.
+      const [v] = await tx.select().from(visits).where(eq(visits.id, visitId)).for("update");
+      if (!v) return undefined;
+      const lines = await this.billLines(exec, visitId, true);
+      const { shares, taken } = allocatePayment(lines, input.amount);
+      if (taken === 0) throw new StorageConflict(BILL_PAID);
+      const invoice = await this.ensureInvoice(exec, visitId, v.patientId, actor);
+      const [receipt] = await tx
+        .insert(invoicePayments)
+        .values({ invoiceId: invoice.id, patientId: v.patientId, amount: taken, method: input.method, note: input.note ?? null, createdBy: actor.id, createdByName: actor.name })
+        .returning();
+      await tx.insert(payments).values(
+        shares.map((s) => ({
+          orderId: s.source === "order" ? s.sourceId : null,
+          appointmentId: s.source === "appointment" ? s.sourceId : null,
+          invoicePaymentId: receipt.id,
+          amount: s.amount,
+          method: input.method,
+          note: `Hisobvaraq №${invoice.number}, kvitansiya №${receipt.number}`,
+          createdBy: actor.id,
+          createdByName: actor.name,
+        })),
+      );
+      for (const s of shares) if (s.source === "order") await this.syncPaid(exec, s.sourceId, actor);
+      return { receiptId: receipt.id, taken };
+    });
+    if (!out) return undefined;
+    return { bill: (await this.getBill(visitId))!, ...out };
+  }
+
+  async voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined> {
+    const visitId = await db.transaction(async (tx) => {
+      const now = new Date().toISOString();
+      // Conditional on voided_at: two people voiding at once void it once.
+      const [rec] = await tx
+        .update(invoicePayments)
+        .set({ voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason })
+        .where(and(eq(invoicePayments.id, receiptId), isNull(invoicePayments.voidedAt)))
+        .returning({ invoiceId: invoicePayments.invoiceId });
+      if (!rec) {
+        const [exists] = await tx.select({ id: invoicePayments.id }).from(invoicePayments).where(eq(invoicePayments.id, receiptId)).limit(1);
+        if (exists) throw new StorageConflict(RECEIPT_ALREADY_VOIDED);
+        return undefined;
+      }
+      const shares = await tx
+        .update(payments)
+        .set({ voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason })
+        .where(and(eq(payments.invoicePaymentId, receiptId), isNull(payments.voidedAt)))
+        .returning({ orderId: payments.orderId });
+      for (const orderId of new Set(shares.map((s) => s.orderId).filter((x): x is string => Boolean(x)))) {
+        await this.syncPaid(tx as unknown as typeof db, orderId, actor);
+      }
+      const [inv] = await tx.select({ visitId: invoices.visitId }).from(invoices).where(eq(invoices.id, rec.invoiceId)).limit(1);
+      return inv?.visitId;
+    });
+    return visitId ? this.getBill(visitId) : undefined;
+  }
+
+  async listBills(query: BillQuery): Promise<BillSummary[]> {
+    const from = query.from ?? "0000-01-01";
+    const to = query.to ?? "9999-12-31";
+    const patientFilter = query.patientId ? sql`AND v.patient_id = ${query.patientId}` : sql``;
+    const res = await db.execute(sql`
+      WITH lines AS (
+        SELECT o.visit_id,
+               CASE WHEN o.status = 'cancelled' THEN 0 ELSE o.total_amount END AS amount,
+               o.paid_amount AS paid,
+               (o.status <> 'cancelled')::int AS live,
+               0 AS appt
+          FROM orders o
+         WHERE o.visit_id IS NOT NULL
+        UNION ALL
+        SELECT a.visit_id,
+               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price ELSE 0 END,
+               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
+               (a.status IN ('arrived', 'in_progress', 'completed'))::int,
+               1
+          FROM appointments a
+         WHERE a.visit_id IS NOT NULL
+      )
+      SELECT v.id AS visit_id, v.visit_date, v.patient_id, pt.patient_number, pt.full_name, i.number AS invoice_number,
+             sum(l.amount)::int AS amount, sum(l.paid)::int AS paid,
+             sum(greatest(0, l.amount - l.paid))::int AS due, sum(greatest(0, l.paid - l.amount))::int AS credit,
+             count(*)::int AS lines,
+             sum(CASE WHEN l.appt = 1 THEN l.live ELSE 0 END)::int AS appointments,
+             sum(CASE WHEN l.appt = 0 THEN l.live ELSE 0 END)::int AS orders
+        FROM visits v
+        JOIN patients pt ON pt.id = v.patient_id
+        JOIN lines l ON l.visit_id = v.id AND (l.live = 1 OR l.paid <> 0)
+        LEFT JOIN invoices i ON i.visit_id = v.id
+       WHERE v.visit_date >= ${from} AND v.visit_date <= ${to} ${patientFilter}
+       GROUP BY v.id, v.visit_date, v.patient_id, pt.patient_number, pt.full_name, i.number
+       ${query.status === "due" ? sql`HAVING sum(greatest(0, l.amount - l.paid)) > 0` : sql``}
+       ORDER BY v.visit_date DESC, pt.full_name
+       LIMIT ${query.limit ?? 500}`);
+    const rows = (res.rows as Record<string, unknown>[]).map((r) => {
+      const sums = { amount: Number(r.amount), paid: Number(r.paid), due: Number(r.due), credit: Number(r.credit) };
+      return {
+        visitId: String(r.visit_id),
+        visitDate: String(r.visit_date),
+        patientId: String(r.patient_id),
+        patientNumber: Number(r.patient_number),
+        patientName: String(r.full_name),
+        invoiceNumber: r.invoice_number === null ? null : Number(r.invoice_number),
+        appointments: Number(r.appointments),
+        orders: Number(r.orders),
+        totals: { ...sums, status: billStatus(sums, Number(r.lines)) },
+      } satisfies BillSummary;
+    });
+    return filterBills(rows, query.status);
+  }
 
   async movementTotals(range: { from: string; to: string }): Promise<MovementTotal[]> {
     const { from, to } = range;

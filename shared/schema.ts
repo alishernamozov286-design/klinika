@@ -38,6 +38,7 @@ import {
   type WriteoffReason,
 } from "./inventory";
 import { ADMIN_ROUTES, MAX_PRESCRIPTION_LINES, PRESCRIPTION_KINDS, type TreatmentEntry } from "./prescription";
+import type { BillLine, BillSource, BillTotals } from "./invoice";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -78,7 +79,7 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   naqd: "Naqd",
-  karta: "Karta",
+  karta: "Terminal (karta)",
   "o'tkazma": "Bank o'tkazmasi",
 };
 
@@ -937,7 +938,12 @@ export const samples = pgTable(
  */
 export const payments = pgTable("payments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  orderId: varchar("order_id").notNull(),
+  /** The lab order it pays — or, since B7.1, null when it pays an appointment. Exactly one of the two is set. */
+  orderId: varchar("order_id"),
+  /** B7.1: the appointment (consultation, UZI, procedure) it pays. */
+  appointmentId: varchar("appointment_id"),
+  /** B7.1: the bill receipt this is a share of; null for a payment taken on the order itself. */
+  invoicePaymentId: varchar("invoice_payment_id"),
   /** Negative for a refund, so the history reads as a ledger. */
   amount: money("amount").notNull(),
   method: text("method").notNull().default("naqd"),
@@ -950,6 +956,52 @@ export const payments = pgTable("payments", {
   voidedByName: text("voided_by_name"),
   voidReason: text("void_reason"),
 });
+
+/**
+ * Bemor hisobvarag'i (B7.1, TZ §9.1, §10 "invoices"): the bill of one visit
+ * (patient + day). It holds the bill's number and who opened it; its lines are
+ * read live from the visit's orders and appointments (shared/invoice.ts).
+ * One per visit (UQ_invoices_visit). Never deleted.
+ */
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+    patientId: varchar("patient_id").notNull(),
+    visitId: varchar("visit_id").notNull(),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    createdByName: text("created_by_name"),
+  },
+  (t) => [uniqueIndex("UQ_invoices_visit").on(t.visitId), index("IDX_invoices_patient").on(t.patientId)],
+);
+
+/**
+ * A payment taken on a bill — the receipt (kvitansiya). Its shares are the
+ * `payments` rows that carry its id, one per line it paid. Voided whole, with
+ * a reason, never edited or deleted.
+ */
+export const invoicePayments = pgTable(
+  "invoice_payments",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+    invoiceId: varchar("invoice_id").notNull(),
+    patientId: varchar("patient_id").notNull(),
+    amount: money("amount").notNull(),
+    method: text("method").notNull().default("naqd"),
+    note: text("note"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    createdByName: text("created_by_name"),
+    voidedAt: isoTimestamp("voided_at"),
+    voidedBy: varchar("voided_by"),
+    voidedByName: text("voided_by_name"),
+    voidReason: text("void_reason"),
+  },
+  (t) => [index("IDX_invoice_payments_invoice").on(t.invoiceId)],
+);
 
 /** Money out. Without it the reports only ever show turnover, never profit. */
 export const expenses = pgTable("expenses", {
@@ -1556,8 +1608,8 @@ export type PatientCard = {
   patient: PatientDetails;
   /** Newest first. */
   visits: PatientCardVisit[];
-  /** The cash ledger across all their orders, newest first. */
-  payments: (Payment & { orderNumber: number })[];
+  /** The cash ledger across all their orders and appointments (B7.1), newest first. */
+  payments: (Payment & { orderNumber: number | null; label: string })[];
   totals: {
     visits: number;
     orders: number;
@@ -1949,6 +2001,36 @@ export type TelegramContact = typeof telegramContacts.$inferSelect;
 
 export type Payment = Omit<typeof payments.$inferSelect, "method"> & { method: PaymentMethod };
 
+export type Invoice = typeof invoices.$inferSelect;
+/** A receipt with the lines it paid. */
+export type InvoiceReceipt = Omit<typeof invoicePayments.$inferSelect, "method"> & {
+  method: PaymentMethod;
+  shares: { source: BillSource; sourceId: string; title: string; amount: number }[];
+};
+/** The bill of one visit (B7.1). */
+export type Bill = {
+  visitId: string;
+  visitDate: string;
+  patient: { id: string; patientNumber: number; fullName: string; phone: string | null };
+  /** Null until the bill is first opened or paid; its number is given then. */
+  invoice: Invoice | null;
+  lines: BillLine[];
+  receipts: InvoiceReceipt[];
+  totals: BillTotals;
+};
+/** A row of the cash desk's list. */
+export type BillSummary = {
+  visitId: string;
+  visitDate: string;
+  patientId: string;
+  patientNumber: number;
+  patientName: string;
+  invoiceNumber: number | null;
+  appointments: number;
+  orders: number;
+  totals: BillTotals;
+};
+
 // `status` is a plain text column; narrow it for the app.
 export type Sample = Omit<typeof samples.$inferSelect, "status"> & { status: SampleStatus };
 
@@ -2218,6 +2300,19 @@ export const createPaymentSchema = z.object({
   method: z.enum(PAYMENT_METHODS).default("naqd"),
   note: z.string().trim().nullish(),
 });
+
+/** A payment taken on a bill (B7.1): split across the lines that owe. Refunds go through B7.4, not here. */
+export const payBillSchema = z.object({
+  amount: z.coerce.number({ invalid_type_error: "Summani kiriting" }).int("Summa butun so'mda bo'lsin").positive("Summa musbat bo'lishi kerak").max(1_000_000_000, "Summa juda katta"),
+  method: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: "To'lov usulini tanlang" }) }).default("naqd"),
+  note: z
+    .string()
+    .trim()
+    .max(300, "Izoh juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+});
+export type PayBillInput = z.infer<typeof payBillSchema>;
 
 /** Why a ledger entry is struck out; required, because the row stays forever. */
 export const voidPaymentSchema = z.object({

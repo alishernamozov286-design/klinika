@@ -23,6 +23,7 @@ import {
   UserPlus,
   Users,
   Wallet,
+  Banknote,
 } from "lucide-react";
 import type { OrderListResponse, Patient } from "@shared/schema";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -146,6 +147,7 @@ export function CommandPalette({
       { kind: "action", id: "go-departments", label: "Bo'limlar", hint: "Bo'limga o'tish", icon: Network, run: () => go("/departments") },
       { kind: "action", id: "go-services", label: "Xizmatlar", hint: "Narxlar ro'yxati", icon: Tags, run: () => go("/services") },
       { kind: "action", id: "go-inventory", label: "Ombor", hint: "Mahsulotlar katalogi", icon: Warehouse, run: () => go("/inventory") },
+      { kind: "action", id: "go-cashier", label: "Kassa", hint: "Hisobvaraqlar, to'lov, qarzdorlik", icon: Banknote, run: () => go("/cashier") },
       { kind: "action", id: "go-qc", label: "Sifat nazorati", hint: "Levey–Jennings, Westgard, kalibratsiya", icon: ShieldCheck, run: () => go("/qc") },
       { kind: "action", id: "go-devices", label: "Analizatorlar", hint: "Qurilmalar va xatolar jurnali", icon: Microscope, run: () => go("/devices") },
       { kind: "action", id: "go-staff", label: "Xodimlar", hint: "Bo'limga o'tish", icon: UserCog, run: () => go("/staff") },

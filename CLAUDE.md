@@ -45,6 +45,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `server/routes.ts`: asosiy API. `server/routes-clinic.ts`: xizmatlar, qabullar, shifokor kabineti. `server/routes-medical.ts`: ko'rik yozuvlari, tibbiy karta, allergiyalar, yo'llanmalar. Umumiy yordamchilar (`handle`, `audit`, `actorOf`, `emptyIfMissing`, `logPatientView`) — `server/route-helpers.ts`. Ruxsat `requirePermission("modul.amal")`, o‘zgarishlar `audit(req, ...)` orqali. Storage'ning `StorageConflict` xatosi avtomatik 409 bo‘ladi.
 - `shared/appointment.ts`: qabul qoidalari (bo‘sh vaqtlar to‘ri, ustma-ust tushish, holat mashinasi va kim qaysi o‘tishni qiladi). Server ham, UI ham shundan foydalanadi.
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
+- `shared/invoice.ts`: bemor hisobvarag'i qoidalari — tashrif qatorlari, holat, to'lovni eng eski qarzdan taqsimlash, filtrlar (B7.1). `server/routes-billing.ts`: hisobvaraq, to'lov, kvitansiyani bekor qilish API. `client/src/pages/cashier.tsx`: Kassa sahifasi.
 - `shared/prescription.ts`: davolash va retsept qoidalari — qator to'liqligi, o'zgarishni aniqlash, o'qiladigan ko'rinish, davolash tarixi (B3.6). `client/src/components/treatment.tsx`: muharrir (katalogdan qidirish), o'qish ko'rinishi, tarix.
 - `shared/icd10.ts` + `data/icd10/`: MKB-10 katalogini o'qish, kod normallash, o'zbekcha nomlar importi (B3.4).
 - `server/result-delivery.ts`: tasdiqlangan natijani yo'llagan shifokorga yetkazish (B3.9).
@@ -107,7 +108,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-20. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 51.5 → ≈68%**.
+> Holat 2026-11-20. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 53 → ≈70%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -155,7 +156,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - **Moliyaviy va tibbiy yozuvlar o'chirilmaydi** (`shared/ledger.ts`): to'lov yozuvi endi o'chirilmaydi, sabab bilan **bekor qilinadi** (`POST /api/payments/:id/void`, `payments.delete` ruxsati; `voided_*` ustunlari; to'langan summaga kirmaydi, tarixda chizilgan holda qoladi; ikki marta bekor qilish 409). To'lovi (bekor qilingani ham) yoki natijasi bor buyurtma o'chirilmaydi, faqat bekor qilinadi. Buyurtmalarda ishlatilgan tahlil katalogdan o'chirilmaydi, faolsizlantiriladi.
   - Migratsiya: `npm run db:columns` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart:** kod bu ustunlarni har bir buyurtma, tahlil va xodim so'rovida o'qiydi. Neon'da avval ROLLBACK qilingan tranzaksiyada sinab ko'rildi, so'ng bajarildi (2026-11-06); yangi storage kodi real bazada o'qish rejimida tekshirildi.
 
-### Bosqich 2: Registratura (`§4`, `§15.2`) 95%
+### Bosqich 2: Registratura (`§4`, `§15.2`) 100%
 
 - [x] **B2.1** Yangi bemor formasi (`§4.1.2`): F.I.Sh., jins, telefon, manzil, tug'ilgan sana (yosh avtomatik; sana noma'lum bo'lsa taxminiy yosh), pasport/ID, JShShIR, favqulodda aloqa (`patient_contacts`). Migratsiya: `npm run db:patients`.
 - [x] **B2.2** Takroriy bemorni aniqlash (`§4.2`, `shared/patient-identity.ts`): yozish paytida tekshiruv; kuchli moslik (JShShIR, pasport, ism+telefon, ism+tug'ilgan sana — kirill/lotin farqisiz) saqlashni 409 bilan to'xtatadi, ro'yxatchi "shu bemor"ni tanlaydi yoki aniq tasdiqlaydi; kuchsiz moslik (faqat telefon/ism) faqat ogohlantiradi. Dublikat kartalarni birlashtirish (`patients.delete` ruxsati): buyurtmalar, aloqalar, Telegram ko'chadi, bo'sh maydonlar to'ldiriladi.
@@ -179,7 +180,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - **Keyin:** qabul to'lovi B7.1 (umumiy hisobvaraq) bilan; real vaqtda yangilanish B8.1 (hozir 15–30 s polling).
 - [x] **B2.8** Shifokorga elektron yo‘llanma (`§4.2`): qabul yaratilganda shifokor kabinetida paydo bo‘ladi. Qabul shifokorning kabinetiga darhol tushadi ("Yozilganlar"), "keldi" belgisi bilan "Kutayotganlar"ga o'tadi; murojaat sababi ham ko'rinadi.
 - [x] **B2.9** Laboratoriyaga buyurtma yuborish (`§4.2`).
-- [~] **B2.10** To‘lovni rasmiylashtirish (`§4.2`): lab buyurtmalari uchun bor. Bosqich 7 da umumiy hisobvaraqqa o‘tadi.
+- [x] **B2.10** To‘lovni rasmiylashtirish (`§4.2`): lab buyurtmalari uchun bor; B7.1 dan beri qabullar (ko'rik, UZI, muolaja) ham tashrifning umumiy hisobvarag'i orqali to'lanadi (Kassa sahifasi registratorga ham ochiq).
 - [x] **B2.11** Registratura bosh sahifasi (`§4.1.1`): bugungi bemorlar, navbatdagilar, qabulga kelganlar, yangi ro‘yxatdan o‘tganlar, to‘lov holati.
   - `GET /api/reception` (`appointments.read` yoki `orders.read`): Postgres'da bitta so'rov + kunlik qabullar, parallel. Har bir bo'lim o'z ruxsati bilan qaytadi: navbat `appointments.read`, to'lov holati `orders.read` (summalar `finance.view`), yangi bemorlar `patients.read`. Ruxsat bo'lmasa `null`.
   - Bosh sahifada (`appointments.read` egalari uchun) "Registratura · Bugungi kun" paneli: 5 ta ko'rsatkich, qabulga kelganlar (qabuldagi, so'ng kelish tartibida), navbatdagilar (vaqt bo'yicha, kechikayotganlar belgilanadi, to'g'ridan-to'g'ri "Keldi"), yangi bemorlar, to'lov holati (to'liq / qisman / to'lanmagan). Kechikish server soati bo'yicha. 20 s da yangilanadi va amallardan keyin darhol invalidatsiya qilinadi.
@@ -374,11 +375,21 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B6.6** Integratsiya (`§8.2`): lab buyurtmasi kartadan, dori sarfi omborga, xizmatlar (yotoq-kun, muolajalar) kassa hisobiga.
 - [ ] **B6.7** Chiqarish va epikriz (`§8.1.5`): yakuniy tashxis, xulosa, epikriz (avto-to‘ldirish + tahrir), tavsiyalar, PDF.
 
-### Bosqich 7: Kassa va moliya (`§9`, `§15.7`) 33%
+### Bosqich 7: Kassa va moliya (`§9`, `§15.7`) 44%
 
-- [ ] **B7.1** Bemor hisobvarag‘i (`§9.1`, `invoices`): barcha modullardagi xizmatlar (ko‘rik, lab, UZI, muolaja, statsionar) bitta hisobvaraqqa tushadi (`§11`).
-- [~] **B7.2** To‘lov qabul qilish (`§9.2`): naqd, karta, o‘tkazma, qisman to‘lov, chegirma bor (faqat lab buyurtmasi uchun). **Qoldi:** bir nechta xizmat uchun umumiy to‘lov (hisobvaraq orqali), terminal va bank turlarini aniq ajratish.
-- [~] **B7.3** Qarzdorlik nazorati (`§9.1`): buyurtma bo‘yicha bor. **Qoldi:** bemor bo‘yicha jamlangan qarzdorlik sahifasi.
+- [x] **B7.1** Bemor hisobvarag‘i (`§9.1`, `invoices`): barcha modullardagi xizmatlar (ko‘rik, lab, UZI, muolaja, statsionar) bitta hisobvaraqqa tushadi (`§11`).
+  - **Hisobvaraq = bitta tashrif** (bemor + kun, B2.5). Qatorlari tashrifning lab buyurtmalari va qabullaridan (ko'rik, UZI, muolaja — "keldi", "qabulda", "yakunlandi" holatidagilar, muzlatilgan narxda) **tirik o'qiladi**, nusxa ko'chirilmaydi: narx o'zgarsa yoki buyurtma bekor qilinsa hisobvaraq hech qachon eskirmaydi. Pul olingandan keyin bekor qilingan xizmat 0 summa bilan qoladi — undagi pul "ortiqcha to'langan, qaytariladi" deb ko'rinadi, yo'qolmaydi. Qoidalar `shared/invoice.ts` (`buildBillLines`, `billTotals`, `allocatePayment`), ikkala storage uchun bitta.
+  - `invoices` (raqam "Hisobvaraq №", tashrifga bitta — `UQ_invoices_visit`, birinchi ochilganda yoki birinchi to'lovda beriladi) va `invoice_payments` (**kvitansiya**: raqam, summa, usul — naqd / terminal (karta) / bank o'tkazmasi, izoh, kassir). **Bir nechta xizmat uchun umumiy to'lov** (TZ §9.2): kvitansiya qarzdor qatorlarga **eng eskisidan boshlab** taqsimlanadi, har bir ulush oddiy `payments` yozuvi (buyurtmaga — `order_id`, qabulga — yangi `appointment_id`, kvitansiyaga — `invoice_payment_id`). Shuning uchun lab buyurtmasining o'z to'lov mantig'i, `paid_amount` keshi, buyurtma oynasi va hisobotlar o'zgarishsiz ishlaydi. Qarzdan ko'p summa qarzgacha qisqartiriladi va kassirga **qaytim** ko'rsatiladi; qisman to'lov ham shu yo'l bilan.
+  - To'lov tashrif qatori va buyurtmalar `FOR UPDATE` ostida (buyurtmaning o'zida parallel olingan to'lov ham hisobvaraqni oshirib yubora olmaydi). CHECK: har bir to'lov aynan bitta narsani to'laydi (`CK_payments_target`), kvitansiya summasi musbat, usul ma'lum, bekor qilish sabab bilan.
+  - **Bekor qilish** (`payments.delete`): kvitansiya **butunligicha** va sabab bilan, uning har bir ulushi bilan birga; o'chirilmaydi, chizilgan holda qoladi, summa xizmatlar qarziga qaytadi. Kvitansiya ulushini buyurtma oynasidan yolg'iz bekor qilib bo'lmaydi (409). Pul qaytarish bu yerda emas — B7.4.
+  - **Bemor kartasi**: to'lovlar daftari endi qabul to'lovlarini ham ko'rsatadi ("Qabul · xizmat"), jami/to'langan/qarz qabullarni ham hisoblaydi. Dublikat kartalarni birlashtirish: bir kunlik ikki hisobvaraq — asosiy kartaniki qoladi, dublikatning kvitansiyalari unga o'tadi (B1.9 reyestri yangi jadvallarni darhol ushladi); hisobvarag'i bor kartani o'chirib bo'lmaydi.
+  - API `server/routes-billing.ts`: `GET /api/bills?from&to&status=due|settled&patientId` (bitta CTE so'rov), `GET /api/bills/:visitId`, `POST …/open`, `POST …/payments`, `POST /api/receipts/:id/void`. O'qish `payments.create` yoki `finance.view` (buxgalter faqat ko'radi), to'lov `payments.create` (kassir, registrator). Audit: hisobvaraq ochilishi, har bir kvitansiya (qaysi xizmatga qancha, qaytim, qolgan qarz), bekor qilish.
+  - UI: Ish maydoni → **Kassa** (`/cashier`): davr (bugun / kecha / 7 kun / butun davr / ixtiyoriy), "Qarzdorlar" va "To'langan" filtrlari, qidiruv, ko'rsatkichlar (hisobvaraqlar, summa, to'langan, qarz), ro'yxat. Hisobvaraq oynasi: qatorlar (summa, to'langan, qoldiq), jami, ortiqcha to'lov ogohlantirishi, to'lov formasi (summa oldindan qarz bilan, usul tugmalari), kvitansiyalar tarixi ulushlari bilan, bekor qilish, chop etish, bemor kartasiga havola. Telefon o'lchamiga moslangan. "Karta" usuli TZ bo'yicha "Terminal (karta)" deb nomlandi.
+  - Statsionar xizmatlari (yotoq-kun, muolajalar) B6.6 da shu hisobvaraqqa qo'shiladi; qabul uchun chegirma hali yo'q (B7.2).
+  - Migratsiya: `npm run db:invoices` (`db:upgrade` ichida). **Yangi kod deploy qilinishidan OLDIN bajarilishi shart:** har bir to'lov yozuvi yangi ustunlarni nomlaydi. Mavjud to'lovlar o'zgarmaydi va yangi CHECK'ni qoniqtiradi (har biri bitta buyurtmaga). Neon'da ROLLBACK qilingan tranzaksiyada sinab ko'rildi (migratsiya ikki marta, CHECK'lar, qulflangan qatorlar, taqsimlash, ro'yxat CTE'si, bekor qilish, birlashtirish SQL'i; 16 tekshiruv).
+  - Testlar: `shared/invoice.test.ts` (5), `storage-file.test.ts` (2: to'liq oqim va raqam), `patient-links.test.ts` (yangi jadvallar), brauzerda kassir, admin, buxgalter va laborant yo'li (32 tekshiruv: qisman to'lov, terminal va qaytim, filtrlar, bekor qilish, ulushni yolg'iz bekor qilish rad etiladi, bemor kartasi, audit, ruxsatlar, telefon).
+- [~] **B7.2** To‘lov qabul qilish (`§9.2`): naqd, terminal (karta), bank o‘tkazmasi, qisman to‘lov; bir nechta xizmat uchun umumiy to‘lov hisobvaraq orqali (B7.1). **Qoldi:** chegirma faqat lab buyurtmasi uchun — qabul va hisobvaraq darajasidagi chegirma.
+- [~] **B7.3** Qarzdorlik nazorati (`§9.1`): Kassada "Qarzdorlar" filtri (har qanday davr yoki butun davr bo'yicha qarzi bor hisobvaraqlar), bemor kartasida jami qarz qabullar bilan (B7.1). **Qoldi:** bemor bo‘yicha jamlangan qarzdorlik sahifasi (bemorlar kesimida, eng ko'p qarzdan).
 - [~] **B7.4** To'lovni qaytarish (`§9.2`): qaytarish endi alohida `payments.refund` ruxsati bilan (standart: rahbar va super admin) — registrator/kassir qaytara olmaydi. **Qoldi:** "so'rov → tasdiq" oqimi (kassir so'raydi, rahbar tasdiqlaydi) va "qaytarilgan to'lovlar" ekrani.
 - [ ] **B7.5** Kassa smenasi (`§9.2`): ochish, yopish, kassadagi summa, farq, smena hisoboti.
 - [ ] **B7.6** Chek (`§15.7`): to‘lov cheki chop etish.
@@ -416,7 +427,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 | 16.4 | Tasdiqlangan natija shifokorga yetadi | B4.5, B3.9 | ✅ |
 | 16.5 | Ombor kirim/chiqim to‘g‘ri hisoblanadi | B5.2–B5.6 | ✅ (kirim, chiqim, FEFO, inventarizatsiya, reagent sarfi; har bir harakat daftarda, daftar = qoldiq) |
 | 16.6 | Statsionar bemorining elektron tarixi | B6.* | ❌ |
-| 16.7 | Barcha xizmatlar kassa bilan bog‘langan | B2.6, B7.1 | 🟡 |
+| 16.7 | Barcha xizmatlar kassa bilan bog‘langan | B2.6, B7.1 | 🟡 (ko'rik, UZI, muolaja, laboratoriya — bitta hisobvaraqda; statsionar B6.6 bilan) |
 | 16.8 | Xodimlar vakolatlari to‘g‘ri ishlaydi | B1.4, B8.7 | 🟡 |
 | 16.9 | Audit barcha muhim o‘zgarishlarni qayd etadi | B1.6 | 🟡 |
 | 16.10 | Zaxiradan tiklash sinovdan o‘tgan | B8.3 | 🟡 |
@@ -445,6 +456,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-20 · B7.1, B2.10 · Bemor hisobvarag'i: tashrifning barcha xizmatlari (ko'rik, UZI, muolaja, laboratoriya) bitta varaqda, bitta to'lov eng eski qarzdan taqsimlanadi (qisman to'lov, qaytim), kvitansiyalar va ularni butunligicha bekor qilish, Kassa sahifasi qarzdorlar filtri bilan; qabul to'lovlari bemor kartasida. Yo'l-yo'lakay: B1.9 reyestri yangi jadvallarni ushladi — birlashtirishda bir kunlik hisobvaraqlar qo'shiladi.
 - 2026-11-20 · B3.6 · Davolash va retsept: ko'rik oynasida dori (ombor katalogidan yoki qo'lda) va muolajalar — doza, yo'li, tartibi, davomiyligi; ko'rik bilan birga saqlanadi, tasdiqlanadi va versiyalanadi; A5 retsept blankasi PDF, xulosada davolash jadvali, tibbiy kartada davolash tarixi.
 - 2026-11-20 · B5.7 · Ombor bosh sahifasi (oylik kirim/chiqim, 30 kunlik grafik, e'tibor talab qiladigan ishlar, oxirgi hujjatlar) va hisobotlar (aylanma qaydnoma summa va miqdorda, bo'limlar bo'yicha chiqim, eksport); hammasi qoldiq daftaridan, davr oxiri = tokcha. Ombor bosqichi yopildi.
 - 2026-11-12 · B5.6 · Reagent sarfi: tahlil bo'yicha sarf normasi (taklif → lab mudiri tasdig'i → tarix), natija tasdiqlanganda amaldagi norma bo'yicha bir martalik avtomatik sarf (FEFO, muddati o'tganisiz), ombor natijani to'xtatmaydi — yetishmovchilik ogohlantirish bo'lib qoladi va kirimdan keyin yopiladi, sababli qo'shimcha sarf, davr hisoboti (mahsulot va tahlil kesimida, tahlil tannarxi). 16.5 yopildi.

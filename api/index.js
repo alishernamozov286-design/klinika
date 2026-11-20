@@ -1274,6 +1274,8 @@ __export(schema_exports, {
   insertUserSchema: () => insertUserSchema,
   inventoryBatches: () => inventoryBatches,
   inventoryItems: () => inventoryItems,
+  invoicePayments: () => invoicePayments,
+  invoices: () => invoices,
   issueLineSchema: () => issueLineSchema,
   labConsumptions: () => labConsumptions,
   labDeviceErrors: () => labDeviceErrors,
@@ -1296,6 +1298,7 @@ __export(schema_exports, {
   patientAllergies: () => patientAllergies,
   patientContacts: () => patientContacts,
   patients: () => patients,
+  payBillSchema: () => payBillSchema,
   payments: () => payments,
   prescriptionLineSchema: () => prescriptionLineSchema,
   previousRange: () => previousRange,
@@ -1387,7 +1390,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, consumptionNorms, labConsumptions, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, rxText, prescriptionLineSchema, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, normQuantity, insertNormSchema, updateNormSchema, extraConsumptionSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, invoices, invoicePayments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, consumptionNorms, labConsumptions, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, payBillSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, rxText, prescriptionLineSchema, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, normQuantity, insertNormSchema, updateNormSchema, extraConsumptionSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1412,7 +1415,7 @@ var init_schema = __esm({
     PAYMENT_METHODS = ["naqd", "karta", "o'tkazma"];
     PAYMENT_METHOD_LABELS = {
       naqd: "Naqd",
-      karta: "Karta",
+      karta: "Terminal (karta)",
       "o'tkazma": "Bank o'tkazmasi"
     };
     SAMPLE_STATUSES = ["kutilmoqda", "olindi", "qabul_qilindi", "rad_etildi"];
@@ -2017,7 +2020,12 @@ var init_schema = __esm({
     );
     payments = pgTable("payments", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-      orderId: varchar("order_id").notNull(),
+      /** The lab order it pays — or, since B7.1, null when it pays an appointment. Exactly one of the two is set. */
+      orderId: varchar("order_id"),
+      /** B7.1: the appointment (consultation, UZI, procedure) it pays. */
+      appointmentId: varchar("appointment_id"),
+      /** B7.1: the bill receipt this is a share of; null for a payment taken on the order itself. */
+      invoicePaymentId: varchar("invoice_payment_id"),
       /** Negative for a refund, so the history reads as a ledger. */
       amount: money("amount").notNull(),
       method: text("method").notNull().default("naqd"),
@@ -2030,6 +2038,39 @@ var init_schema = __esm({
       voidedByName: text("voided_by_name"),
       voidReason: text("void_reason")
     });
+    invoices = pgTable(
+      "invoices",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+        patientId: varchar("patient_id").notNull(),
+        visitId: varchar("visit_id").notNull(),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        createdByName: text("created_by_name")
+      },
+      (t2) => [uniqueIndex("UQ_invoices_visit").on(t2.visitId), index("IDX_invoices_patient").on(t2.patientId)]
+    );
+    invoicePayments = pgTable(
+      "invoice_payments",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+        invoiceId: varchar("invoice_id").notNull(),
+        patientId: varchar("patient_id").notNull(),
+        amount: money("amount").notNull(),
+        method: text("method").notNull().default("naqd"),
+        note: text("note"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        createdByName: text("created_by_name"),
+        voidedAt: isoTimestamp("voided_at"),
+        voidedBy: varchar("voided_by"),
+        voidedByName: text("voided_by_name"),
+        voidReason: text("void_reason")
+      },
+      (t2) => [index("IDX_invoice_payments_invoice").on(t2.invoiceId)]
+    );
     expenses = pgTable("expenses", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       category: text("category").notNull(),
@@ -2537,6 +2578,11 @@ var init_schema = __esm({
       amount: z.coerce.number().int().refine((n) => n !== 0, "Summani kiriting"),
       method: z.enum(PAYMENT_METHODS).default("naqd"),
       note: z.string().trim().nullish()
+    });
+    payBillSchema = z.object({
+      amount: z.coerce.number({ invalid_type_error: "Summani kiriting" }).int("Summa butun so'mda bo'lsin").positive("Summa musbat bo'lishi kerak").max(1e9, "Summa juda katta"),
+      method: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: "To'lov usulini tanlang" }) }).default("naqd"),
+      note: z.string().trim().max(300, "Izoh juda uzun").nullish().transform((v) => v || null)
     });
     voidPaymentSchema = z.object({
       reason: z.string().trim().min(5, "Bekor qilish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun")
@@ -3083,6 +3129,10 @@ function planResultSave(lines, incoming, gender) {
   return changes;
 }
 function buildPatientCard(patient, orderList, visitList, payments2, appointmentList = []) {
+  const apptPaid = /* @__PURE__ */ new Map();
+  for (const p of payments2) if (p.appointmentId && !p.voidedAt) apptPaid.set(p.appointmentId, (apptPaid.get(p.appointmentId) ?? 0) + p.amount);
+  const orderNo = new Map(orderList.map((o) => [o.id, o.orderNumber]));
+  const apptOf = new Map(appointmentList.map((a) => [a.id, a]));
   const visitDate = new Map(visitList.map((v) => [v.id, v.visitDate]));
   const groups = /* @__PURE__ */ new Map();
   const attended = appointmentList.filter((a) => ATTENDED_STATUSES.includes(a.status));
@@ -3091,6 +3141,8 @@ function buildPatientCard(patient, orderList, visitList, payments2, appointmentL
     const date = a.visitId && visitDate.get(a.visitId) || a.date;
     const g = groups.get(key) ?? { key, date, orders: [], appointments: [], billed: 0, paid: 0 };
     g.appointments.push(a);
+    g.billed += a.price;
+    g.paid += apptPaid.get(a.id) ?? 0;
     groups.set(key, g);
   }
   for (const order of orderList) {
@@ -3110,8 +3162,8 @@ function buildPatientCard(patient, orderList, visitList, payments2, appointmentL
     appointments: g.appointments.sort((a, b) => a.startTime.localeCompare(b.startTime))
   })).sort((a, b) => b.date.localeCompare(a.date));
   const live = orderList.filter((o) => o.status !== "cancelled");
-  const billed = live.reduce((s, o) => s + o.totalAmount, 0);
-  const paid = live.reduce((s, o) => s + o.paidAmount, 0);
+  const billed = live.reduce((s, o) => s + o.totalAmount, 0) + attended.reduce((s, a) => s + a.price, 0);
+  const paid = live.reduce((s, o) => s + o.paidAmount, 0) + attended.reduce((s, a) => s + (apptPaid.get(a.id) ?? 0), 0);
   const times = [
     ...orderList.map((o) => o.createdAt),
     ...attended.map((a) => a.arrivedAt ?? a.createdAt)
@@ -3119,7 +3171,12 @@ function buildPatientCard(patient, orderList, visitList, payments2, appointmentL
   return {
     patient,
     visits: visits2,
-    payments: [...payments2].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    payments: payments2.map((p) => {
+      const a = p.appointmentId ? apptOf.get(p.appointmentId) : void 0;
+      const orderNumber = p.orderId ? orderNo.get(p.orderId) ?? null : null;
+      const label = orderNumber !== null ? `Laboratoriya #${orderNumber}` : a ? `Qabul \xB7 ${a.serviceName ?? a.specialty ?? "ko'rik"}` : "\u2014";
+      return { ...p, orderNumber, label };
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     totals: {
       visits: visits2.filter((v) => v.appointments.length > 0 || v.orders.some((o) => o.status !== "cancelled")).length,
       orders: orderList.length,
@@ -3656,6 +3713,91 @@ var init_branding = __esm({
   }
 });
 
+// shared/invoice.ts
+function filterBills(rows, filter) {
+  if (filter === "due") return rows.filter((r) => r.totals.due > 0);
+  if (filter === "settled") return rows.filter((r) => r.totals.due === 0 && (r.totals.status === "paid" || r.totals.status === "overpaid"));
+  return rows;
+}
+function billStatus(t2, lineCount) {
+  if (lineCount === 0 || t2.amount === 0 && t2.paid === 0) return "empty";
+  if (t2.due === 0) return t2.credit > 0 ? "overpaid" : "paid";
+  return t2.paid > 0 ? "partial" : "unpaid";
+}
+function billTotals(lines) {
+  const sums = {
+    amount: lines.reduce((s, l) => s + l.amount, 0),
+    paid: lines.reduce((s, l) => s + l.paid, 0),
+    due: lines.reduce((s, l) => s + lineDue(l), 0),
+    credit: lines.reduce((s, l) => s + lineCredit(l), 0)
+  };
+  return { ...sums, status: billStatus(sums, lines.length) };
+}
+function buildBillLines(orders2, appointments2) {
+  const billable = new Set(BILLABLE_APPOINTMENT_STATUSES);
+  const lines = [];
+  for (const a of appointments2) {
+    const live = billable.has(a.status);
+    if (!live && a.paid === 0) continue;
+    lines.push({
+      source: "appointment",
+      sourceId: a.id,
+      title: a.serviceName ?? `${a.specialty} ko'rigi`,
+      detail: `${a.startTime} \xB7 ${a.doctorName}${a.serviceName ? ` (${a.specialty})` : ""}`,
+      createdAt: a.createdAt,
+      amount: live ? a.price : 0,
+      paid: a.paid,
+      cancelled: !live
+    });
+  }
+  for (const o of orders2) {
+    const live = o.status !== "cancelled";
+    if (!live && o.paidAmount === 0) continue;
+    lines.push({
+      source: "order",
+      sourceId: o.id,
+      title: `Laboratoriya #${o.orderNumber}`,
+      detail: `${o.tests} ta tahlil`,
+      createdAt: o.createdAt,
+      amount: live ? o.totalAmount : 0,
+      paid: o.paidAmount,
+      cancelled: !live
+    });
+  }
+  return lines.sort((x, y) => x.createdAt.localeCompare(y.createdAt));
+}
+function allocatePayment(lines, amount) {
+  let left = Math.max(0, Math.floor(amount));
+  const shares = [];
+  const owing = [...lines].filter((l) => lineDue(l) > 0).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.source.localeCompare(b.source));
+  for (const l of owing) {
+    if (left <= 0) break;
+    const take = Math.min(left, lineDue(l));
+    shares.push({ source: l.source, sourceId: l.sourceId, amount: take });
+    left -= take;
+  }
+  return { shares, taken: shares.reduce((s, x) => s + x.amount, 0) };
+}
+function describeShares(shares, lines) {
+  return shares.map((s) => {
+    const l = lines.find((x) => x.source === s.source && x.sourceId === s.sourceId);
+    return `${l?.title ?? s.source} ${String(s.amount).replace(/\B(?=(\d{3})+(?!\d))/g, " ")}`;
+  }).join(" + ");
+}
+var BILLABLE_APPOINTMENT_STATUSES, BILL_PAID, RECEIPT_ALREADY_VOIDED, PAYMENT_IS_RECEIPT_SHARE, BILL_FILTERS, lineDue, lineCredit;
+var init_invoice = __esm({
+  "shared/invoice.ts"() {
+    "use strict";
+    BILLABLE_APPOINTMENT_STATUSES = ["arrived", "in_progress", "completed"];
+    BILL_PAID = "Hisobvaraq to'liq to'langan \u2014 qabul qilinadigan qarz yo'q";
+    RECEIPT_ALREADY_VOIDED = "Bu kvitansiya allaqachon bekor qilingan";
+    PAYMENT_IS_RECEIPT_SHARE = "Bu to'lov hisobvaraq orqali qabul qilingan kvitansiyaning bir qismi \u2014 kvitansiyani butunligicha bekor qiling (Kassa \u2192 hisobvaraq)";
+    BILL_FILTERS = ["all", "due", "settled"];
+    lineDue = (l) => Math.max(0, l.amount - l.paid);
+    lineCredit = (l) => Math.max(0, l.paid - l.amount);
+  }
+});
+
 // shared/icd10.ts
 function normalizeIcdCode(input) {
   const map = { \u0410: "A", \u0412: "B", \u0415: "E", \u041A: "K", \u041C: "M", \u041D: "H", \u041E: "O", \u0420: "P", \u0421: "C", \u0422: "T", \u0425: "X" };
@@ -3814,7 +3956,10 @@ var init_patient_links = __esm({
       appointments: { merge: "move", delete: "block", label: "qabullar" },
       medical_records: { merge: "move", delete: "block", label: "ko'rik yozuvlari" },
       patient_allergies: { merge: "move", delete: "block", label: "allergiyalar" },
-      referrals: { merge: "move", delete: "block", label: "yo'llanmalar" }
+      referrals: { merge: "move", delete: "block", label: "yo'llanmalar" },
+      /** B7.1: a same-day pair of bills becomes the target's bill; its receipts follow. */
+      invoices: { merge: "combine-same-day", delete: "block", label: "hisobvaraqlar" },
+      invoice_payments: { merge: "move", delete: "block", label: "to'lov kvitansiyalari" }
     };
     BLOCKING_TABLES = Object.keys(PATIENT_LINKS).filter(
       (t2) => PATIENT_LINKS[t2].delete === "block"
@@ -3833,7 +3978,7 @@ function orderDeleteProblem(paymentRows, resultLines) {
   return null;
 }
 function ledgerTotal(rows) {
-  return rows.reduce((sum, p) => p.voidedAt ? sum : sum + p.amount, 0);
+  return rows.reduce((sum2, p) => p.voidedAt ? sum2 : sum2 + p.amount, 0);
 }
 var PAYMENT_ALREADY_VOIDED, TEST_IN_USE;
 var init_ledger = __esm({
@@ -4050,6 +4195,7 @@ var init_storage_pg = __esm({
     init_branding();
     init_inventory();
     init_consumption();
+    init_invoice();
     init_lab_devices();
     init_qc();
     init_icd10();
@@ -5223,7 +5369,8 @@ var init_storage_pg = __esm({
           this.getPatientDetails(id),
           this.listOrders({ patientId: id }),
           db.select().from(visits).where(eq(visits.patientId, id)),
-          db.select({ payment: payments, orderNumber: orders.orderNumber }).from(payments).innerJoin(orders, eq(orders.id, payments.orderId)).where(eq(orders.patientId, id)),
+          // B7.1: the ledger holds lab orders and appointments alike.
+          db.select({ payment: payments }).from(payments).leftJoin(orders, eq(orders.id, payments.orderId)).leftJoin(appointments, eq(appointments.id, payments.appointmentId)).where(or(eq(orders.patientId, id), eq(appointments.patientId, id))),
           await this.hasAppointmentsTable() ? this.listAppointments({ patientId: id }) : Promise.resolve([])
         ]);
         if (!details) return void 0;
@@ -5231,7 +5378,7 @@ var init_storage_pg = __esm({
           details,
           list.items,
           visitRows.map((v) => ({ ...v, createdAt: iso(v.createdAt) ?? v.createdAt })),
-          paymentRows.map((r) => ({ ...mapPayment(r.payment), orderNumber: r.orderNumber })),
+          paymentRows.map((r) => mapPayment(r.payment)),
           appointmentList
         );
       }
@@ -5319,6 +5466,25 @@ var init_storage_pg = __esm({
           FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
           WHERE sv.patient_id = ${sourceId} AND rf.visit_id = sv.id`);
             await tx.update(referrals).set({ patientId: targetId }).where(eq(referrals.patientId, sourceId));
+          }
+          if (await tableExists(tx, "invoices")) {
+            await tx.execute(sql2`
+          UPDATE invoice_payments ip SET invoice_id = ti.id
+          FROM invoices si
+          JOIN ${visits} sv ON sv.id = si.visit_id
+          JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          JOIN invoices ti ON ti.visit_id = tv.id
+          WHERE sv.patient_id = ${sourceId} AND ip.invoice_id = si.id`);
+            await tx.execute(sql2`
+          DELETE FROM invoices si USING ${visits} sv, ${visits} tv, invoices ti
+          WHERE si.visit_id = sv.id AND sv.patient_id = ${sourceId}
+            AND tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId} AND ti.visit_id = tv.id`);
+            await tx.execute(sql2`
+          UPDATE invoices si SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND si.visit_id = sv.id`);
+            await tx.update(invoices).set({ patientId: targetId }).where(eq(invoices.patientId, sourceId));
+            await tx.update(invoicePayments).set({ patientId: targetId }).where(eq(invoicePayments.patientId, sourceId));
           }
           await tx.execute(sql2`
         DELETE FROM ${visits} sv USING ${visits} tv
@@ -5570,7 +5736,7 @@ var init_storage_pg = __esm({
           counts.all += row.count;
           if (row.status in counts) counts[row.status] = row.count;
         }
-        const sum = totalsRow?.sum ?? 0;
+        const sum2 = totalsRow?.sum ?? 0;
         const paid = totalsRow?.paid ?? 0;
         return {
           items: await this.hydrate(rows),
@@ -5578,7 +5744,7 @@ var init_storage_pg = __esm({
           summary: {
             counts,
             results: { waiting: queueRow?.waiting ?? 0, review: queueRow?.review ?? 0, ready: queueRow?.ready ?? 0 },
-            totals: { sum, paid, debt: Math.max(0, sum - paid) },
+            totals: { sum: sum2, paid, debt: Math.max(0, sum2 - paid) },
             groups
           }
         };
@@ -5621,7 +5787,7 @@ var init_storage_pg = __esm({
        * lab referral (createReferrals), so both make exactly the same order.
        */
       async insertOrderTx(tx, input, selected, referralId) {
-        const subtotal = selected.reduce((sum, t2) => sum + t2.price, 0);
+        const subtotal = selected.reduce((sum2, t2) => sum2 + t2.price, 0);
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
         const opening = Math.min(input.paidAmount, total);
@@ -5951,12 +6117,13 @@ var init_storage_pg = __esm({
             voidedBy: actor.id,
             voidedByName: actor.name,
             voidReason: reason
-          }).where(and(eq(payments.id, paymentId), isNull(payments.voidedAt))).returning({ orderId: payments.orderId });
+          }).where(and(eq(payments.id, paymentId), isNull(payments.voidedAt))).returning({ orderId: payments.orderId, invoicePaymentId: payments.invoicePaymentId });
           if (!row) {
             const [exists] = await tx.select({ id: payments.id }).from(payments).where(eq(payments.id, paymentId)).limit(1);
             if (exists) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
             return void 0;
           }
+          if (row.invoicePaymentId || !row.orderId) throw new StorageConflict(PAYMENT_IS_RECEIPT_SHARE);
           await this.syncPaid(tx, row.orderId, actor);
           return row.orderId;
         });
@@ -7129,6 +7296,182 @@ var init_storage_pg = __esm({
         });
       }
       // ------------------------------------------------------- reports (B5.7)
+      // ------------------------------------------------------------ bills (B7.1)
+      /** The visit's orders and appointments as bill lines, read on `exec` (locked by the caller when paying). */
+      async billLines(exec, visitId, lock = false) {
+        const orderQuery = exec.select({
+          id: orders.id,
+          orderNumber: orders.orderNumber,
+          status: orders.status,
+          totalAmount: orders.totalAmount,
+          paidAmount: orders.paidAmount,
+          createdAt: orders.createdAt,
+          tests: sql2`(SELECT count(*)::int FROM order_tests ot WHERE ot.order_id = "orders"."id")`
+        }).from(orders).where(eq(orders.visitId, visitId)).orderBy(asc(orders.id));
+        const orderRows = lock ? await orderQuery.for("update", { of: orders }) : await orderQuery;
+        const apptRows = await exec.select({
+          id: appointments.id,
+          status: appointments.status,
+          price: appointments.price,
+          startTime: appointments.startTime,
+          createdAt: appointments.createdAt,
+          serviceName: services.name,
+          doctorName: users.fullName,
+          specialty: doctors.specialty,
+          paid: sql2`(SELECT coalesce(sum(p.amount), 0)::int FROM payments p
+                            WHERE p.appointment_id = "appointments"."id" AND p.voided_at IS NULL)`
+        }).from(appointments).leftJoin(services, eq(services.id, appointments.serviceId)).leftJoin(doctors, eq(doctors.id, appointments.doctorId)).leftJoin(users, eq(users.id, doctors.userId)).where(eq(appointments.visitId, visitId));
+        return buildBillLines(
+          orderRows.map((o) => ({ ...o, createdAt: iso(o.createdAt) ?? o.createdAt, tests: Number(o.tests) })),
+          apptRows.map((a) => ({
+            ...a,
+            createdAt: iso(a.createdAt) ?? a.createdAt,
+            paid: Number(a.paid),
+            doctorName: a.doctorName ?? "\u2014",
+            specialty: a.specialty ?? "Shifokor"
+          }))
+        );
+      }
+      async getBill(visitId) {
+        const [v] = await db.select({ visit: visits, patientNumber: patients.patientNumber, fullName: patients.fullName, phone: patients.phone }).from(visits).innerJoin(patients, eq(patients.id, visits.patientId)).where(eq(visits.id, visitId)).limit(1);
+        if (!v) return void 0;
+        const [lines, [invoice]] = await Promise.all([this.billLines(db, visitId), db.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1)]);
+        let receipts = [];
+        if (invoice) {
+          const recs = await db.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoice.id)).orderBy(desc(invoicePayments.number));
+          const shares = recs.length ? await db.select({ p: payments }).from(payments).where(inArray(payments.invoicePaymentId, recs.map((r) => r.id))) : [];
+          receipts = recs.map((r) => ({
+            ...r,
+            createdAt: iso(r.createdAt) ?? r.createdAt,
+            voidedAt: iso(r.voidedAt),
+            method: r.method,
+            shares: shares.filter((x) => x.p.invoicePaymentId === r.id).map((x) => {
+              const source = x.p.orderId ? "order" : "appointment";
+              const sourceId = x.p.orderId ?? x.p.appointmentId;
+              return { source, sourceId, title: lines.find((l) => l.source === source && l.sourceId === sourceId)?.title ?? "\u2014", amount: x.p.amount };
+            })
+          }));
+        }
+        return {
+          visitId,
+          visitDate: v.visit.visitDate,
+          patient: { id: v.visit.patientId, patientNumber: v.patientNumber, fullName: v.fullName, phone: v.phone ?? null },
+          invoice: invoice ? { ...invoice, createdAt: iso(invoice.createdAt) ?? invoice.createdAt } : null,
+          lines,
+          receipts,
+          totals: billTotals(lines)
+        };
+      }
+      async ensureInvoice(exec, visitId, patientId, actor) {
+        await exec.insert(invoices).values({ visitId, patientId, createdBy: actor.id, createdByName: actor.name }).onConflictDoNothing({ target: invoices.visitId });
+        const [row] = await exec.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1);
+        return row;
+      }
+      async openInvoice(visitId, actor) {
+        const [v] = await db.select().from(visits).where(eq(visits.id, visitId)).limit(1);
+        if (!v) return void 0;
+        await this.ensureInvoice(db, visitId, v.patientId, actor);
+        return this.getBill(visitId);
+      }
+      async payBill(visitId, input, actor) {
+        const out = await db.transaction(async (tx) => {
+          const exec = tx;
+          const [v] = await tx.select().from(visits).where(eq(visits.id, visitId)).for("update");
+          if (!v) return void 0;
+          const lines = await this.billLines(exec, visitId, true);
+          const { shares, taken } = allocatePayment(lines, input.amount);
+          if (taken === 0) throw new StorageConflict(BILL_PAID);
+          const invoice = await this.ensureInvoice(exec, visitId, v.patientId, actor);
+          const [receipt] = await tx.insert(invoicePayments).values({ invoiceId: invoice.id, patientId: v.patientId, amount: taken, method: input.method, note: input.note ?? null, createdBy: actor.id, createdByName: actor.name }).returning();
+          await tx.insert(payments).values(
+            shares.map((s) => ({
+              orderId: s.source === "order" ? s.sourceId : null,
+              appointmentId: s.source === "appointment" ? s.sourceId : null,
+              invoicePaymentId: receipt.id,
+              amount: s.amount,
+              method: input.method,
+              note: `Hisobvaraq \u2116${invoice.number}, kvitansiya \u2116${receipt.number}`,
+              createdBy: actor.id,
+              createdByName: actor.name
+            }))
+          );
+          for (const s of shares) if (s.source === "order") await this.syncPaid(exec, s.sourceId, actor);
+          return { receiptId: receipt.id, taken };
+        });
+        if (!out) return void 0;
+        return { bill: await this.getBill(visitId), ...out };
+      }
+      async voidReceipt(receiptId, reason, actor) {
+        const visitId = await db.transaction(async (tx) => {
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          const [rec] = await tx.update(invoicePayments).set({ voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason }).where(and(eq(invoicePayments.id, receiptId), isNull(invoicePayments.voidedAt))).returning({ invoiceId: invoicePayments.invoiceId });
+          if (!rec) {
+            const [exists] = await tx.select({ id: invoicePayments.id }).from(invoicePayments).where(eq(invoicePayments.id, receiptId)).limit(1);
+            if (exists) throw new StorageConflict(RECEIPT_ALREADY_VOIDED);
+            return void 0;
+          }
+          const shares = await tx.update(payments).set({ voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason }).where(and(eq(payments.invoicePaymentId, receiptId), isNull(payments.voidedAt))).returning({ orderId: payments.orderId });
+          for (const orderId of new Set(shares.map((s) => s.orderId).filter((x) => Boolean(x)))) {
+            await this.syncPaid(tx, orderId, actor);
+          }
+          const [inv] = await tx.select({ visitId: invoices.visitId }).from(invoices).where(eq(invoices.id, rec.invoiceId)).limit(1);
+          return inv?.visitId;
+        });
+        return visitId ? this.getBill(visitId) : void 0;
+      }
+      async listBills(query) {
+        const from = query.from ?? "0000-01-01";
+        const to = query.to ?? "9999-12-31";
+        const patientFilter = query.patientId ? sql2`AND v.patient_id = ${query.patientId}` : sql2``;
+        const res = await db.execute(sql2`
+      WITH lines AS (
+        SELECT o.visit_id,
+               CASE WHEN o.status = 'cancelled' THEN 0 ELSE o.total_amount END AS amount,
+               o.paid_amount AS paid,
+               (o.status <> 'cancelled')::int AS live,
+               0 AS appt
+          FROM orders o
+         WHERE o.visit_id IS NOT NULL
+        UNION ALL
+        SELECT a.visit_id,
+               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price ELSE 0 END,
+               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
+               (a.status IN ('arrived', 'in_progress', 'completed'))::int,
+               1
+          FROM appointments a
+         WHERE a.visit_id IS NOT NULL
+      )
+      SELECT v.id AS visit_id, v.visit_date, v.patient_id, pt.patient_number, pt.full_name, i.number AS invoice_number,
+             sum(l.amount)::int AS amount, sum(l.paid)::int AS paid,
+             sum(greatest(0, l.amount - l.paid))::int AS due, sum(greatest(0, l.paid - l.amount))::int AS credit,
+             count(*)::int AS lines,
+             sum(CASE WHEN l.appt = 1 THEN l.live ELSE 0 END)::int AS appointments,
+             sum(CASE WHEN l.appt = 0 THEN l.live ELSE 0 END)::int AS orders
+        FROM visits v
+        JOIN patients pt ON pt.id = v.patient_id
+        JOIN lines l ON l.visit_id = v.id AND (l.live = 1 OR l.paid <> 0)
+        LEFT JOIN invoices i ON i.visit_id = v.id
+       WHERE v.visit_date >= ${from} AND v.visit_date <= ${to} ${patientFilter}
+       GROUP BY v.id, v.visit_date, v.patient_id, pt.patient_number, pt.full_name, i.number
+       ${query.status === "due" ? sql2`HAVING sum(greatest(0, l.amount - l.paid)) > 0` : sql2``}
+       ORDER BY v.visit_date DESC, pt.full_name
+       LIMIT ${query.limit ?? 500}`);
+        const rows = res.rows.map((r) => {
+          const sums = { amount: Number(r.amount), paid: Number(r.paid), due: Number(r.due), credit: Number(r.credit) };
+          return {
+            visitId: String(r.visit_id),
+            visitDate: String(r.visit_date),
+            patientId: String(r.patient_id),
+            patientNumber: Number(r.patient_number),
+            patientName: String(r.full_name),
+            invoiceNumber: r.invoice_number === null ? null : Number(r.invoice_number),
+            appointments: Number(r.appointments),
+            orders: Number(r.orders),
+            totals: { ...sums, status: billStatus(sums, Number(r.lines)) }
+          };
+        });
+        return filterBills(rows, query.status);
+      }
       async movementTotals(range) {
         const { from, to } = range;
         const res = await db.execute(sql2`
@@ -7429,8 +7772,8 @@ var init_storage_pg = __esm({
             revenue: sql2`coalesce(sum(${orders.totalAmount}), 0)::int`
           }).from(orders).where(inRange).groupBy(sql2`coalesce(nullif(btrim(${orders.referrer}), ''), '—')`).orderBy(desc(sql2`sum(${orders.totalAmount})`)).limit(10)
         ]);
-        const totalTests = byCategory.reduce((sum, c) => sum + c.count, 0);
-        const totalExpenses = expensesByCategory.reduce((sum, e) => sum + e.amount, 0);
+        const totalTests = byCategory.reduce((sum2, c) => sum2 + c.count, 0);
+        const totalExpenses = expensesByCategory.reduce((sum2, e) => sum2 + e.amount, 0);
         const totalPaid = totals?.totalPaid ?? 0;
         return {
           range: { from, to },
@@ -7559,7 +7902,7 @@ function buildTurnover(items, totals) {
     r[t2.bucket].qty += sign * t2.quantity;
     r[t2.bucket].value += sign * t2.value;
   }
-  const sum = { opening: 0, receipt: 0, department: 0, writeoff: 0, consumption: 0, count: 0, closing: 0 };
+  const sum2 = { opening: 0, receipt: 0, department: 0, writeoff: 0, consumption: 0, count: 0, closing: 0 };
   const rows = [];
   for (const r of Array.from(byItem.values())) {
     for (const k of ["opening", ...TURNOVER_BUCKETS]) r[k] = { qty: tidy(r[k].qty), value: Math.round(r[k].value) };
@@ -7570,10 +7913,10 @@ function buildTurnover(items, totals) {
     const moved = TURNOVER_BUCKETS.some((k) => r[k].qty !== 0 || r[k].value !== 0);
     if (!moved && r.opening.qty === 0 && r.opening.value === 0) continue;
     rows.push(r);
-    for (const k of ["opening", ...TURNOVER_BUCKETS, "closing"]) sum[k] += r[k].value;
+    for (const k of ["opening", ...TURNOVER_BUCKETS, "closing"]) sum2[k] += r[k].value;
   }
   rows.sort((a, b) => a.itemName.localeCompare(b.itemName));
-  return { rows, totals: sum };
+  return { rows, totals: sum2 };
 }
 function fillDays(from, to, rows) {
   const byDay = new Map(rows.map((r) => [r.date, r]));
@@ -7676,6 +8019,8 @@ var init_db = __esm({
       stockCounts: [],
       stockCountLines: [],
       consumptionNorms: [],
+      invoices: [],
+      invoicePayments: [],
       labConsumptions: [],
       icdUzNames: {},
       security: null,
@@ -7700,7 +8045,7 @@ var init_db = __esm({
         director: null,
         licenseNumber: null
       },
-      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0 }
+      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0, invoiceNumber: 0, invoiceReceiptNumber: 0 }
     });
     queue = Promise.resolve();
   }
@@ -7742,6 +8087,7 @@ var init_storage_file = __esm({
     init_qc();
     init_inventory();
     init_consumption();
+    init_invoice();
     init_inventory_reports();
     init_icd10();
     init_lab_verification();
@@ -8833,10 +9179,12 @@ var init_storage_file = __esm({
         const details = await this.getPatientDetails(id);
         if (!details) return void 0;
         const { items } = await this.listOrders({ patientId: id });
-        const numbers = new Map(items.map((o) => [o.id, o.orderNumber]));
-        const payments2 = this.db.payments.filter((p) => numbers.has(p.orderId)).map((p) => ({ ...p, orderNumber: numbers.get(p.orderId) }));
+        const appointments2 = await this.listAppointments({ patientId: id });
+        const orderIds = new Set(items.map((o) => o.id));
+        const apptIds = new Set(appointments2.map((a) => a.id));
+        const payments2 = this.db.payments.filter((p) => p.orderId && orderIds.has(p.orderId) || p.appointmentId && apptIds.has(p.appointmentId));
         const visits2 = this.db.visits.filter((v) => v.patientId === id);
-        return buildPatientCard(details, items, visits2, payments2, await this.listAppointments({ patientId: id }));
+        return buildPatientCard(details, items, visits2, payments2, appointments2);
       }
       async findPatientCandidates(q) {
         return this.db.patients.map(normalizePatient).filter((p) => p.id !== q.excludeId).filter(
@@ -8887,6 +9235,12 @@ var init_storage_file = __esm({
             for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
             for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
             for (const r of this.db.referrals) if (r.visitId === v.id) r.visitId = same.id;
+            const theirs = this.db.invoices.find((i) => i.visitId === v.id);
+            const ours = this.db.invoices.find((i) => i.visitId === same.id);
+            if (theirs && ours) {
+              for (const r of this.db.invoicePayments) if (r.invoiceId === theirs.id) r.invoiceId = ours.id;
+              this.db.invoices = this.db.invoices.filter((i) => i.id !== theirs.id);
+            } else if (theirs) theirs.visitId = same.id;
             this.db.visits = this.db.visits.filter((x) => x.id !== v.id);
           } else {
             v.patientId = targetId;
@@ -8904,6 +9258,8 @@ var init_storage_file = __esm({
         for (const r of this.db.medicalRecords) if (r.patientId === sourceId) r.patientId = targetId;
         for (const a of this.db.patientAllergies) if (a.patientId === sourceId) a.patientId = targetId;
         for (const r of this.db.referrals) if (r.patientId === sourceId) r.patientId = targetId;
+        for (const i of this.db.invoices) if (i.patientId === sourceId) i.patientId = targetId;
+        for (const r of this.db.invoicePayments) if (r.patientId === sourceId) r.patientId = targetId;
         this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
         await this.persist();
         return { orders: orders2, contacts, appointments: appointments2 };
@@ -8967,7 +9323,9 @@ var init_storage_file = __esm({
           appointments: mine(this.db.appointments),
           medical_records: mine(this.db.medicalRecords),
           patient_allergies: mine(this.db.patientAllergies),
-          referrals: mine(this.db.referrals)
+          referrals: mine(this.db.referrals),
+          invoices: mine(this.db.invoices),
+          invoice_payments: mine(this.db.invoicePayments)
         });
         if (problem) throw new StorageConflict(problem);
         const before = this.db.patients.length;
@@ -9092,7 +9450,7 @@ var init_storage_file = __esm({
           rows = rows.filter((o) => o.status !== "cancelled" && match(o));
         }
         const billable = rows.filter((o) => o.status !== "cancelled");
-        const sum = billable.reduce((acc, o) => acc + o.totalAmount, 0);
+        const sum2 = billable.reduce((acc, o) => acc + o.totalAmount, 0);
         const paid = billable.reduce((acc, o) => acc + o.paidAmount, 0);
         rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         const total = rows.length;
@@ -9101,7 +9459,7 @@ var init_storage_file = __esm({
         return {
           items: rows.slice(offset, offset + limit),
           total,
-          summary: { counts, results, totals: { sum, paid, debt: Math.max(0, sum - paid) }, groups }
+          summary: { counts, results, totals: { sum: sum2, paid, debt: Math.max(0, sum2 - paid) }, groups }
         };
       }
       async getOrder(id) {
@@ -9118,7 +9476,7 @@ var init_storage_file = __esm({
         }
         const selected = input.testIds.map((id) => this.db.tests.find((t2) => t2.id === id)).filter((t2) => Boolean(t2));
         if (selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
-        const subtotal = selected.reduce((sum, t2) => sum + t2.price, 0);
+        const subtotal = selected.reduce((sum2, t2) => sum2 + t2.price, 0);
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
         this.db.counters.orderNumber += 1;
@@ -9169,6 +9527,8 @@ var init_storage_file = __esm({
           this.db.payments.push({
             id: randomUUID(),
             orderId: order.id,
+            appointmentId: null,
+            invoicePaymentId: null,
             amount: opening,
             method: "naqd",
             note: null,
@@ -9463,6 +9823,8 @@ var init_storage_file = __esm({
         this.db.payments.push({
           id: randomUUID(),
           orderId,
+          appointmentId: null,
+          invoicePaymentId: null,
           amount,
           method: input.method,
           note: input.note?.trim() || null,
@@ -9480,6 +9842,7 @@ var init_storage_file = __esm({
         const row = this.db.payments.find((p) => p.id === paymentId);
         if (!row) return void 0;
         if (row.voidedAt) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
+        if (row.invoicePaymentId || !row.orderId) throw new StorageConflict(PAYMENT_IS_RECEIPT_SHARE);
         row.voidedAt = (/* @__PURE__ */ new Date()).toISOString();
         row.voidedBy = actor.id;
         row.voidedByName = actor.name;
@@ -9703,9 +10066,9 @@ var init_storage_file = __esm({
           pendingTests: activeItems.filter((i) => !i.result).length,
           readyTests: activeItems.filter((i) => lineState(i) === "verified").length,
           reviewTests: activeItems.filter((i) => lineState(i) === "review").length,
-          todayRevenue: todayOrders.reduce((sum, o) => sum + o.paidAmount, 0),
+          todayRevenue: todayOrders.reduce((sum2, o) => sum2 + o.paidAmount, 0),
           totalPatients: this.db.patients.length,
-          unpaidAmount: this.db.orders.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + Math.max(0, o.totalAmount - o.paidAmount), 0)
+          unpaidAmount: this.db.orders.filter((o) => o.status !== "cancelled").reduce((sum2, o) => sum2 + Math.max(0, o.totalAmount - o.paidAmount), 0)
         };
       }
       // ------------------------------------------------------ lab devices (B4.9)
@@ -10743,6 +11106,154 @@ var init_storage_file = __esm({
           value: signedValue(m.quantity, batches.get(m.batchId)?.purchasePrice ?? 0),
           issue: m.issueId ? issues.get(m.issueId) : void 0
         }));
+      }
+      // ------------------------------------------------------------ bills (B7.1)
+      billLinesOf(visitId) {
+        const orders2 = this.db.orders.filter((o) => o.visitId === visitId).map((o) => ({ ...o, tests: this.db.orderTests.filter((t2) => t2.orderId === o.id).length }));
+        const appts = this.db.appointments.filter((a) => a.visitId === visitId).map((a) => {
+          const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
+          const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : void 0;
+          return {
+            ...a,
+            serviceName: a.serviceId ? this.db.services.find((s) => s.id === a.serviceId)?.name ?? null : null,
+            doctorName: user?.fullName ?? "\u2014",
+            specialty: doctor?.specialty ?? "Shifokor",
+            paid: this.db.payments.filter((p) => p.appointmentId === a.id && !p.voidedAt).reduce((s, p) => s + p.amount, 0)
+          };
+        });
+        return buildBillLines(orders2, appts);
+      }
+      async getBill(visitId) {
+        const visit = this.db.visits.find((v) => v.id === visitId);
+        if (!visit) return void 0;
+        const patient = this.db.patients.find((p) => p.id === visit.patientId);
+        const lines = this.billLinesOf(visitId);
+        const invoice = this.db.invoices.find((i) => i.visitId === visitId) ?? null;
+        const receipts = invoice ? this.db.invoicePayments.filter((r) => r.invoiceId === invoice.id).sort((a, b) => b.number - a.number).map((r) => ({
+          ...r,
+          shares: this.db.payments.filter((p) => p.invoicePaymentId === r.id).map((p) => {
+            const source = p.orderId ? "order" : "appointment";
+            const sourceId = p.orderId ?? p.appointmentId;
+            return { source, sourceId, title: lines.find((l) => l.source === source && l.sourceId === sourceId)?.title ?? "\u2014", amount: p.amount };
+          })
+        })) : [];
+        return {
+          visitId,
+          visitDate: visit.visitDate,
+          patient: { id: visit.patientId, patientNumber: patient?.patientNumber ?? 0, fullName: patient?.fullName ?? "\u2014", phone: patient?.phone ?? null },
+          invoice: invoice ? { ...invoice } : null,
+          lines,
+          receipts,
+          totals: billTotals(lines)
+        };
+      }
+      ensureInvoice(visitId, patientId, actor) {
+        let inv = this.db.invoices.find((i) => i.visitId === visitId);
+        if (!inv) {
+          this.db.counters.invoiceNumber += 1;
+          inv = { id: randomUUID(), number: this.db.counters.invoiceNumber, patientId, visitId, createdAt: (/* @__PURE__ */ new Date()).toISOString(), createdBy: actor.id, createdByName: actor.name };
+          this.db.invoices.push(inv);
+        }
+        return inv;
+      }
+      async openInvoice(visitId, actor) {
+        const visit = this.db.visits.find((v) => v.id === visitId);
+        if (!visit) return void 0;
+        const had = this.db.invoices.some((i) => i.visitId === visitId);
+        this.ensureInvoice(visitId, visit.patientId, actor);
+        if (!had) await this.persist();
+        return this.getBill(visitId);
+      }
+      async payBill(visitId, input, actor) {
+        const visit = this.db.visits.find((v) => v.id === visitId);
+        if (!visit) return void 0;
+        const lines = this.billLinesOf(visitId);
+        const { shares, taken } = allocatePayment(lines, input.amount);
+        if (taken === 0) throw new StorageConflict(BILL_PAID);
+        const invoice = this.ensureInvoice(visitId, visit.patientId, actor);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        this.db.counters.invoiceReceiptNumber += 1;
+        const receipt = {
+          id: randomUUID(),
+          number: this.db.counters.invoiceReceiptNumber,
+          invoiceId: invoice.id,
+          patientId: visit.patientId,
+          amount: taken,
+          method: input.method,
+          note: input.note ?? null,
+          createdAt: now,
+          createdBy: actor.id,
+          createdByName: actor.name,
+          voidedAt: null,
+          voidedBy: null,
+          voidedByName: null,
+          voidReason: null
+        };
+        this.db.invoicePayments.push(receipt);
+        for (const s of shares) {
+          this.db.payments.push({
+            id: randomUUID(),
+            orderId: s.source === "order" ? s.sourceId : null,
+            appointmentId: s.source === "appointment" ? s.sourceId : null,
+            invoicePaymentId: receipt.id,
+            amount: s.amount,
+            method: input.method,
+            note: `Hisobvaraq \u2116${invoice.number}, kvitansiya \u2116${receipt.number}`,
+            createdBy: actor.id,
+            createdByName: actor.name,
+            createdAt: now,
+            ...UNVOIDED
+          });
+          if (s.source === "order") {
+            const order = this.db.orders.find((o) => o.id === s.sourceId);
+            if (order) this.touchOrder(order, actor);
+            this.syncPaid(s.sourceId);
+          }
+        }
+        await this.persist();
+        return { bill: await this.getBill(visitId), receiptId: receipt.id, taken };
+      }
+      async voidReceipt(receiptId, reason, actor) {
+        const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
+        if (!rec) return void 0;
+        if (rec.voidedAt) throw new StorageConflict(RECEIPT_ALREADY_VOIDED);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        Object.assign(rec, { voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
+        for (const p of this.db.payments.filter((x) => x.invoicePaymentId === receiptId && !x.voidedAt)) {
+          Object.assign(p, { voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
+          if (p.orderId) {
+            const order = this.db.orders.find((o) => o.id === p.orderId);
+            if (order) this.touchOrder(order, actor);
+            this.syncPaid(p.orderId);
+          }
+        }
+        await this.persist();
+        const inv = this.db.invoices.find((i) => i.id === rec.invoiceId);
+        return inv ? this.getBill(inv.visitId) : void 0;
+      }
+      async listBills(query) {
+        const from = query.from ?? "0000-01-01";
+        const to = query.to ?? "9999-12-31";
+        const rows = [];
+        for (const v of this.db.visits) {
+          if (v.visitDate < from || v.visitDate > to || query.patientId && v.patientId !== query.patientId) continue;
+          const lines = this.billLinesOf(v.id);
+          if (lines.length === 0) continue;
+          const p = this.db.patients.find((x) => x.id === v.patientId);
+          rows.push({
+            visitId: v.id,
+            visitDate: v.visitDate,
+            patientId: v.patientId,
+            patientNumber: p?.patientNumber ?? 0,
+            patientName: p?.fullName ?? "\u2014",
+            invoiceNumber: this.db.invoices.find((i) => i.visitId === v.id)?.number ?? null,
+            appointments: lines.filter((l) => l.source === "appointment" && !l.cancelled).length,
+            orders: lines.filter((l) => l.source === "order" && !l.cancelled).length,
+            totals: billTotals(lines)
+          });
+        }
+        rows.sort((a, b) => b.visitDate.localeCompare(a.visitDate) || a.patientName.localeCompare(b.patientName));
+        return filterBills(rows, query.status).slice(0, query.limit ?? 500);
       }
       async movementTotals(range) {
         const acc = /* @__PURE__ */ new Map();
@@ -13910,6 +14421,80 @@ function registerConsumptionRoutes(app) {
   );
 }
 
+// server/routes-billing.ts
+init_schema();
+init_invoice();
+var DAY2 = /^\d{4}-\d{2}-\d{2}$/;
+var sum = (n) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
+function registerBillingRoutes(app) {
+  app.get(
+    "/api/bills",
+    requirePermission("payments.create", "finance.view"),
+    handle(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      if (from && !DAY2.test(from) || to && !DAY2.test(to)) return res.status(400).json({ message: "Sanani YYYY-MM-DD ko'rinishida kiriting" });
+      if (from && to && from > to) return res.status(400).json({ message: "Davr boshi oxiridan keyin bo'lishi mumkin emas" });
+      const status = stringParam(req.query.status);
+      if (status && !BILL_FILTERS.includes(status)) return res.status(400).json({ message: "Noma'lum filtr" });
+      res.json(await storage.listBills({ from, to, status, patientId: stringParam(req.query.patientId) }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/bills/:visitId",
+    requirePermission("payments.create", "finance.view"),
+    handle(async (req, res) => {
+      const bill = await storage.getBill(req.params.visitId);
+      if (!bill) return res.status(404).json({ message: "Tashrif topilmadi" });
+      res.json(bill);
+    })
+  );
+  app.post(
+    "/api/bills/:visitId/open",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const before = await storage.getBill(req.params.visitId);
+      if (!before) return res.status(404).json({ message: "Tashrif topilmadi" });
+      const bill = await storage.openInvoice(req.params.visitId, actorOf(req));
+      if (!before.invoice && bill.invoice) {
+        await audit(req, "create", "invoice", bill.invoice.id, `Hisobvaraq \u2116${bill.invoice.number} ochildi: \u2116${bill.patient.patientNumber} ${bill.patient.fullName}, ${bill.visitDate}`);
+      }
+      res.json(bill);
+    })
+  );
+  app.post(
+    "/api/bills/:visitId/payments",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const input = payBillSchema.parse(req.body);
+      const before = await storage.getBill(req.params.visitId);
+      if (!before) return res.status(404).json({ message: "Tashrif topilmadi" });
+      const out = await storage.payBill(req.params.visitId, input, actorOf(req));
+      const receipt = out.bill.receipts.find((r) => r.id === out.receiptId);
+      await audit(
+        req,
+        "payment",
+        "invoice",
+        out.bill.invoice.id,
+        `Hisobvaraq \u2116${out.bill.invoice.number}, kvitansiya \u2116${receipt.number}: ${sum(out.taken)} (${PAYMENT_METHOD_LABELS[input.method]}) \u2014 ${describeShares(receipt.shares, out.bill.lines)}${input.amount > out.taken ? `; qarzdan ortig'i ${sum(input.amount - out.taken)} qaytim` : ""}${out.bill.totals.due ? `; qoldi ${sum(out.bill.totals.due)}` : "; to'liq to'landi"}`
+      );
+      res.status(201).json({ bill: out.bill, receiptId: out.receiptId, taken: out.taken, change: input.amount - out.taken });
+    })
+  );
+  app.post(
+    "/api/receipts/:id/void",
+    requirePermission("payments.delete"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const bill = await storage.voidReceipt(req.params.id, reason, actorOf(req));
+      if (!bill) return res.status(404).json({ message: "Kvitansiya topilmadi" });
+      const r = bill.receipts.find((x) => x.id === req.params.id);
+      await audit(req, "void", "invoice", bill.invoice.id, `Hisobvaraq \u2116${bill.invoice.number}, kvitansiya \u2116${r.number} (${sum(r.amount)}) bekor qilindi: ${reason}`);
+      res.json(bill);
+    })
+  );
+}
+
 // server/reagent-consumption.ts
 init_appointment();
 async function consumeForOrder(orderId, orderNumber, actor) {
@@ -15706,6 +16291,7 @@ async function registerRoutes(app) {
   registerQcRoutes(app);
   registerInventoryRoutes(app);
   registerConsumptionRoutes(app);
+  registerBillingRoutes(app);
   app.use("/api", (req, res, next) => {
     if (res.headersSent) return next();
     res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });

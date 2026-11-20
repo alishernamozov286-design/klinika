@@ -5,6 +5,10 @@ import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
+import type { BillFilter } from "@shared/invoice";
+import type { Bill, BillSummary, PayBillInput } from "@shared/schema";
+/** Visit days (YYYY-MM-DD, inclusive); none means all time. */
+export type BillQuery = { from?: string; to?: string; patientId?: string; status?: BillFilter; limit?: number };
 import type {
   CreateIssueInput,
   CreateCountInput,
@@ -397,9 +401,14 @@ export function buildPatientCard(
   patient: PatientDetails,
   orderList: OrderWithDetails[],
   visitList: Visit[],
-  payments: (Payment & { orderNumber: number })[],
+  payments: Payment[],
   appointmentList: AppointmentWithDetails[] = [],
 ): PatientCard {
+  // B7.1: an attended appointment is billed at its frozen price and paid by the payments on it.
+  const apptPaid = new Map<string, number>();
+  for (const p of payments) if (p.appointmentId && !p.voidedAt) apptPaid.set(p.appointmentId, (apptPaid.get(p.appointmentId) ?? 0) + p.amount);
+  const orderNo = new Map(orderList.map((o) => [o.id, o.orderNumber]));
+  const apptOf = new Map(appointmentList.map((a) => [a.id, a]));
   const visitDate = new Map(visitList.map((v) => [v.id, v.visitDate]));
   const groups = new Map<string, PatientCardVisit>();
   // A day with a doctor's appointment is a visit even without a lab order;
@@ -410,6 +419,8 @@ export function buildPatientCard(
     const date = (a.visitId && visitDate.get(a.visitId)) || a.date;
     const g = groups.get(key) ?? { key, date, orders: [], appointments: [], billed: 0, paid: 0 };
     g.appointments.push(a);
+    g.billed += a.price;
+    g.paid += apptPaid.get(a.id) ?? 0;
     groups.set(key, g);
   }
   for (const order of orderList) {
@@ -431,8 +442,8 @@ export function buildPatientCard(
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
   const live = orderList.filter((o) => o.status !== "cancelled");
-  const billed = live.reduce((s, o) => s + o.totalAmount, 0);
-  const paid = live.reduce((s, o) => s + o.paidAmount, 0);
+  const billed = live.reduce((s, o) => s + o.totalAmount, 0) + attended.reduce((s, a) => s + a.price, 0);
+  const paid = live.reduce((s, o) => s + o.paidAmount, 0) + attended.reduce((s, a) => s + (apptPaid.get(a.id) ?? 0), 0);
   const times = [
     ...orderList.map((o) => o.createdAt),
     ...attended.map((a) => a.arrivedAt ?? a.createdAt),
@@ -440,7 +451,14 @@ export function buildPatientCard(
   return {
     patient,
     visits,
-    payments: [...payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    payments: payments
+      .map((p) => {
+        const a = p.appointmentId ? apptOf.get(p.appointmentId) : undefined;
+        const orderNumber = p.orderId ? (orderNo.get(p.orderId) ?? null) : null;
+        const label = orderNumber !== null ? `Laboratoriya #${orderNumber}` : a ? `Qabul · ${a.serviceName ?? a.specialty ?? "ko'rik"}` : "—";
+        return { ...p, orderNumber, label };
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     totals: {
       visits: visits.filter((v) => v.appointments.length > 0 || v.orders.some((o) => o.status !== "cancelled")).length,
       orders: orderList.length,
@@ -896,6 +914,15 @@ export interface IStorage {
   settleConsumptions(ids: string[] | null, today: string, actor: Actor): Promise<LabConsumptionView[]>;
   /** Extra consumptions only; puts the stock back on its batches. */
   cancelConsumption(id: string, reason: string, actor: Actor): Promise<LabConsumptionView | undefined>;
+  // B7.1 bills: one per visit, lines read live from its orders and appointments (shared/invoice.ts).
+  getBill(visitId: string): Promise<Bill | undefined>;
+  /** Gives the visit's bill its number (idempotent). */
+  openInvoice(visitId: string, actor: Actor): Promise<Bill | undefined>;
+  /** One receipt split across the lines that owe, oldest first; a payment past the debt is cut to it. */
+  payBill(visitId: string, input: PayBillInput, actor: Actor): Promise<{ bill: Bill; receiptId: string; taken: number } | undefined>;
+  /** Voids a receipt and all its shares, once (StorageConflict after). */
+  voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined>;
+  listBills(query: BillQuery): Promise<BillSummary[]>;
   // B5.7 reports, straight from the ledger (shaping: shared/inventory-reports.ts). Ranges are ISO instants, `to` exclusive.
   /** Signed movement totals per item and turnover bucket: before `from`, and from `from` to `to`. */
   movementTotals(range: { from: string; to: string }): Promise<MovementTotal[]>;
