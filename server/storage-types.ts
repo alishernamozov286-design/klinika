@@ -4,6 +4,7 @@ import { SUPER_ADMIN, SYSTEM_ROLE_KEYS } from "@shared/permissions";
 import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
+import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import type {
   CreateIssueInput,
   CreateCountInput,
@@ -895,6 +896,13 @@ export interface IStorage {
   settleConsumptions(ids: string[] | null, today: string, actor: Actor): Promise<LabConsumptionView[]>;
   /** Extra consumptions only; puts the stock back on its batches. */
   cancelConsumption(id: string, reason: string, actor: Actor): Promise<LabConsumptionView | undefined>;
+  // B5.7 reports, straight from the ledger (shaping: shared/inventory-reports.ts). Ranges are ISO instants, `to` exclusive.
+  /** Signed movement totals per item and turnover bucket: before `from`, and from `from` to `to`. */
+  movementTotals(range: { from: string; to: string }): Promise<MovementTotal[]>;
+  /** In and out per local day, in so'm (counts excluded); quiet days are absent. */
+  dailyFlows(range: { from: string; to: string }): Promise<DailyFlow[]>;
+  /** Issues to departments in the range, net of cancellations, per department and item. */
+  departmentLines(range: { from: string; to: string }): Promise<DepartmentLine[]>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
 
   /** Session policy; the defaults when nothing was ever saved. */

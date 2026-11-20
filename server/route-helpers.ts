@@ -19,6 +19,20 @@ export const numberParam = (value: unknown, fallback?: number) => {
 
 export const stringParam = (value: unknown) => (typeof value === "string" && value ? value : undefined);
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A period of calendar days (YYYY-MM-DD, both inclusive) as the instants
+ * [from 00:00, the day after `to` 00:00) on the server's clock — deploys run
+ * with TZ=Asia/Tashkent. Null, with the message, when the days are not usable.
+ */
+export function dayRange(from: string, to: string): { from: string; to: string } | { error: string } {
+  if (!DAY.test(from) || !DAY.test(to)) return { error: "Sanani YYYY-MM-DD ko'rinishida kiriting" };
+  if (from > to) return { error: "Davr boshi oxiridan keyin bo'lishi mumkin emas" };
+  const end = new Date(`${to}T00:00:00`);
+  end.setDate(end.getDate() + 1);
+  return { from: new Date(`${from}T00:00:00`).toISOString(), to: end.toISOString() };
+}
+
 /** Who is doing this, in the shape the storage layer stamps onto rows. */
 export function actorOf(req: Request): Actor {
   return { id: req.user?.id ?? null, name: req.user?.fullName ?? "Tizim" };

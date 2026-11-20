@@ -2330,3 +2330,82 @@ describe("reagent consumption (B5.6)", () => {
     expect(await storage.consumeVerified({ orderId: order.id }, today, HEAD)).toEqual([]);
   });
 });
+
+describe("warehouse home page and reports (B5.7)", () => {
+  it("the turnover sheet closes on what is on the shelf; departments total its column", async () => {
+    const { buildTurnover, summarizeDepartments, fillDays } = await import("@shared/inventory-reports");
+    const today = new Date().toISOString().slice(0, 10);
+    const later = (d: number) => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+    const lab = await storage.createDepartment({ name: "Laboratoriya", kind: "laboratoriya", description: null, isActive: true }, ACTOR);
+    const ward = await storage.createDepartment({ name: "Muolaja xonasi", kind: "ambulator", description: null, isActive: true }, ACTOR);
+    const glu = await storage.createInventoryItem(
+      { name: "Glyukoza reagenti", kind: "reagent", code: null, manufacturer: null, unit: "to'plam", minStock: 0, salePrice: null, isActive: true, notes: null },
+      ACTOR,
+    );
+    const tube = await storage.createInventoryItem(
+      { name: "Probirka EDTA", kind: "tube", code: null, manufacturer: null, unit: "dona", minStock: 0, salePrice: null, isActive: true, notes: null },
+      ACTOR,
+    );
+    const r1 = await storage.createReceipt(
+      {
+        supplier: "MedTech",
+        documentNumber: null,
+        receivedOn: today,
+        notes: null,
+        lines: [
+          { itemId: glu.id, lotNumber: "G1", expiresOn: later(100), quantity: 5, purchasePrice: 100000 },
+          { itemId: tube.id, lotNumber: null, expiresOn: null, quantity: 500, purchasePrice: 900 },
+        ],
+      },
+      ACTOR,
+    );
+    // A receipt entered by mistake and cancelled nets out of "Kirim".
+    const wrong = await storage.createReceipt(
+      { supplier: "Xato", documentNumber: null, receivedOn: today, notes: null, lines: [{ itemId: tube.id, lotNumber: null, expiresOn: null, quantity: 50, purchasePrice: 1000 }] },
+      ACTOR,
+    );
+    await storage.cancelReceipt(wrong.id, "Ikki marta kiritilgan", ACTOR);
+    const issue = (deptId: string, itemId: string, quantity: number) =>
+      storage.createIssue({ kind: "department", departmentId: deptId, receivedBy: "Aziz", reason: null, issuedOn: today, notes: null, lines: [{ itemId, quantity, batchId: null }] }, today, ACTOR);
+    await issue(lab.id, glu.id, 2);
+    await issue(lab.id, tube.id, 100);
+    const toWard = await issue(ward.id, tube.id, 30);
+    await storage.cancelIssue(toWard.id, "Qaytarildi", ACTOR);
+    await storage.createIssue(
+      { kind: "writeoff", departmentId: null, receivedBy: null, reason: "damaged", issuedOn: today, notes: null, lines: [{ itemId: tube.id, quantity: 10, batchId: null }] },
+      today,
+      ACTOR,
+    );
+    await storage.recordConsumption({ itemId: glu.id, testId: null, quantity: 0.5, reason: "calibration", note: null }, today, ACTOR);
+    const count = await storage.createCount({ countedOn: today, kinds: ["reagent"], notes: null }, ACTOR);
+    await storage.saveCountEntries(count.id, [{ lineId: count.lines[0].id, counted: 2.3, note: null }], ACTOR);
+    await storage.postCount(count.id, ACTOR);
+
+    const range = { from: new Date(Date.now() - 864e5).toISOString(), to: new Date(Date.now() + 864e5).toISOString() };
+    const sheet = buildTurnover(await storage.listInventoryItems(), await storage.movementTotals(range));
+    const g = sheet.rows.find((r) => r.itemId === glu.id)!;
+    const t = sheet.rows.find((r) => r.itemId === tube.id)!;
+    expect(g).toMatchObject({ opening: { qty: 0 }, receipt: { qty: 5, value: 500000 }, department: { qty: 2, value: 200000 }, consumption: { qty: 0.5, value: 50000 } });
+    expect(g.count).toEqual({ qty: -0.2, value: -20000 });
+    expect(t).toMatchObject({ receipt: { qty: 500, value: 450000 }, department: { qty: 100, value: 90000 }, writeoff: { qty: 10, value: 9000 } });
+    // Closing equals the shelf, item by item.
+    const shelf = await storage.listInventoryItems();
+    expect(g.closing.qty).toBeCloseTo(shelf.find((i) => i.id === glu.id)!.onHand);
+    expect(t.closing.qty).toBe(shelf.find((i) => i.id === tube.id)!.onHand);
+    expect(t.closing.qty).toBe(390);
+
+    // A period that starts later sees all of it as opening balance.
+    const after = buildTurnover(shelf, await storage.movementTotals({ from: range.to, to: new Date(Date.now() + 2 * 864e5).toISOString() }));
+    expect(after.rows.find((r) => r.itemId === tube.id)).toMatchObject({ opening: { qty: 390 }, receipt: { qty: 0 }, closing: { qty: 390 } });
+
+    // Departments: the cancelled issue to the ward leaves nothing; the lab's total is the column's total.
+    const depts = summarizeDepartments(await storage.departmentLines(range));
+    expect(depts.map((d) => [d.departmentName, d.documents, d.value])).toEqual([["Laboratoriya", 2, 290000]]);
+    expect(depts.reduce((s, d) => s + d.value, 0)).toBe(sheet.totals.department);
+
+    // Daily flows: today in (net of the cancelled receipt) and out (counts excluded).
+    const days = fillDays(today, today, await storage.dailyFlows(range));
+    expect(days).toEqual([{ date: today, in: 950000, out: 200000 + 90000 + 9000 + 50000 }]);
+    expect(r1.total).toBe(950000);
+  });
+});

@@ -866,3 +866,13 @@
     inset: -1px;
   }
 }
+
+/* B5.7 warehouse flow chart: categorical slots 1–2 of the dataviz palette, stepped per mode (validated). */
+.viz-flow {
+  --series-in: #2a78d6;
+  --series-out: #eb6834;
+}
+.dark .viz-flow {
+  --series-in: #3987e5;
+  --series-out: #d95926;
+}

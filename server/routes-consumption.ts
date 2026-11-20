@@ -21,17 +21,9 @@ import {
 import { fmtQty } from "@shared/inventory";
 import { clockNow } from "@shared/appointment";
 import { requirePermission } from "./rbac";
-import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
+import { actorOf, audit, dayRange, emptyIfMissing, handle, stringParam } from "./route-helpers";
 import { storage } from "./storage";
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-/** The server's local midnight of a calendar day, as an instant (deploys run with TZ=Asia/Tashkent). */
-const startOf = (day: string) => new Date(`${day}T00:00:00`).toISOString();
-const nextDay = (day: string) => {
-  const d = new Date(`${day}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString();
-};
 
 export function registerConsumptionRoutes(app: Express) {
   // ------------------------------------------------------------- norms
@@ -127,9 +119,9 @@ export function registerConsumptionRoutes(app: Express) {
       const today = clockNow().date;
       const from = stringParam(req.query.from) ?? `${today.slice(0, 7)}-01`;
       const to = stringParam(req.query.to) ?? today;
-      if (!DAY.test(from) || !DAY.test(to)) return res.status(400).json({ message: "Sanani YYYY-MM-DD ko'rinishida kiriting" });
-      if (from > to) return res.status(400).json({ message: "Davr boshi oxiridan keyin bo'lishi mumkin emas" });
-      const entries = await storage.listConsumptions({ from: startOf(from), to: nextDay(to) }).catch((e) => emptyIfMissing(e, [] as LabConsumptionView[]));
+      const range = dayRange(from, to);
+      if ("error" in range) return res.status(400).json({ message: range.error });
+      const entries = await storage.listConsumptions(range).catch((e) => emptyIfMissing(e, [] as LabConsumptionView[]));
       res.json({ from, to, report: summarizeConsumption(entries), entries: entries.slice(0, 500), total: entries.length });
     }),
   );

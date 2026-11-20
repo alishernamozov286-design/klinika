@@ -160,6 +160,7 @@ import {
   planConsumptions,
   shortOf,
 } from "@shared/consumption";
+import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
   QC_LOOKBACK,
@@ -384,6 +385,19 @@ async function uniqueAsConflict<T>(run: () => Promise<T>): Promise<T> {
     throw err;
   }
 }
+
+/**
+ * B5.7: which turnover column a movement falls in, and its signed money — the
+ * same rules as shared/inventory-reports.ts movementBucket / signedValue, for
+ * queries over `stock_movements m`, `inventory_batches b`, `stock_issues si`.
+ */
+const MOVEMENT_BUCKET_SQL = sql.raw(`(CASE m.kind
+  WHEN 'receipt' THEN 'receipt' WHEN 'receipt_cancel' THEN 'receipt'
+  WHEN 'issue' THEN 'department' WHEN 'writeoff' THEN 'writeoff'
+  WHEN 'issue_cancel' THEN (CASE WHEN si.kind = 'writeoff' THEN 'writeoff' ELSE 'department' END)
+  WHEN 'consumption' THEN 'consumption' WHEN 'consumption_cancel' THEN 'consumption'
+  WHEN 'count' THEN 'count' END)`);
+const MOVEMENT_VALUE_SQL = sql.raw(`((CASE WHEN m.quantity < 0 THEN -1 ELSE 1 END) * round((abs(m.quantity) * b.purchase_price)::numeric))`);
 
 const mapInventoryItem = (row: typeof inventoryItems.$inferSelect): InventoryItem => ({
   ...row,
@@ -4589,6 +4603,76 @@ export class PgStorage implements IStorage {
         .where(eq(labConsumptions.id, id));
       return (await this.consumptionsByIds(exec, [id]))[0];
     });
+  }
+
+  // ------------------------------------------------------- reports (B5.7)
+
+  async movementTotals(range: { from: string; to: string }): Promise<MovementTotal[]> {
+    const { from, to } = range;
+    const res = await db.execute(sql`
+      SELECT m.item_id, ${MOVEMENT_BUCKET_SQL} AS bucket,
+             CASE WHEN m.created_at < ${from} THEN 'before' ELSE 'in' END AS period,
+             sum(m.quantity)::float AS quantity, sum(${MOVEMENT_VALUE_SQL})::float AS value
+        FROM stock_movements m
+        JOIN inventory_batches b ON b.id = m.batch_id
+        LEFT JOIN stock_issues si ON si.id = m.issue_id
+       WHERE m.created_at < ${to}
+       GROUP BY 1, 2, 3`);
+    return (res.rows as { item_id: string; bucket: string | null; period: string; quantity: number; value: number }[])
+      .filter((r) => r.bucket)
+      .map((r) => ({
+        itemId: r.item_id,
+        bucket: r.bucket as MovementTotal["bucket"],
+        period: r.period as MovementTotal["period"],
+        quantity: Number(r.quantity),
+        value: Number(r.value),
+      }));
+  }
+
+  async dailyFlows(range: { from: string; to: string }): Promise<DailyFlow[]> {
+    const { from, to } = range;
+    const res = await db.execute(sql`
+      SELECT day,
+             sum(CASE WHEN bucket = 'receipt' THEN v ELSE 0 END)::float AS inflow,
+             sum(CASE WHEN bucket IN ('department', 'writeoff', 'consumption') THEN -v ELSE 0 END)::float AS outflow
+        FROM (SELECT (m.created_at AT TIME ZONE current_setting('TIMEZONE'))::date::text AS day,
+                     ${MOVEMENT_BUCKET_SQL} AS bucket, ${MOVEMENT_VALUE_SQL} AS v
+                FROM stock_movements m
+                JOIN inventory_batches b ON b.id = m.batch_id
+                LEFT JOIN stock_issues si ON si.id = m.issue_id
+               WHERE m.created_at >= ${from} AND m.created_at < ${to}) x
+       GROUP BY day
+       ORDER BY day`);
+    return (res.rows as { day: string; inflow: number; outflow: number }[]).map((r) => ({ date: r.day, in: Number(r.inflow), out: Number(r.outflow) }));
+  }
+
+  async departmentLines(range: { from: string; to: string }): Promise<DepartmentLine[]> {
+    const { from, to } = range;
+    const res = await db.execute(sql`
+      SELECT si.department_id, coalesce(d.name, '—') AS department_name, m.item_id,
+             coalesce(i.name, '—') AS item_name, coalesce(i.unit, '') AS unit,
+             sum(-m.quantity)::float AS quantity, sum(-(${MOVEMENT_VALUE_SQL}))::float AS value,
+             coalesce(array_agg(DISTINCT m.issue_id) FILTER (WHERE m.kind = 'issue'), '{}') AS issue_ids
+        FROM stock_movements m
+        JOIN stock_issues si ON si.id = m.issue_id
+        JOIN inventory_batches b ON b.id = m.batch_id
+        LEFT JOIN departments d ON d.id = si.department_id
+        LEFT JOIN inventory_items i ON i.id = m.item_id
+       WHERE m.kind IN ('issue', 'issue_cancel') AND si.kind = 'department'
+         AND m.created_at >= ${from} AND m.created_at < ${to}
+       GROUP BY si.department_id, d.name, m.item_id, i.name, i.unit`);
+    return (
+      res.rows as { department_id: string; department_name: string; item_id: string; item_name: string; unit: string; quantity: number; value: number; issue_ids: string[] }[]
+    ).map((r) => ({
+      departmentId: r.department_id,
+      departmentName: r.department_name,
+      itemId: r.item_id,
+      itemName: r.item_name,
+      unit: r.unit,
+      quantity: Number(r.quantity),
+      value: Number(r.value),
+      issueIds: r.issue_ids ?? [],
+    }));
   }
 
   async listReceipts(query: { limit?: number } = {}): Promise<StockReceiptView[]> {

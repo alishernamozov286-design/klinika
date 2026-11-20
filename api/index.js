@@ -1106,9 +1106,9 @@ function summarizeConsumption(entries) {
       tests2.set(e.testId, t);
     }
   }
-  const tidy = (n) => Number(n.toFixed(6));
+  const tidy2 = (n) => Number(n.toFixed(6));
   out.performed = performed.size;
-  out.byItem = Array.from(items.values()).map((r) => ({ ...r, norm: tidy(r.norm), extra: tidy(r.extra), total: tidy(r.total), short: tidy(r.short) })).sort((a, b) => b.value - a.value || a.itemName.localeCompare(b.itemName));
+  out.byItem = Array.from(items.values()).map((r) => ({ ...r, norm: tidy2(r.norm), extra: tidy2(r.extra), total: tidy2(r.total), short: tidy2(r.short) })).sort((a, b) => b.value - a.value || a.itemName.localeCompare(b.itemName));
   out.byTest = Array.from(tests2.values()).map(({ lines, ...t }) => ({ ...t, performed: lines.size })).sort((a, b) => b.value - a.value || a.testName.localeCompare(b.testName));
   return out;
 }
@@ -3966,7 +3966,7 @@ async function uniqueAsConflict(run) {
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, mapInventoryItem, mapQcResult, mapEqa, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
+var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, MOVEMENT_BUCKET_SQL, MOVEMENT_VALUE_SQL, mapInventoryItem, mapQcResult, mapEqa, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -4066,6 +4066,13 @@ var init_storage_pg = __esm({
       updatedAt: iso(row.updatedAt),
       cancelledAt: iso(row.cancelledAt)
     });
+    MOVEMENT_BUCKET_SQL = sql2.raw(`(CASE m.kind
+  WHEN 'receipt' THEN 'receipt' WHEN 'receipt_cancel' THEN 'receipt'
+  WHEN 'issue' THEN 'department' WHEN 'writeoff' THEN 'writeoff'
+  WHEN 'issue_cancel' THEN (CASE WHEN si.kind = 'writeoff' THEN 'writeoff' ELSE 'department' END)
+  WHEN 'consumption' THEN 'consumption' WHEN 'consumption_cancel' THEN 'consumption'
+  WHEN 'count' THEN 'count' END)`);
+    MOVEMENT_VALUE_SQL = sql2.raw(`((CASE WHEN m.quantity < 0 THEN -1 ELSE 1 END) * round((abs(m.quantity) * b.purchase_price)::numeric))`);
     mapInventoryItem = (row) => ({
       ...row,
       kind: row.kind
@@ -7047,6 +7054,68 @@ var init_storage_pg = __esm({
           return (await this.consumptionsByIds(exec, [id]))[0];
         });
       }
+      // ------------------------------------------------------- reports (B5.7)
+      async movementTotals(range) {
+        const { from, to } = range;
+        const res = await db.execute(sql2`
+      SELECT m.item_id, ${MOVEMENT_BUCKET_SQL} AS bucket,
+             CASE WHEN m.created_at < ${from} THEN 'before' ELSE 'in' END AS period,
+             sum(m.quantity)::float AS quantity, sum(${MOVEMENT_VALUE_SQL})::float AS value
+        FROM stock_movements m
+        JOIN inventory_batches b ON b.id = m.batch_id
+        LEFT JOIN stock_issues si ON si.id = m.issue_id
+       WHERE m.created_at < ${to}
+       GROUP BY 1, 2, 3`);
+        return res.rows.filter((r) => r.bucket).map((r) => ({
+          itemId: r.item_id,
+          bucket: r.bucket,
+          period: r.period,
+          quantity: Number(r.quantity),
+          value: Number(r.value)
+        }));
+      }
+      async dailyFlows(range) {
+        const { from, to } = range;
+        const res = await db.execute(sql2`
+      SELECT day,
+             sum(CASE WHEN bucket = 'receipt' THEN v ELSE 0 END)::float AS inflow,
+             sum(CASE WHEN bucket IN ('department', 'writeoff', 'consumption') THEN -v ELSE 0 END)::float AS outflow
+        FROM (SELECT (m.created_at AT TIME ZONE current_setting('TIMEZONE'))::date::text AS day,
+                     ${MOVEMENT_BUCKET_SQL} AS bucket, ${MOVEMENT_VALUE_SQL} AS v
+                FROM stock_movements m
+                JOIN inventory_batches b ON b.id = m.batch_id
+                LEFT JOIN stock_issues si ON si.id = m.issue_id
+               WHERE m.created_at >= ${from} AND m.created_at < ${to}) x
+       GROUP BY day
+       ORDER BY day`);
+        return res.rows.map((r) => ({ date: r.day, in: Number(r.inflow), out: Number(r.outflow) }));
+      }
+      async departmentLines(range) {
+        const { from, to } = range;
+        const res = await db.execute(sql2`
+      SELECT si.department_id, coalesce(d.name, '—') AS department_name, m.item_id,
+             coalesce(i.name, '—') AS item_name, coalesce(i.unit, '') AS unit,
+             sum(-m.quantity)::float AS quantity, sum(-(${MOVEMENT_VALUE_SQL}))::float AS value,
+             coalesce(array_agg(DISTINCT m.issue_id) FILTER (WHERE m.kind = 'issue'), '{}') AS issue_ids
+        FROM stock_movements m
+        JOIN stock_issues si ON si.id = m.issue_id
+        JOIN inventory_batches b ON b.id = m.batch_id
+        LEFT JOIN departments d ON d.id = si.department_id
+        LEFT JOIN inventory_items i ON i.id = m.item_id
+       WHERE m.kind IN ('issue', 'issue_cancel') AND si.kind = 'department'
+         AND m.created_at >= ${from} AND m.created_at < ${to}
+       GROUP BY si.department_id, d.name, m.item_id, i.name, i.unit`);
+        return res.rows.map((r) => ({
+          departmentId: r.department_id,
+          departmentName: r.department_name,
+          itemId: r.item_id,
+          itemName: r.item_name,
+          unit: r.unit,
+          quantity: Number(r.quantity),
+          value: Number(r.value),
+          issueIds: r.issue_ids ?? []
+        }));
+      }
       async listReceipts(query = {}) {
         const rows = await db.select({
           r: stockReceipts,
@@ -7362,6 +7431,119 @@ var init_storage_pg = __esm({
   }
 });
 
+// shared/inventory-reports.ts
+function movementBucket(kind, issueKind) {
+  switch (kind) {
+    case "receipt":
+    case "receipt_cancel":
+      return "receipt";
+    case "issue":
+      return "department";
+    case "writeoff":
+      return "writeoff";
+    case "issue_cancel":
+      return issueKind === "writeoff" ? "writeoff" : "department";
+    case "consumption":
+    case "consumption_cancel":
+      return "consumption";
+    case "count":
+      return "count";
+  }
+}
+function buildTurnover(items, totals) {
+  const byItem = /* @__PURE__ */ new Map();
+  const itemOf = new Map(items.map((i) => [i.id, i]));
+  const rowOf = (itemId) => {
+    let r = byItem.get(itemId);
+    if (!r) {
+      const it = itemOf.get(itemId);
+      r = {
+        itemId,
+        itemName: it?.name ?? "\u2014",
+        unit: it?.unit ?? "",
+        kind: it?.kind ?? "consumable",
+        opening: zero(),
+        receipt: zero(),
+        department: zero(),
+        writeoff: zero(),
+        consumption: zero(),
+        count: zero(),
+        closing: zero()
+      };
+      byItem.set(itemId, r);
+    }
+    return r;
+  };
+  for (const t of totals) {
+    const r = rowOf(t.itemId);
+    if (t.period === "before") {
+      r.opening.qty += t.quantity;
+      r.opening.value += t.value;
+      continue;
+    }
+    const sign = OUT_BUCKETS.includes(t.bucket) ? -1 : 1;
+    r[t.bucket].qty += sign * t.quantity;
+    r[t.bucket].value += sign * t.value;
+  }
+  const sum = { opening: 0, receipt: 0, department: 0, writeoff: 0, consumption: 0, count: 0, closing: 0 };
+  const rows = [];
+  for (const r of Array.from(byItem.values())) {
+    for (const k of ["opening", ...TURNOVER_BUCKETS]) r[k] = { qty: tidy(r[k].qty), value: Math.round(r[k].value) };
+    r.closing = {
+      qty: tidy(r.opening.qty + r.receipt.qty - r.department.qty - r.writeoff.qty - r.consumption.qty + r.count.qty),
+      value: r.opening.value + r.receipt.value - r.department.value - r.writeoff.value - r.consumption.value + r.count.value
+    };
+    const moved = TURNOVER_BUCKETS.some((k) => r[k].qty !== 0 || r[k].value !== 0);
+    if (!moved && r.opening.qty === 0 && r.opening.value === 0) continue;
+    rows.push(r);
+    for (const k of ["opening", ...TURNOVER_BUCKETS, "closing"]) sum[k] += r[k].value;
+  }
+  rows.sort((a, b) => a.itemName.localeCompare(b.itemName));
+  return { rows, totals: sum };
+}
+function fillDays(from, to, rows) {
+  const byDay = new Map(rows.map((r) => [r.date, r]));
+  const out = [];
+  const d = /* @__PURE__ */ new Date(`${from}T00:00:00Z`);
+  const end = /* @__PURE__ */ new Date(`${to}T00:00:00Z`);
+  while (d <= end) {
+    const day = d.toISOString().slice(0, 10);
+    const r = byDay.get(day);
+    out.push({ date: day, in: Math.round(r?.in ?? 0), out: Math.round(r?.out ?? 0) });
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+function summarizeDepartments(lines) {
+  const byDept = /* @__PURE__ */ new Map();
+  for (const l of lines) {
+    const d = byDept.get(l.departmentId) ?? { departmentId: l.departmentId, departmentName: l.departmentName, documents: 0, value: 0, items: [], ids: /* @__PURE__ */ new Set() };
+    for (const id of l.issueIds) d.ids.add(id);
+    d.value += l.value;
+    if (Math.abs(l.quantity) > QTY_EPSILON || l.value !== 0) d.items.push({ itemId: l.itemId, itemName: l.itemName, unit: l.unit, quantity: tidy(l.quantity), value: Math.round(l.value) });
+    byDept.set(l.departmentId, d);
+  }
+  return Array.from(byDept.values()).map(({ ids, ...d }) => ({ ...d, documents: ids.size, value: Math.round(d.value), items: d.items.sort((a, b) => b.value - a.value || a.itemName.localeCompare(b.itemName)) })).filter((d) => d.items.length > 0).sort((a, b) => b.value - a.value || a.departmentName.localeCompare(b.departmentName));
+}
+function monthFigures(totals) {
+  const out = { receipt: 0, department: 0, writeoff: 0, consumption: 0, count: 0 };
+  for (const t of totals) if (t.period === "in") out[t.bucket] += (OUT_BUCKETS.includes(t.bucket) ? -1 : 1) * t.value;
+  for (const k of TURNOVER_BUCKETS) out[k] = Math.round(out[k]);
+  return out;
+}
+var TURNOVER_BUCKETS, OUT_BUCKETS, signedValue, tidy, zero;
+var init_inventory_reports = __esm({
+  "shared/inventory-reports.ts"() {
+    "use strict";
+    init_inventory();
+    TURNOVER_BUCKETS = ["receipt", "department", "writeoff", "consumption", "count"];
+    OUT_BUCKETS = ["department", "writeoff", "consumption"];
+    signedValue = (quantity, price) => (quantity < 0 ? -1 : 1) * lineTotal(Math.abs(quantity), price);
+    tidy = (n) => Math.abs(n) <= QTY_EPSILON ? 0 : Number(n.toFixed(6));
+    zero = () => ({ qty: 0, value: 0 });
+  }
+});
+
 // server/db.ts
 import { promises as fs } from "fs";
 import fsSync from "fs";
@@ -7486,6 +7668,7 @@ var init_storage_file = __esm({
     init_qc();
     init_inventory();
     init_consumption();
+    init_inventory_reports();
     init_icd10();
     init_lab_verification();
     init_lab_rules();
@@ -10470,6 +10653,66 @@ var init_storage_file = __esm({
         await this.persist();
         return this.consumptionView(c);
       }
+      // ------------------------------------------------------- reports (B5.7)
+      /** Ledger movements recorded before `to`, each with its bucket and money. */
+      ledgerBefore(to) {
+        const batches = new Map(this.db.inventoryBatches.map((b) => [b.id, b]));
+        const issues = new Map(this.db.stockIssues.map((i) => [i.id, i]));
+        return this.db.stockMovements.filter((m) => m.createdAt < to).map((m) => ({
+          m,
+          bucket: movementBucket(m.kind, m.issueId ? issues.get(m.issueId)?.kind : null),
+          value: signedValue(m.quantity, batches.get(m.batchId)?.purchasePrice ?? 0),
+          issue: m.issueId ? issues.get(m.issueId) : void 0
+        }));
+      }
+      async movementTotals(range) {
+        const acc = /* @__PURE__ */ new Map();
+        for (const x of this.ledgerBefore(range.to)) {
+          const period = x.m.createdAt < range.from ? "before" : "in";
+          const key = `${x.m.itemId}|${x.bucket}|${period}`;
+          const t = acc.get(key) ?? { itemId: x.m.itemId, bucket: x.bucket, period, quantity: 0, value: 0 };
+          t.quantity += x.m.quantity;
+          t.value += x.value;
+          acc.set(key, t);
+        }
+        return Array.from(acc.values());
+      }
+      async dailyFlows(range) {
+        const acc = /* @__PURE__ */ new Map();
+        for (const x of this.ledgerBefore(range.to)) {
+          if (x.m.createdAt < range.from) continue;
+          const day = localDay(x.m.createdAt);
+          const d = acc.get(day) ?? { date: day, in: 0, out: 0 };
+          if (x.bucket === "receipt") d.in += x.value;
+          else if (OUT_BUCKETS.includes(x.bucket)) d.out -= x.value;
+          acc.set(day, d);
+        }
+        return Array.from(acc.values()).sort((a, b) => a.date.localeCompare(b.date));
+      }
+      async departmentLines(range) {
+        const acc = /* @__PURE__ */ new Map();
+        for (const x of this.ledgerBefore(range.to)) {
+          if (x.m.createdAt < range.from || !x.issue || x.issue.kind !== "department" || !x.issue.departmentId) continue;
+          if (x.m.kind !== "issue" && x.m.kind !== "issue_cancel") continue;
+          const key = `${x.issue.departmentId}|${x.m.itemId}`;
+          const item = this.db.inventoryItems.find((i) => i.id === x.m.itemId);
+          const l = acc.get(key) ?? {
+            departmentId: x.issue.departmentId,
+            departmentName: this.db.departments.find((d) => d.id === x.issue.departmentId)?.name ?? "\u2014",
+            itemId: x.m.itemId,
+            itemName: item?.name ?? "\u2014",
+            unit: item?.unit ?? "",
+            quantity: 0,
+            value: 0,
+            issueIds: []
+          };
+          l.quantity -= x.m.quantity;
+          l.value -= x.value;
+          if (x.m.kind === "issue" && !l.issueIds.includes(x.issue.id)) l.issueIds.push(x.issue.id);
+          acc.set(key, l);
+        }
+        return Array.from(acc.values());
+      }
       async getLabBoard(day) {
         const all = this.db.orders.map((o) => this.hydrate(o));
         const { counts, groupsToday } = summarizeLabBoard(all, day, localDay);
@@ -11551,6 +11794,14 @@ var numberParam = (value, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 var stringParam = (value) => typeof value === "string" && value ? value : void 0;
+var DAY = /^\d{4}-\d{2}-\d{2}$/;
+function dayRange(from, to) {
+  if (!DAY.test(from) || !DAY.test(to)) return { error: "Sanani YYYY-MM-DD ko'rinishida kiriting" };
+  if (from > to) return { error: "Davr boshi oxiridan keyin bo'lishi mumkin emas" };
+  const end = /* @__PURE__ */ new Date(`${to}T00:00:00`);
+  end.setDate(end.getDate() + 1);
+  return { from: (/* @__PURE__ */ new Date(`${from}T00:00:00`)).toISOString(), to: end.toISOString() };
+}
 function actorOf(req) {
   return { id: req.user?.id ?? null, name: req.user?.fullName ?? "Tizim" };
 }
@@ -12992,6 +13243,7 @@ function registerQcRoutes(app) {
 init_schema();
 init_inventory();
 init_appointment();
+init_inventory_reports();
 function registerInventoryRoutes(app) {
   async function clash(input, exceptId) {
     const items = await storage.listInventoryItems();
@@ -13280,6 +13532,95 @@ function registerInventoryRoutes(app) {
       res.json(count);
     })
   );
+  app.get(
+    "/api/inventory/overview",
+    requirePermission("inventory.read"),
+    handle(async (_req, res) => {
+      const today = clockNow().date;
+      const monthStart = `${today.slice(0, 7)}-01`;
+      const d = /* @__PURE__ */ new Date(`${today}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 29);
+      const chartFrom = d.toISOString().slice(0, 10);
+      const month = dayRange(monthStart, today);
+      const chart = dayRange(chartFrom, today);
+      if ("error" in month || "error" in chart) return res.status(500).json({ message: "Sana xatosi" });
+      const [totals, daily, receipts, issues, counts, norms] = await Promise.all([
+        storage.movementTotals(month).catch((e) => emptyIfMissing(e, [])),
+        storage.dailyFlows(chart).catch((e) => emptyIfMissing(e, [])),
+        storage.listReceipts({ limit: 6 }).catch((e) => emptyIfMissing(e, [])),
+        storage.listIssues({ limit: 6 }).catch((e) => emptyIfMissing(e, [])),
+        storage.listCounts({ limit: 6 }).catch((e) => emptyIfMissing(e, [])),
+        storage.listNorms().catch((e) => emptyIfMissing(e, []))
+      ]);
+      const recent = [
+        ...receipts.map((r) => ({
+          type: "receipt",
+          id: r.id,
+          number: r.number,
+          date: r.receivedOn,
+          createdAt: r.createdAt,
+          title: `Kirim \u2116${r.number}`,
+          subtitle: `${r.supplier} \xB7 ${r.lineCount} ta partiya`,
+          value: r.total,
+          cancelled: !!r.cancelledAt
+        })),
+        ...issues.map((i) => ({
+          type: "issue",
+          id: i.id,
+          number: i.number,
+          date: i.issuedOn,
+          createdAt: i.createdAt,
+          title: `${i.kind === "writeoff" ? "Hisobdan chiqarish" : "Chiqim"} \u2116${i.number}`,
+          subtitle: i.kind === "writeoff" ? i.reason ? WRITEOFF_REASON_LABELS[i.reason] : "" : `${i.departmentName ?? "\u2014"}${i.receivedBy ? `, oldi: ${i.receivedBy}` : ""}`,
+          value: i.total,
+          cancelled: !!i.cancelledAt
+        })),
+        ...counts.filter((c) => c.status !== "open").map((c) => ({
+          type: "count",
+          id: c.id,
+          number: c.number,
+          date: c.countedOn,
+          createdAt: c.postedAt ?? c.cancelledAt ?? c.createdAt,
+          title: `Inventarizatsiya \u2116${c.number}`,
+          subtitle: `${countScopeLabel(c.kinds)} \xB7 ${c.diffCount} ta farq`,
+          value: c.status === "posted" ? c.surplusValue - c.shortageValue : null,
+          cancelled: c.status === "cancelled"
+        }))
+      ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+      const open = counts.find((c) => c.status === "open");
+      const last = counts.find((c) => c.status === "posted");
+      const out = {
+        date: today,
+        month: { from: monthStart, to: today, figures: monthFigures(totals) },
+        daily: fillDays(chartFrom, today, daily),
+        recent,
+        attention: {
+          pendingNorms: norms.filter((n) => n.status === "draft").length,
+          openCount: open ? { id: open.id, number: open.number, counted: open.countedCount, lines: open.lineCount } : null,
+          lastCount: last?.postedAt ? { number: last.number, postedAt: last.postedAt } : null
+        }
+      };
+      res.json(out);
+    })
+  );
+  app.get(
+    "/api/inventory/reports",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const today = clockNow().date;
+      const from = stringParam(req.query.from) ?? `${today.slice(0, 7)}-01`;
+      const to = stringParam(req.query.to) ?? today;
+      const range = dayRange(from, to);
+      if ("error" in range) return res.status(400).json({ message: range.error });
+      if (to > today) return res.status(400).json({ message: "Davr oxiri bugundan keyin bo'lishi mumkin emas" });
+      const [items, totals, lines] = await Promise.all([
+        storage.listInventoryItems().catch((e) => emptyIfMissing(e, [])),
+        storage.movementTotals(range).catch((e) => emptyIfMissing(e, [])),
+        storage.departmentLines(range).catch((e) => emptyIfMissing(e, []))
+      ]);
+      res.json({ from, to, turnover: buildTurnover(items, totals), departments: summarizeDepartments(lines) });
+    })
+  );
 }
 
 // server/routes-consumption.ts
@@ -13287,13 +13628,6 @@ init_schema();
 init_consumption();
 init_inventory();
 init_appointment();
-var DAY = /^\d{4}-\d{2}-\d{2}$/;
-var startOf = (day) => (/* @__PURE__ */ new Date(`${day}T00:00:00`)).toISOString();
-var nextDay = (day) => {
-  const d = /* @__PURE__ */ new Date(`${day}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString();
-};
 function registerConsumptionRoutes(app) {
   app.get(
     "/api/consumption/norms",
@@ -13376,9 +13710,9 @@ function registerConsumptionRoutes(app) {
       const today = clockNow().date;
       const from = stringParam(req.query.from) ?? `${today.slice(0, 7)}-01`;
       const to = stringParam(req.query.to) ?? today;
-      if (!DAY.test(from) || !DAY.test(to)) return res.status(400).json({ message: "Sanani YYYY-MM-DD ko'rinishida kiriting" });
-      if (from > to) return res.status(400).json({ message: "Davr boshi oxiridan keyin bo'lishi mumkin emas" });
-      const entries = await storage.listConsumptions({ from: startOf(from), to: nextDay(to) }).catch((e) => emptyIfMissing(e, []));
+      const range = dayRange(from, to);
+      if ("error" in range) return res.status(400).json({ message: range.error });
+      const entries = await storage.listConsumptions(range).catch((e) => emptyIfMissing(e, []));
       res.json({ from, to, report: summarizeConsumption(entries), entries: entries.slice(0, 500), total: entries.length });
     })
   );

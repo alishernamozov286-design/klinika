@@ -1,7 +1,7 @@
 /**
  * Ombor (Bosqich 5, TZ §7): the product catalogue with stock on hand (B5.1),
- * receipts (B5.2), issues (B5.3), stock and expiry (B5.4), counts (B5.5)
- * and lab reagent consumption (B5.6).
+ * receipts (B5.2), issues (B5.3), stock and expiry (B5.4), counts (B5.5),
+ * lab reagent consumption (B5.6), and the home tab with reports (B5.7).
  * Rules: shared/inventory.ts.
  */
 import { useEffect, useMemo, useState, type ComponentType } from "react";
@@ -49,6 +49,8 @@ import { Receipts } from "@/components/inventory/receipts";
 import { Issues } from "@/components/inventory/issues";
 import { Counts } from "@/components/inventory/counts";
 import { Consumption } from "@/components/inventory/consumption";
+import { InventoryOverviewTab, type OverviewTarget } from "@/components/inventory/overview";
+import { InventoryReports } from "@/components/inventory/reports";
 import { StockAlertsBanner, StockView, type StockAlertTarget, type StockWindow } from "@/components/inventory/stock";
 import type { StockAlerts } from "@shared/inventory";
 import { EmptyState, Money, PageHeader, StatCard, TableSkeleton } from "@/components/ui-kit";
@@ -97,8 +99,8 @@ const EXPORT_COLUMNS: ExportColumn<InventoryItemView>[] = [
   { header: "Holat", value: (i) => (i.isActive ? "Faol" : "Faolsiz"), width: 9 },
 ];
 
-type InventoryTab = "items" | "stock" | "receipts" | "issues" | "counts" | "consumption";
-const TABS: readonly InventoryTab[] = ["items", "stock", "receipts", "issues", "counts", "consumption"];
+type InventoryTab = "overview" | "items" | "stock" | "receipts" | "issues" | "counts" | "consumption" | "reports";
+const TABS: readonly InventoryTab[] = ["overview", "items", "stock", "receipts", "issues", "counts", "consumption", "reports"];
 
 export default function Inventory() {
   const { can } = useAuth();
@@ -112,7 +114,8 @@ export default function Inventory() {
   const openCount = stockCounts.find((c) => c.status === "open");
   const [tab, setTab] = useState<InventoryTab>(() => {
     const asked = new URLSearchParams(window.location.search).get("tab");
-    return TABS.includes(asked as InventoryTab) ? (asked as InventoryTab) : "items";
+    // TZ §7.1: the warehouse opens on its home page.
+    return TABS.includes(asked as InventoryTab) ? (asked as InventoryTab) : "overview";
   });
   const [stockWindow, setStockWindow] = useState<StockWindow>(() => {
     const w = new URLSearchParams(window.location.search).get("window");
@@ -123,6 +126,11 @@ export default function Inventory() {
     setStockWindow(w === "low" ? "all" : w);
     setTab("stock");
     if (w === "low") setTimeout(() => document.getElementById("low-stock")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+  };
+  const openFromOverview = (t: OverviewTarget) => {
+    if (t.tab === "stock") return openStock(t.window ?? "all");
+    if (t.tab === "stock-low") return openStock("low");
+    setTab(t.tab);
   };
 
   const [kind, setKind] = useState<InventoryKind | "all">("all");
@@ -183,59 +191,42 @@ export default function Inventory() {
         title="Ombor"
         description="Reagentlar, kalibratorlar, nazorat materiallari, sarf materiallari va dori vositalari (TZ §7.2)"
         actions={
-          <div className="flex items-center gap-2">
-            {can("data.export") && (
-              <ExportButtons
-                testIdPrefix="export-inventory"
-                disabled={isLoading}
-                build={() => ({
-                  filename: "ombor-katalogi",
-                  title: "Ombor mahsulotlari katalogi",
-                  subtitle: [kind === "all" ? "Barcha turlar" : INVENTORY_KIND_LABELS[kind], search ? `qidiruv: "${search}"` : null, `${rows.length} ta mahsulot`]
-                    .filter(Boolean)
-                    .join(" · "),
-                  columns: EXPORT_COLUMNS,
-                  rows,
-                })}
-              />
-            )}
-            {canManage && (
-              <Button className="shadow-brand" onClick={() => setDialog({ open: true, item: null })} data-testid="button-add-item">
-                <Plus className="mr-2 h-4 w-4" />
-                Yangi mahsulot
-              </Button>
-            )}
-          </div>
+          // The catalogue's own actions; every other tab carries its own.
+          tab === "items" && (
+            <div className="flex items-center gap-2">
+              {can("data.export") && (
+                <ExportButtons
+                  testIdPrefix="export-inventory"
+                  disabled={isLoading}
+                  build={() => ({
+                    filename: "ombor-katalogi",
+                    title: "Ombor mahsulotlari katalogi",
+                    subtitle: [kind === "all" ? "Barcha turlar" : INVENTORY_KIND_LABELS[kind], search ? `qidiruv: "${search}"` : null, `${rows.length} ta mahsulot`]
+                      .filter(Boolean)
+                      .join(" · "),
+                    columns: EXPORT_COLUMNS,
+                    rows,
+                  })}
+                />
+              )}
+              {canManage && (
+                <Button className="shadow-brand" onClick={() => setDialog({ open: true, item: null })} data-testid="button-add-item">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Yangi mahsulot
+                </Button>
+              )}
+            </div>
+          )
         }
       />
-
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatCard index={0} label="Faol mahsulotlar" value={active.length} hint={`Katalogda jami ${items.length} ta`} icon={Boxes} isLoading={isLoading} />
-        <StatCard index={1} label="Mahsulot turlari" value={`${kindsUsed}/8`} hint="TZ §7.2 bo'yicha" icon={Warehouse} tone="violet" isLoading={isLoading} />
-        <StatCard
-          index={2}
-          label="Narxi belgilanmagan"
-          value={unpriced}
-          hint={unpriced > 0 ? "Sotuv yoki hisobdan chiqarish narxi" : "Hammasining narxi bor"}
-          icon={Tags}
-          tone={unpriced > 0 ? "amber" : "emerald"}
-          isLoading={isLoading}
-        />
-        <StatCard
-          index={3}
-          label="Kam qolgan"
-          value={low}
-          hint={low > 0 ? "Yaroqli qoldiq minimaldan kam" : "Hammasi yetarli"}
-          icon={Package}
-          tone={low > 0 ? "rose" : "emerald"}
-          isLoading={isLoading}
-        />
-      </div>
 
       <StockAlertsBanner alerts={alerts} onOpen={openStock} />
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as InventoryTab)}>
         <TabsList className="h-auto flex-wrap justify-start">
+          <TabsTrigger value="overview" data-testid="tab-inventory-overview">
+            Bosh sahifa
+          </TabsTrigger>
           <TabsTrigger value="items" data-testid="tab-inventory-items">
             Mahsulotlar
           </TabsTrigger>
@@ -259,7 +250,16 @@ export default function Inventory() {
           <TabsTrigger value="consumption" data-testid="tab-inventory-consumption">
             Reagent sarfi
           </TabsTrigger>
+          <TabsTrigger value="reports" data-testid="tab-inventory-reports">
+            Hisobotlar
+          </TabsTrigger>
         </TabsList>
+        <TabsContent value="overview" className="mt-4">
+          <InventoryOverviewTab onOpen={openFromOverview} />
+        </TabsContent>
+        <TabsContent value="reports" className="mt-4">
+          <InventoryReports />
+        </TabsContent>
         <TabsContent value="consumption" className="mt-4">
           <Consumption items={items} />
         </TabsContent>
@@ -276,6 +276,29 @@ export default function Inventory() {
           <Receipts items={items} />
         </TabsContent>
         <TabsContent value="items" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+            <StatCard index={0} label="Faol mahsulotlar" value={active.length} hint={`Katalogda jami ${items.length} ta`} icon={Boxes} isLoading={isLoading} />
+            <StatCard index={1} label="Mahsulot turlari" value={`${kindsUsed}/8`} hint="TZ §7.2 bo'yicha" icon={Warehouse} tone="violet" isLoading={isLoading} />
+            <StatCard
+              index={2}
+              label="Narxi belgilanmagan"
+              value={unpriced}
+              hint={unpriced > 0 ? "Sotuv yoki hisobdan chiqarish narxi" : "Hammasining narxi bor"}
+              icon={Tags}
+              tone={unpriced > 0 ? "amber" : "emerald"}
+              isLoading={isLoading}
+            />
+            <StatCard
+              index={3}
+              label="Kam qolgan"
+              value={low}
+              hint={low > 0 ? "Yaroqli qoldiq minimaldan kam" : "Hammasi yetarli"}
+              icon={Package}
+              tone={low > 0 ? "rose" : "emerald"}
+              isLoading={isLoading}
+            />
+          </div>
+
           <div className="card-premium flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between">
             <SearchInput value={search} onChange={setSearch} placeholder="Nomi, artikul yoki ishlab chiqaruvchi…" className="lg:w-96" data-testid="input-search-inventory" />
             <label className="flex items-center gap-2 text-sm text-muted-foreground">

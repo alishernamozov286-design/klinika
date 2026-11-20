@@ -7,6 +7,8 @@
  *   inventory.issue    issue to a department or write off (B5.3)
  *   inventory.count    open, count, post or cancel a stock count (B5.5)
  *
+ * Reading the home page and the reports (B5.7) needs inventory.read only.
+ *
  * Rules and labels: shared/inventory.ts.
  */
 import type { Express } from "express";
@@ -18,6 +20,7 @@ import {
   insertInventoryItemSchema,
   updateInventoryItemSchema,
   voidRecordSchema,
+  type ConsumptionNormView,
   type InventoryBatchView,
   type InventoryItemView,
   type LabConsumptionView,
@@ -41,8 +44,19 @@ import {
   receiptLineProblem,
 } from "@shared/inventory";
 import { clockNow } from "@shared/appointment";
+import {
+  buildTurnover,
+  fillDays,
+  monthFigures,
+  summarizeDepartments,
+  type DailyFlow,
+  type DepartmentLine,
+  type InventoryOverview,
+  type MovementTotal,
+  type RecentDocument,
+} from "@shared/inventory-reports";
 import { requirePermission } from "./rbac";
-import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
+import { actorOf, audit, dayRange, emptyIfMissing, handle, stringParam } from "./route-helpers";
 import { storage } from "./storage";
 
 
@@ -378,6 +392,105 @@ export function registerInventoryRoutes(app: Express) {
       if (!count) return res.status(404).json({ message: "Inventarizatsiya topilmadi" });
       await audit(req, "void", "inventory", count.id, `Inventarizatsiya №${count.number} bekor qilindi, qoldiq o'zgarmadi: ${reason}`);
       res.json(count);
+    }),
+  );
+
+  // ------------------------------------------- home page & reports (B5.7)
+
+  /** TZ §7.1 "Ombor bosh sahifasi": this month in money, the last 30 days, recent documents, open work. */
+  app.get(
+    "/api/inventory/overview",
+    requirePermission("inventory.read"),
+    handle(async (_req, res) => {
+      const today = clockNow().date;
+      const monthStart = `${today.slice(0, 7)}-01`;
+      const d = new Date(`${today}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 29);
+      const chartFrom = d.toISOString().slice(0, 10);
+      const month = dayRange(monthStart, today);
+      const chart = dayRange(chartFrom, today);
+      if ("error" in month || "error" in chart) return res.status(500).json({ message: "Sana xatosi" });
+      const [totals, daily, receipts, issues, counts, norms] = await Promise.all([
+        storage.movementTotals(month).catch((e) => emptyIfMissing(e, [] as MovementTotal[])),
+        storage.dailyFlows(chart).catch((e) => emptyIfMissing(e, [] as DailyFlow[])),
+        storage.listReceipts({ limit: 6 }).catch((e) => emptyIfMissing(e, [] as StockReceiptView[])),
+        storage.listIssues({ limit: 6 }).catch((e) => emptyIfMissing(e, [] as StockIssueView[])),
+        storage.listCounts({ limit: 6 }).catch((e) => emptyIfMissing(e, [] as StockCountView[])),
+        storage.listNorms().catch((e) => emptyIfMissing(e, [] as ConsumptionNormView[])),
+      ]);
+      const recent: RecentDocument[] = [
+        ...receipts.map((r) => ({
+          type: "receipt" as const,
+          id: r.id,
+          number: r.number,
+          date: r.receivedOn,
+          createdAt: r.createdAt,
+          title: `Kirim №${r.number}`,
+          subtitle: `${r.supplier} · ${r.lineCount} ta partiya`,
+          value: r.total,
+          cancelled: !!r.cancelledAt,
+        })),
+        ...issues.map((i) => ({
+          type: "issue" as const,
+          id: i.id,
+          number: i.number,
+          date: i.issuedOn,
+          createdAt: i.createdAt,
+          title: `${i.kind === "writeoff" ? "Hisobdan chiqarish" : "Chiqim"} №${i.number}`,
+          subtitle: i.kind === "writeoff" ? (i.reason ? WRITEOFF_REASON_LABELS[i.reason] : "") : `${i.departmentName ?? "—"}${i.receivedBy ? `, oldi: ${i.receivedBy}` : ""}`,
+          value: i.total,
+          cancelled: !!i.cancelledAt,
+        })),
+        ...counts
+          .filter((c) => c.status !== "open")
+          .map((c) => ({
+            type: "count" as const,
+            id: c.id,
+            number: c.number,
+            date: c.countedOn,
+            createdAt: c.postedAt ?? c.cancelledAt ?? c.createdAt,
+            title: `Inventarizatsiya №${c.number}`,
+            subtitle: `${countScopeLabel(c.kinds)} · ${c.diffCount} ta farq`,
+            value: c.status === "posted" ? c.surplusValue - c.shortageValue : null,
+            cancelled: c.status === "cancelled",
+          })),
+      ]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 8);
+      const open = counts.find((c) => c.status === "open");
+      const last = counts.find((c) => c.status === "posted");
+      const out: InventoryOverview = {
+        date: today,
+        month: { from: monthStart, to: today, figures: monthFigures(totals) },
+        daily: fillDays(chartFrom, today, daily),
+        recent,
+        attention: {
+          pendingNorms: norms.filter((n) => n.status === "draft").length,
+          openCount: open ? { id: open.id, number: open.number, counted: open.countedCount, lines: open.lineCount } : null,
+          lastCount: last?.postedAt ? { number: last.number, postedAt: last.postedAt } : null,
+        },
+      };
+      res.json(out);
+    }),
+  );
+
+  /** TZ §7.1 "Hisobotlar": the turnover sheet and issues by department for a period (default: this month). */
+  app.get(
+    "/api/inventory/reports",
+    requirePermission("inventory.read"),
+    handle(async (req, res) => {
+      const today = clockNow().date;
+      const from = stringParam(req.query.from) ?? `${today.slice(0, 7)}-01`;
+      const to = stringParam(req.query.to) ?? today;
+      const range = dayRange(from, to);
+      if ("error" in range) return res.status(400).json({ message: range.error });
+      if (to > today) return res.status(400).json({ message: "Davr oxiri bugundan keyin bo'lishi mumkin emas" });
+      const [items, totals, lines] = await Promise.all([
+        storage.listInventoryItems().catch((e) => emptyIfMissing(e, [] as InventoryItemView[])),
+        storage.movementTotals(range).catch((e) => emptyIfMissing(e, [] as MovementTotal[])),
+        storage.departmentLines(range).catch((e) => emptyIfMissing(e, [] as DepartmentLine[])),
+      ]);
+      res.json({ from, to, turnover: buildTurnover(items, totals), departments: summarizeDepartments(lines) });
     }),
   );
 }

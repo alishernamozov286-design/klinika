@@ -116,6 +116,7 @@ import {
   planConsumptions,
   shortOf,
 } from "@shared/consumption";
+import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type DepartmentLine, type MovementTotal } from "@shared/inventory-reports";
 import type {
   ConsumptionNorm,
   ConsumptionNormView,
@@ -3762,6 +3763,73 @@ export class FileStorage implements IStorage {
     Object.assign(c, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
     await this.persist();
     return this.consumptionView(c);
+  }
+
+  // ------------------------------------------------------- reports (B5.7)
+
+  /** Ledger movements recorded before `to`, each with its bucket and money. */
+  private ledgerBefore(to: string) {
+    const batches = new Map(this.db.inventoryBatches.map((b) => [b.id, b]));
+    const issues = new Map(this.db.stockIssues.map((i) => [i.id, i]));
+    return this.db.stockMovements
+      .filter((m) => m.createdAt < to)
+      .map((m) => ({
+        m,
+        bucket: movementBucket(m.kind, m.issueId ? issues.get(m.issueId)?.kind : null),
+        value: signedValue(m.quantity, batches.get(m.batchId)?.purchasePrice ?? 0),
+        issue: m.issueId ? issues.get(m.issueId) : undefined,
+      }));
+  }
+
+  async movementTotals(range: { from: string; to: string }): Promise<MovementTotal[]> {
+    const acc = new Map<string, MovementTotal>();
+    for (const x of this.ledgerBefore(range.to)) {
+      const period = x.m.createdAt < range.from ? "before" : "in";
+      const key = `${x.m.itemId}|${x.bucket}|${period}`;
+      const t = acc.get(key) ?? { itemId: x.m.itemId, bucket: x.bucket, period, quantity: 0, value: 0 };
+      t.quantity += x.m.quantity;
+      t.value += x.value;
+      acc.set(key, t);
+    }
+    return Array.from(acc.values());
+  }
+
+  async dailyFlows(range: { from: string; to: string }): Promise<DailyFlow[]> {
+    const acc = new Map<string, DailyFlow>();
+    for (const x of this.ledgerBefore(range.to)) {
+      if (x.m.createdAt < range.from) continue;
+      const day = localDay(x.m.createdAt);
+      const d = acc.get(day) ?? { date: day, in: 0, out: 0 };
+      if (x.bucket === "receipt") d.in += x.value;
+      else if (OUT_BUCKETS.includes(x.bucket)) d.out -= x.value;
+      acc.set(day, d);
+    }
+    return Array.from(acc.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  async departmentLines(range: { from: string; to: string }): Promise<DepartmentLine[]> {
+    const acc = new Map<string, DepartmentLine>();
+    for (const x of this.ledgerBefore(range.to)) {
+      if (x.m.createdAt < range.from || !x.issue || x.issue.kind !== "department" || !x.issue.departmentId) continue;
+      if (x.m.kind !== "issue" && x.m.kind !== "issue_cancel") continue;
+      const key = `${x.issue.departmentId}|${x.m.itemId}`;
+      const item = this.db.inventoryItems.find((i) => i.id === x.m.itemId);
+      const l = acc.get(key) ?? {
+        departmentId: x.issue.departmentId,
+        departmentName: this.db.departments.find((d) => d.id === x.issue!.departmentId)?.name ?? "—",
+        itemId: x.m.itemId,
+        itemName: item?.name ?? "—",
+        unit: item?.unit ?? "",
+        quantity: 0,
+        value: 0,
+        issueIds: [],
+      };
+      l.quantity -= x.m.quantity;
+      l.value -= x.value;
+      if (x.m.kind === "issue" && !l.issueIds.includes(x.issue.id)) l.issueIds.push(x.issue.id);
+      acc.set(key, l);
+    }
+    return Array.from(acc.values());
   }
 
   async getLabBoard(day: string): Promise<LabBoard> {
