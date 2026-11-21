@@ -40,6 +40,7 @@ import {
 import { ADMIN_ROUTES, MAX_PRESCRIPTION_LINES, PRESCRIPTION_KINDS, type TreatmentEntry } from "./prescription";
 import type { BillLine, BillSource, BillTotals } from "./invoice";
 import type { ShiftEntry, ShiftTotals } from "./cash-shift";
+import type { RefundLine, RefundStatus } from "./refund";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -947,6 +948,8 @@ export const payments = pgTable("payments", {
   invoicePaymentId: varchar("invoice_payment_id"),
   /** B7.5: the cash shift it was recorded in; null for payments taken before shifts existed. */
   shiftId: varchar("shift_id"),
+  /** B7.4: the approved refund this negative row pays out (one row per line it returns money on). */
+  refundId: varchar("refund_id"),
   /** Negative for a refund, so the history reads as a ledger. */
   amount: money("amount").notNull(),
   method: text("method").notNull().default("naqd"),
@@ -1048,6 +1051,46 @@ export const cashShifts = pgTable(
     uniqueIndex("UQ_cash_shifts_open").on(t.cashierId).where(sql`closed_at IS NULL`),
     index("IDX_cash_shifts_opened").on(t.openedAt),
   ],
+);
+
+/**
+ * To'lovni qaytarish (B7.4, TZ §9.2, §9.1 "Qaytarilgan to'lovlar"): a request
+ * to hand back a bill's credit, its approval by someone else who may refund,
+ * and the payout from a cash shift. Status flow and rules: shared/refund.ts.
+ * Never deleted; the payout is negative payments rows carrying its id.
+ */
+export const refunds = pgTable(
+  "refunds",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+    patientId: varchar("patient_id").notNull(),
+    visitId: varchar("visit_id").notNull(),
+    amount: money("amount").notNull(),
+    /** How the money goes back: cash from the drawer, to the card, or by bank. */
+    method: text("method").notNull().default("naqd"),
+    reason: text("reason").notNull(),
+    status: text("status").notNull().default("requested"),
+    requestedAt: isoTimestamp("requested_at").defaultNow().notNull(),
+    requestedBy: varchar("requested_by"),
+    requestedByName: text("requested_by_name"),
+    decidedAt: isoTimestamp("decided_at"),
+    decidedBy: varchar("decided_by"),
+    decidedByName: text("decided_by_name"),
+    decisionNote: text("decision_note"),
+    paidAt: isoTimestamp("paid_at"),
+    paidBy: varchar("paid_by"),
+    paidByName: text("paid_by_name"),
+    shiftId: varchar("shift_id"),
+    /** What the payout returned on which line, frozen at payout (the lines may leave the bill after). */
+    lines: json("lines").$type<RefundLine[]>(),
+    cancelledAt: isoTimestamp("cancelled_at"),
+    cancelledBy: varchar("cancelled_by"),
+    cancelledByName: text("cancelled_by_name"),
+    cancelReason: text("cancel_reason"),
+    printCount: integer("print_count").notNull().default(0),
+  },
+  (t) => [index("IDX_refunds_visit").on(t.visitId), index("IDX_refunds_status").on(t.status), index("IDX_refunds_patient").on(t.patientId)],
 );
 
 /** Money out. Without it the reports only ever show turnover, never profit. */
@@ -1821,7 +1864,7 @@ export type IcdStats = {
   source: string;
 };
 
-export const NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"] as const;
+export const NOTIFICATION_KINDS = ["lab_result", "lab_result_amended", "refund_request", "refund_decision"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 export type AppNotification = Omit<typeof notifications.$inferSelect, "kind" | "dedupeKey"> & { kind: NotificationKind };
 export type NotificationFeed = { items: AppNotification[]; unread: number };
@@ -2054,6 +2097,11 @@ export type InvoiceReceipt = Omit<typeof invoicePayments.$inferSelect, "method">
   method: PaymentMethod;
   shares: { source: BillSource; sourceId: string; title: string; amount: number }[];
 };
+export type Refund = Omit<typeof refunds.$inferSelect, "method" | "status"> & { method: PaymentMethod; status: RefundStatus };
+/** A refund with whom and which shift it concerns — the rows of "Qaytarilgan to'lovlar". */
+export type RefundView = Refund & { patientNumber: number; patientName: string; visitDate: string; shiftNumber: number | null };
+/** B7.4: a refund's chek. */
+export type RefundSlipView = { refund: RefundView; clinic: LabSettings; logo: string | null };
 /** The bill of one visit (B7.1). */
 export type Bill = {
   visitId: string;
@@ -2063,6 +2111,8 @@ export type Bill = {
   invoice: Invoice | null;
   lines: BillLine[];
   receipts: InvoiceReceipt[];
+  /** B7.4: refunds asked on this bill, newest first. */
+  refunds: RefundView[];
   totals: BillTotals;
 };
 export type CashShift = typeof cashShifts.$inferSelect;
@@ -2405,6 +2455,23 @@ export const closeShiftSchema = z.object({
   note: shiftNote,
 });
 export type CloseShiftInput = z.infer<typeof closeShiftSchema>;
+
+/** B7.4: asking to hand back part of a bill's credit. */
+export const requestRefundSchema = z.object({
+  amount: z.coerce.number({ invalid_type_error: "Summani kiriting" }).int("Summa butun so'mda bo'lsin").positive("Summa musbat bo'lishi kerak").max(1_000_000_000, "Summa juda katta"),
+  method: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: "Qaytarish usulini tanlang" }) }).default("naqd"),
+  reason: z.string().trim().min(5, "Qaytarish sababini yozing (kamida 5 belgi)").max(500, "Juda uzun"),
+});
+export type RequestRefundInput = z.infer<typeof requestRefundSchema>;
+/** Approving may carry a note; rejecting must say why. */
+export const decideRefundSchema = z.object({
+  note: z
+    .string()
+    .trim()
+    .max(500, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+});
 
 /** Why a ledger entry is struck out; required, because the row stays forever. */
 export const voidPaymentSchema = z.object({

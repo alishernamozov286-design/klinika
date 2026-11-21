@@ -33,6 +33,8 @@ export const PATIENT_LINKS = {
   /** B7.1: a same-day pair of bills becomes the target's bill; its receipts follow. */
   invoices: { merge: "combine-same-day", delete: "block", label: "hisobvaraqlar" },
   invoice_payments: { merge: "move", delete: "block", label: "to'lov kvitansiyalari" },
+  /** B7.4: re-pointed at the surviving visit of the day, like referrals. */
+  refunds: { merge: "move", delete: "block", label: "to'lov qaytarishlari" },
 } as const satisfies Record<string, PatientLinkRule>;
 
 export type PatientLinkedTable = keyof typeof PATIENT_LINKS;

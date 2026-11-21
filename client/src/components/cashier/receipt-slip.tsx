@@ -1,18 +1,19 @@
 /**
- * To'lov cheki (B7.6, TZ §15.7 "Chek"): the slip of one receipt, for an 80 mm
- * thermal roll (72 mm printable) — also prints as a narrow column on A4.
+ * Cheklar (B7.6, TZ §15.7 "Chek"): the slip of a receipt (to'lov cheki) and of
+ * a refund handed out (qaytarish cheki, B7.4), for an 80 mm thermal roll
+ * (72 mm printable) — also prints as a narrow column on A4.
  *
  * Printing goes through a copy of the slip portalled straight onto <body>
  * while the dialog is open: the print stylesheet then hides every other child
  * of <body> (the bill dialog underneath included), so only the chek reaches
  * paper. Every print is counted on the server first; any after the first comes
- * out marked "NUSXA". Rules: slipFigures in shared/invoice.ts.
+ * out marked "NUSXA", and so does a print that bypassed the button (Ctrl+P).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Printer, ReceiptText } from "lucide-react";
-import type { ReceiptSlipView } from "@shared/schema";
+import type { LabSettings, ReceiptSlipView, RefundSlipView } from "@shared/schema";
 import { PAYMENT_METHOD_LABELS } from "@shared/schema";
 import { slipFigures } from "@shared/invoice";
 import { Button } from "@/components/ui/button";
@@ -38,27 +39,38 @@ function Row({ label, value, strong }: { label: string; value: string; strong?: 
 
 const Rule = () => <div className="my-2 border-t border-dashed border-current opacity-60" />;
 
-/** The slip itself — the same markup on screen and on paper. */
-export function ReceiptSlip({ view, printNumber, printedAt }: { view: ReceiptSlipView; printNumber: number; printedAt?: string }) {
-  const r = view.receipt;
-  const f = slipFigures(r, printNumber);
-  const c = view.clinic;
+/** Paper, header and footer shared by every chek. */
+function SlipFrame({ clinic, logo, copy, printedAt, children }: { clinic: LabSettings; logo: string | null; copy: boolean; printedAt?: string; children: ReactNode }) {
   return (
     <div className="receipt-slip w-[72mm] max-w-full bg-white px-3 py-4 font-mono text-[11px] leading-snug text-black" data-testid="receipt-slip">
-      {f.copy && (
+      {copy && (
         <p className="mb-2 border border-black py-0.5 text-center text-xs font-bold tracking-widest" data-testid="slip-copy">
           NUSXA
         </p>
       )}
       <div className="text-center">
-        {view.logo && <img src={view.logo} alt="" className="mx-auto mb-1 max-h-10 max-w-[48mm] object-contain grayscale" />}
-        <p className="text-sm font-bold uppercase">{c.labName}</p>
-        {c.tagline && <p>{c.tagline}</p>}
-        {c.address && <p>{c.address}</p>}
-        {c.phone && <p>Tel: {c.phone}</p>}
-        {c.licenseNumber && <p>Litsenziya: {c.licenseNumber}</p>}
+        {logo && <img src={logo} alt="" className="mx-auto mb-1 max-h-10 max-w-[48mm] object-contain grayscale" />}
+        <p className="text-sm font-bold uppercase">{clinic.labName}</p>
+        {clinic.tagline && <p>{clinic.tagline}</p>}
+        {clinic.address && <p>{clinic.address}</p>}
+        {clinic.phone && <p>Tel: {clinic.phone}</p>}
+        {clinic.licenseNumber && <p>Litsenziya: {clinic.licenseNumber}</p>}
       </div>
       <Rule />
+      {children}
+      <Rule />
+      <p className="text-center">Sog' bo'ling! Tashrifingiz uchun rahmat.</p>
+      {printedAt && <p className="mt-1 text-center opacity-70">Chop etildi: {formatDateTime(printedAt)}</p>}
+    </div>
+  );
+}
+
+/** To'lov cheki: one receipt. */
+export function ReceiptSlip({ view, printNumber, printedAt }: { view: ReceiptSlipView; printNumber: number; printedAt?: string }) {
+  const r = view.receipt;
+  const f = slipFigures(r, printNumber);
+  return (
+    <SlipFrame clinic={view.clinic} logo={view.logo} copy={f.copy} printedAt={printedAt}>
       <p className="text-center text-xs font-bold">TO'LOV CHEKI</p>
       <p className="mb-1 text-center">Kvitansiya № {r.number}</p>
       <Row label="Sana" value={formatDateTime(r.createdAt)} />
@@ -98,22 +110,79 @@ export function ReceiptSlip({ view, printNumber, printedAt }: { view: ReceiptSli
           <p>Sabab: {r.voidReason}</p>
         </div>
       )}
-      <Rule />
-      <p className="text-center">Sog' bo'ling! Tashrifingiz uchun rahmat.</p>
-      {printedAt && <p className="mt-1 text-center opacity-70">Chop etildi: {formatDateTime(printedAt)}</p>}
-    </div>
+    </SlipFrame>
   );
 }
 
-export function ReceiptSlipDialog({ receiptId, onClose }: { receiptId: string | null; onClose: () => void }) {
+/** Qaytarish cheki: a refund handed out (B7.4), signed by the patient who took the money. */
+export function RefundSlip({ view, printNumber, printedAt }: { view: RefundSlipView; printNumber: number; printedAt?: string }) {
+  const r = view.refund;
+  return (
+    <SlipFrame clinic={view.clinic} logo={view.logo} copy={printNumber > 1} printedAt={printedAt}>
+      <p className="text-center text-xs font-bold">QAYTARISH CHEKI</p>
+      <p className="mb-1 text-center">Qaytarish № {r.number}</p>
+      <Row label="Sana" value={formatDateTime(r.paidAt ?? r.requestedAt)} />
+      <Row label="Tashrif" value={formatDate(r.visitDate)} />
+      <Row label="Bemor" value={r.patientName} />
+      <Row label="Bemor ID" value={`#${r.patientNumber}`} />
+      <Row label="Kassir" value={r.paidByName ?? "—"} />
+      {r.shiftNumber !== null && <Row label="Smena" value={`№ ${r.shiftNumber}`} />}
+      <Row label="Tasdiqladi" value={r.decidedByName ?? "—"} />
+      <Rule />
+      <div className="space-y-1" data-testid="slip-lines">
+        {(r.lines ?? []).map((l) => (
+          <div key={`${l.source}-${l.sourceId}`} className="flex justify-between gap-3">
+            <span className="min-w-0 break-words">{l.title}</span>
+            <span className="shrink-0 tabular">−{money(l.amount, false)}</span>
+          </div>
+        ))}
+      </div>
+      <Rule />
+      <div className="text-sm">
+        <Row label="QAYTARILDI" value={money(r.amount)} strong />
+      </div>
+      <Row label="Usul" value={PAYMENT_METHOD_LABELS[r.method]} />
+      <p className="mt-1">Sabab: {r.reason}</p>
+      <div className="mt-4 flex items-end justify-between gap-3">
+        <span>Pulni oldim:</span>
+        <span className="mb-0.5 w-28 border-b border-black" />
+      </div>
+    </SlipFrame>
+  );
+}
+
+/**
+ * The dialog around a chek: preview, the print counted first, the portal that
+ * reaches paper. `printNumber` is what the slip shows: the print under way, or
+ * between prints the next one (the count plus one).
+ */
+function SlipDialog<V>({
+  open,
+  onClose,
+  queryKey,
+  printUrl,
+  title,
+  countOf,
+  setCount,
+  printable = true,
+  render,
+}: {
+  open: boolean;
+  onClose: () => void;
+  queryKey: string;
+  printUrl: string;
+  title: (v: V | undefined) => string;
+  countOf: (v: V) => number;
+  setCount: (v: V, n: number) => V;
+  /** Whether this chek may be printed at all (a refund only once it is paid out). */
+  printable?: boolean | ((v: V) => boolean);
+  render: (v: V, printNumber: number, printedAt?: string) => ReactNode;
+}) {
   const { can } = useAuth();
   const { toast } = useToast();
-  const key = `/api/receipts/${receiptId}/slip`;
-  const { data: view } = useQuery<ReceiptSlipView>({ queryKey: [key], enabled: Boolean(receiptId), refetchOnMount: "always" });
-  // The print under way (its number and time); between prints the slip shows the next one: the count plus one.
+  const { data: view } = useQuery<V>({ queryKey: [queryKey], enabled: open, refetchOnMount: "always" });
   const [printed, setPrinted] = useState<{ number: number; at: string } | null>(null);
   const [pendingPrint, setPendingPrint] = useState(false);
-  const open = Boolean(receiptId);
 
   useEffect(() => {
     if (!open) return;
@@ -126,7 +195,7 @@ export function ReceiptSlipDialog({ receiptId, onClose }: { receiptId: string | 
       style.remove();
     };
   }, [open]);
-  useEffect(() => setPrinted(null), [receiptId]);
+  useEffect(() => setPrinted(null), [queryKey]);
 
   // Print once React has drawn the slip with this print's number (copy mark, time).
   useEffect(() => {
@@ -141,17 +210,17 @@ export function ReceiptSlipDialog({ receiptId, onClose }: { receiptId: string | 
   }, [pendingPrint, printed]);
 
   const print = useMutation({
-    mutationFn: async () => (await (await apiRequest("POST", `/api/receipts/${receiptId}/print`)).json()) as { printCount: number },
+    mutationFn: async () => (await (await apiRequest("POST", printUrl)).json()) as { printCount: number },
     onSuccess: ({ printCount }) => {
-      queryClient.setQueryData<ReceiptSlipView>([key], (v) => (v ? { ...v, receipt: { ...v.receipt, printCount } } : v));
+      queryClient.setQueryData<V>([queryKey], (v) => (v ? setCount(v, printCount) : v));
       setPrinted({ number: printCount, at: new Date().toISOString() });
       setPendingPrint(true);
     },
     onError: (e: Error) => toast({ variant: "destructive", title: "Chop etilmadi", description: e.message }),
   });
 
-  const count = view?.receipt.printCount ?? 0;
-  const shownNumber = printed?.number ?? count + 1;
+  const count = view ? countOf(view) : 0;
+  const canPrint = view && can("payments.create") && (typeof printable === "function" ? printable(view) : printable);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -159,29 +228,21 @@ export function ReceiptSlipDialog({ receiptId, onClose }: { receiptId: string | 
         <DialogHeader className="border-b px-6 py-4">
           <DialogTitle className="flex items-center gap-2">
             <ReceiptText className="h-5 w-5 text-primary" />
-            {view ? `Chek · Kvitansiya №${view.receipt.number}` : "Chek"}
+            {title(view)}
           </DialogTitle>
-          <DialogDescription>
-            {view ? (count ? `${count} marta chop etilgan — keyingisi "NUSXA" belgisi bilan chiqadi` : "Hali chop etilmagan") : "Yuklanmoqda…"}
-          </DialogDescription>
+          <DialogDescription>{view ? (count ? `${count} marta chop etilgan — keyingisi "NUSXA" belgisi bilan chiqadi` : "Hali chop etilmagan") : "Yuklanmoqda…"}</DialogDescription>
         </DialogHeader>
         <ScrollArea className="min-h-0 flex-1 bg-muted/40">
           <div className="flex justify-center p-5">
-            {view ? (
-              <div className="rounded-sm shadow-lg ring-1 ring-black/5">
-                <ReceiptSlip view={view} printNumber={shownNumber} printedAt={printed?.at} />
-              </div>
-            ) : (
-              <div className="h-96 w-[72mm] skeleton-shimmer rounded" />
-            )}
+            {view ? <div className="rounded-sm shadow-lg ring-1 ring-black/5">{render(view, printed?.number ?? count + 1, printed?.at)}</div> : <div className="h-96 w-[72mm] skeleton-shimmer rounded" />}
           </div>
         </ScrollArea>
         <DialogFooter className="gap-2 border-t p-4">
           <Button variant="outline" onClick={onClose}>
             Yopish
           </Button>
-          {can("payments.create") && (
-            <Button className="shadow-brand" onClick={() => print.mutate()} disabled={!view || print.isPending || pendingPrint} data-testid="button-print-slip">
+          {canPrint && (
+            <Button className="shadow-brand" onClick={() => print.mutate()} disabled={print.isPending || pendingPrint} data-testid="button-print-slip">
               {print.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
               {count ? "Nusxa chop etish" : "Chekni chop etish"}
             </Button>
@@ -193,10 +254,41 @@ export function ReceiptSlipDialog({ receiptId, onClose }: { receiptId: string | 
         createPortal(
           <div className="receipt-print-root" aria-hidden>
             {/* A print that did not go through the button (Ctrl+P) was never counted: it can only ever be a copy. */}
-            <ReceiptSlip view={view} printNumber={printed?.number ?? Math.max(count + 1, 2)} printedAt={printed?.at} />
+            {render(view, printed?.number ?? Math.max(count + 1, 2), printed?.at)}
           </div>,
           document.body,
         )}
     </Dialog>
+  );
+}
+
+export function ReceiptSlipDialog({ receiptId, onClose }: { receiptId: string | null; onClose: () => void }) {
+  return (
+    <SlipDialog<ReceiptSlipView>
+      open={Boolean(receiptId)}
+      onClose={onClose}
+      queryKey={`/api/receipts/${receiptId}/slip`}
+      printUrl={`/api/receipts/${receiptId}/print`}
+      title={(v) => (v ? `Chek · Kvitansiya №${v.receipt.number}` : "Chek")}
+      countOf={(v) => v.receipt.printCount}
+      setCount={(v, printCount) => ({ ...v, receipt: { ...v.receipt, printCount } })}
+      render={(v, n, at) => <ReceiptSlip view={v} printNumber={n} printedAt={at} />}
+    />
+  );
+}
+
+export function RefundSlipDialog({ refundId, onClose }: { refundId: string | null; onClose: () => void }) {
+  return (
+    <SlipDialog<RefundSlipView>
+      open={Boolean(refundId)}
+      onClose={onClose}
+      queryKey={`/api/refunds/${refundId}/slip`}
+      printUrl={`/api/refunds/${refundId}/print`}
+      title={(v) => (v ? `Qaytarish cheki · №${v.refund.number}` : "Qaytarish cheki")}
+      countOf={(v) => v.refund.printCount}
+      setCount={(v, printCount) => ({ ...v, refund: { ...v.refund, printCount } })}
+      printable={(v) => v.refund.status === "paid"}
+      render={(v, n, at) => <RefundSlip view={v} printNumber={n} printedAt={at} />}
+    />
   );
 }

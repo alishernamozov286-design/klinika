@@ -20,6 +20,8 @@ const row = (over: Partial<ShiftPaymentRow>): ShiftPaymentRow => ({
   voidedAt: null,
   voidReason: null,
   receiptId: null,
+  refundId: null,
+  refundNumber: null,
   receiptNumber: null,
   invoiceNumber: null,
   orderNumber: 1042,

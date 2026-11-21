@@ -88,6 +88,7 @@ const ENTITIES = [
   { value: "order", label: "Buyurtmalar" },
   { value: "invoice", label: "Hisobvaraqlar va kvitansiyalar" },
   { value: "cash_shift", label: "Kassa smenalari" },
+  { value: "refund", label: "To'lov qaytarishlari" },
   { value: "patient", label: "Bemorlar" },
   { value: "test", label: "Tahlillar" },
   { value: "user", label: "Xodimlar" },

@@ -5,7 +5,7 @@
  */
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Bell, CheckCheck, FlaskConical, PencilLine } from "lucide-react";
+import { Bell, CheckCheck, FlaskConical, PencilLine, Undo2 } from "lucide-react";
 import type { AppNotification, NotificationFeed } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,7 +51,7 @@ export function useMarkNotificationRead() {
   });
 }
 
-const ICONS = { lab_result: FlaskConical, lab_result_amended: PencilLine } as const;
+const ICONS = { lab_result: FlaskConical, lab_result_amended: PencilLine, refund_request: Undo2, refund_decision: Undo2 } as const;
 
 export function NotificationBell() {
   const [, navigate] = useLocation();

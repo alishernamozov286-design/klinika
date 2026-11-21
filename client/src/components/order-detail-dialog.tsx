@@ -438,15 +438,10 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
             </Button>
           </div>
 
-          {can("payments.refund") && order.paidAmount > 0 && (
-            <button
-              type="button"
-              onClick={() => add.mutate({ amount: -amount, method, note: "Qaytarildi" })}
-              disabled={add.isPending || amount <= 0}
-              className="text-xs font-medium text-muted-foreground hover:text-destructive disabled:opacity-50"
-            >
-              Shu summani qaytarish (−{money(amount, false)})
-            </button>
+          {order.paidAmount > 0 && (
+            <p className="text-xs text-muted-foreground" data-testid="text-refund-hint">
+              Pulni qaytarish: Kassa → hisobvaraq → "Qaytarish so'rovi" (vakolatli xodim tasdig'i bilan, TZ §9.2).
+            </p>
           )}
         </div>
       )}

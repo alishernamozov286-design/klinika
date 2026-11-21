@@ -29,6 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ReceiptSlipDialog } from "@/components/cashier/receipt-slip";
+import { BillRefunds, RefundsTab, usePendingRefunds } from "@/components/cashier/refunds";
 import { OpenShiftDialog, ShiftBar, ShiftsTab, refreshShifts, useCashDesk, useHandlesMoney } from "@/components/cashier/shift";
 import { formatDate, formatDateTime, money } from "@/lib/format";
 
@@ -54,31 +55,47 @@ export default function Cashier() {
   const { can } = useAuth();
   const handles = useHandlesMoney();
   const showShifts = handles || can("shifts.read");
-  const [tab, setTab] = useState<"bills" | "shifts">(() => (new URLSearchParams(window.location.search).get("tab") === "shifts" ? "shifts" : "bills"));
+  const pending = usePendingRefunds();
+  type Tab = "bills" | "refunds" | "shifts";
+  const [tab, setTab] = useState<Tab>(() => {
+    const asked = new URLSearchParams(window.location.search).get("tab");
+    return asked === "refunds" || (asked === "shifts" && showShifts) ? asked : "bills";
+  });
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Kassa" title="Kassa" description="Bemor hisobvarag'i: bir tashrifdagi barcha xizmatlar bitta to'lov bilan; kassa smenasi va uning hisoboti (TZ §9)" />
+      <PageHeader eyebrow="Kassa" title="Kassa" description="Bemor hisobvarag'i, qaytarishlar (vakolatli tasdiq bilan), kassa smenasi va uning hisoboti (TZ §9)" />
       {handles && <ShiftBar />}
-      {showShifts ? (
-        <Tabs value={tab} onValueChange={(v) => setTab(v as "bills" | "shifts")}>
-          <TabsList>
-            <TabsTrigger value="bills" data-testid="tab-cashier-bills">
-              Hisobvaraqlar
-            </TabsTrigger>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+        <TabsList className="h-auto flex-wrap justify-start">
+          <TabsTrigger value="bills" data-testid="tab-cashier-bills">
+            Hisobvaraqlar
+          </TabsTrigger>
+          <TabsTrigger value="refunds" data-testid="tab-cashier-refunds">
+            Qaytarishlar
+            {pending.count > 0 && (
+              <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-white tabular" data-testid="badge-pending-refunds">
+                {pending.count}
+              </span>
+            )}
+          </TabsTrigger>
+          {showShifts && (
             <TabsTrigger value="shifts" data-testid="tab-cashier-shifts">
               Smenalar
             </TabsTrigger>
-          </TabsList>
-          <TabsContent value="bills" className="mt-4">
-            <BillsDesk />
-          </TabsContent>
+          )}
+        </TabsList>
+        <TabsContent value="bills" className="mt-4">
+          <BillsDesk />
+        </TabsContent>
+        <TabsContent value="refunds" className="mt-4">
+          <RefundsTab />
+        </TabsContent>
+        {showShifts && (
           <TabsContent value="shifts" className="mt-4">
             <ShiftsTab />
           </TabsContent>
-        </Tabs>
-      ) : (
-        <BillsDesk />
-      )}
+        )}
+      </Tabs>
     </div>
   );
 }
@@ -393,7 +410,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
                 {bill.totals.credit > 0 && (
                   <p className="flex items-start gap-2 border-t px-4 py-3 text-sm text-sky-800 dark:text-sky-200" data-testid="bill-credit">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    {money(bill.totals.credit)} bekor qilingan yoki arzonlashgan xizmatga to'langan — bemorga qaytariladi (to'lovni qaytarish vakolatli shaxs tasdig'i bilan).
+                    {money(bill.totals.credit)} bekor qilingan yoki arzonlashgan xizmatga to'langan — bemorga qaytariladi: pastda "Qaytarish so'rovi", vakolatli xodim tasdiqlagach pul smenadan beriladi.
                   </p>
                 )}
               </div>
@@ -476,6 +493,8 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
                   </div>
                 </form>
               )}
+
+              <BillRefunds bill={bill} />
 
               <div className="no-print space-y-2">
                 <p className="text-sm font-semibold">Kvitansiyalar</p>

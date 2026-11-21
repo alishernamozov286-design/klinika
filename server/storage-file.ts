@@ -139,6 +139,17 @@ import {
   summarizeShift,
   type ShiftPaymentRow,
 } from "@shared/cash-shift";
+import {
+  PAYMENT_IS_REFUND,
+  REFUND_BILL_CHANGED,
+  REFUND_NOTHING,
+  REFUND_SELF_APPROVAL,
+  allocateRefund,
+  isOpenRefund,
+  refundActionProblem,
+  refundAvailable,
+  refundTooMuch,
+} from "@shared/refund";
 import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type DepartmentLine, type MovementTotal } from "@shared/inventory-reports";
 import type {
   Bill,
@@ -150,6 +161,9 @@ import type {
   ShiftReport,
   ShiftSummary,
   ReceiptSlip,
+  Refund,
+  RefundView,
+  RequestRefundInput,
   Invoice,
   InvoiceReceipt,
   PayBillInput,
@@ -257,6 +271,7 @@ import {
   resolveFlag,
   type BillQuery,
   type ShiftQuery,
+  type RefundQuery,
 } from "./storage-types";
 import type { LockState } from "@shared/lockout";
 
@@ -1638,6 +1653,7 @@ export class FileStorage implements IStorage {
         for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
         for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
         for (const r of this.db.referrals) if (r.visitId === v.id) r.visitId = same.id;
+        for (const r of this.db.refunds) if (r.visitId === v.id) r.visitId = same.id;
         // Bills (B7.1): the target's bill of the day takes the duplicate's receipts; otherwise the bill moves.
         const theirs = this.db.invoices.find((i) => i.visitId === v.id);
         const ours = this.db.invoices.find((i) => i.visitId === same.id);
@@ -1665,6 +1681,7 @@ export class FileStorage implements IStorage {
     for (const r of this.db.referrals) if (r.patientId === sourceId) r.patientId = targetId;
     for (const i of this.db.invoices) if (i.patientId === sourceId) i.patientId = targetId;
     for (const r of this.db.invoicePayments) if (r.patientId === sourceId) r.patientId = targetId;
+    for (const r of this.db.refunds) if (r.patientId === sourceId) r.patientId = targetId;
     this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
     await this.persist();
     return { orders, contacts, appointments };
@@ -1738,6 +1755,7 @@ export class FileStorage implements IStorage {
       referrals: mine(this.db.referrals),
       invoices: mine(this.db.invoices),
       invoice_payments: mine(this.db.invoicePayments),
+      refunds: mine(this.db.refunds),
     });
     if (problem) throw new StorageConflict(problem);
     const before = this.db.patients.length;
@@ -1988,6 +2006,7 @@ export class FileStorage implements IStorage {
         orderId: order.id,
         appointmentId: null,
         invoicePaymentId: null,
+        refundId: null,
         shiftId: this.shiftFor({ id: input.createdBy ?? null, shiftId: input.shiftId }),
         amount: opening,
         method: "naqd",
@@ -2364,6 +2383,7 @@ export class FileStorage implements IStorage {
       orderId,
       appointmentId: null,
       invoicePaymentId: null,
+      refundId: null,
       shiftId,
       amount,
       method: input.method,
@@ -2384,6 +2404,8 @@ export class FileStorage implements IStorage {
     if (!row) return undefined;
     this.refuseClosedShift(row.shiftId);
     if (row.voidedAt) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
+    // A refund handed out (B7.4) stays: the money is with the patient.
+    if (row.refundId) throw new StorageConflict(PAYMENT_IS_REFUND);
     // A share of a bill receipt goes with its receipt (B7.1), never alone.
     if (row.invoicePaymentId || !row.orderId) throw new StorageConflict(PAYMENT_IS_RECEIPT_SHARE);
     row.voidedAt = new Date().toISOString();
@@ -3899,6 +3921,7 @@ export class FileStorage implements IStorage {
       invoice: invoice ? { ...invoice } : null,
       lines,
       receipts,
+      refunds: await this.listRefunds({ visitId }),
       totals: billTotals(lines),
     };
   }
@@ -3958,6 +3981,7 @@ export class FileStorage implements IStorage {
         orderId: s.source === "order" ? s.sourceId : null,
         appointmentId: s.source === "appointment" ? s.sourceId : null,
         invoicePaymentId: receipt.id,
+        refundId: null,
         shiftId,
         amount: s.amount,
         method: input.method,
@@ -4022,6 +4046,143 @@ export class FileStorage implements IStorage {
     return filterBills(rows, query.status).slice(0, query.limit ?? 500);
   }
 
+  // ------------------------------------------------------------ B7.4 refunds
+
+  private refundView(r: Refund): RefundView {
+    const patient = this.db.patients.find((p) => p.id === r.patientId);
+    return {
+      ...r,
+      patientNumber: patient?.patientNumber ?? 0,
+      patientName: patient?.fullName ?? "—",
+      visitDate: this.db.visits.find((v) => v.id === r.visitId)?.visitDate ?? "",
+      shiftNumber: r.shiftId ? (this.db.cashShifts.find((s) => s.id === r.shiftId)?.number ?? null) : null,
+    };
+  }
+
+  async getRefund(id: string): Promise<RefundView | undefined> {
+    const r = this.db.refunds.find((x) => x.id === id);
+    return r && this.refundView(r);
+  }
+
+  async listRefunds(query: RefundQuery): Promise<RefundView[]> {
+    // An open refund is listed whenever it was asked: it is waiting for someone.
+    const dated = !(query.status && isOpenRefund(query.status));
+    return this.db.refunds
+      .filter((r) => !query.visitId || r.visitId === query.visitId)
+      .filter((r) => !query.status || r.status === query.status)
+      .filter((r) => !dated || ((!query.from || r.requestedAt >= query.from) && (!query.to || r.requestedAt < query.to)))
+      .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))
+      .slice(0, query.limit ?? 300)
+      .map((r) => this.refundView(r));
+  }
+
+  async requestRefund(visitId: string, input: RequestRefundInput, actor: Actor): Promise<RefundView | undefined> {
+    const visit = this.db.visits.find((v) => v.id === visitId);
+    if (!visit) return undefined;
+    const available = refundAvailable(
+      this.billLinesOf(visitId),
+      this.db.refunds.filter((r) => r.visitId === visitId),
+    );
+    if (!available) throw new StorageConflict(REFUND_NOTHING);
+    if (input.amount > available) throw new StorageConflict(refundTooMuch(available));
+    this.db.counters.refundNumber += 1;
+    const row: Refund = {
+      id: randomUUID(),
+      number: this.db.counters.refundNumber,
+      patientId: visit.patientId,
+      visitId,
+      amount: input.amount,
+      method: input.method,
+      reason: input.reason,
+      status: "requested",
+      requestedAt: new Date().toISOString(),
+      requestedBy: actor.id,
+      requestedByName: actor.name,
+      decidedAt: null,
+      decidedBy: null,
+      decidedByName: null,
+      decisionNote: null,
+      paidAt: null,
+      paidBy: null,
+      paidByName: null,
+      shiftId: null,
+      lines: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancelledByName: null,
+      cancelReason: null,
+      printCount: 0,
+    };
+    this.db.refunds.push(row);
+    await this.persist();
+    return this.refundView(row);
+  }
+
+  async decideRefund(id: string, approve: boolean, note: string | null, actor: Actor): Promise<RefundView | undefined> {
+    const r = this.db.refunds.find((x) => x.id === id);
+    if (!r) return undefined;
+    if (r.requestedBy && r.requestedBy === actor.id) throw new StorageConflict(REFUND_SELF_APPROVAL);
+    const problem = refundActionProblem(r.status, approve ? "approve" : "reject");
+    if (problem) throw new StorageConflict(problem);
+    Object.assign(r, { status: approve ? "approved" : "rejected", decidedAt: new Date().toISOString(), decidedBy: actor.id, decidedByName: actor.name, decisionNote: note });
+    await this.persist();
+    return this.refundView(r);
+  }
+
+  async payRefund(id: string, actor: Actor): Promise<RefundView | undefined> {
+    const r = this.db.refunds.find((x) => x.id === id);
+    if (!r) return undefined;
+    const problem = refundActionProblem(r.status, "pay");
+    if (problem) throw new StorageConflict(problem);
+    const shiftId = this.shiftFor(actor);
+    const plan = allocateRefund(this.billLinesOf(r.visitId), r.amount);
+    if (plan.taken < r.amount) throw new StorageConflict(REFUND_BILL_CHANGED);
+    const now = new Date().toISOString();
+    for (const l of plan.lines) {
+      this.db.payments.push({
+        id: randomUUID(),
+        orderId: l.source === "order" ? l.sourceId : null,
+        appointmentId: l.source === "appointment" ? l.sourceId : null,
+        invoicePaymentId: null,
+        refundId: r.id,
+        shiftId,
+        amount: -l.amount,
+        method: r.method,
+        note: `Qaytarish №${r.number}`,
+        createdBy: actor.id,
+        createdByName: actor.name,
+        createdAt: now,
+        ...UNVOIDED,
+      });
+      if (l.source === "order") {
+        const order = this.db.orders.find((o) => o.id === l.sourceId);
+        if (order) this.touchOrder(order, actor);
+        this.syncPaid(l.sourceId);
+      }
+    }
+    Object.assign(r, { status: "paid", paidAt: now, paidBy: actor.id, paidByName: actor.name, shiftId, lines: plan.lines });
+    await this.persist();
+    return this.refundView(r);
+  }
+
+  async cancelRefund(id: string, reason: string, actor: Actor): Promise<RefundView | undefined> {
+    const r = this.db.refunds.find((x) => x.id === id);
+    if (!r) return undefined;
+    const problem = refundActionProblem(r.status, "cancel");
+    if (problem) throw new StorageConflict(problem);
+    Object.assign(r, { status: "cancelled", cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+    await this.persist();
+    return this.refundView(r);
+  }
+
+  async markRefundPrinted(id: string): Promise<number | undefined> {
+    const r = this.db.refunds.find((x) => x.id === id);
+    if (!r) return undefined;
+    r.printCount += 1;
+    await this.persist();
+    return r.printCount;
+  }
+
   async getReceiptSlip(receiptId: string): Promise<ReceiptSlip | undefined> {
     const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
     const inv = rec && this.db.invoices.find((i) => i.id === rec.invoiceId);
@@ -4065,7 +4226,8 @@ export class FileStorage implements IStorage {
       .map((p) => {
         const receipt = p.invoicePaymentId ? this.db.invoicePayments.find((r) => r.id === p.invoicePaymentId) : undefined;
         const order = p.orderId ? this.db.orders.find((o) => o.id === p.orderId) : undefined;
-        const patient = this.db.patients.find((x) => x.id === (receipt?.patientId ?? order?.patientId));
+        const refund = p.refundId ? this.db.refunds.find((x) => x.id === p.refundId) : undefined;
+        const patient = this.db.patients.find((x) => x.id === (receipt?.patientId ?? refund?.patientId ?? order?.patientId));
         return {
           id: p.id,
           amount: p.amount,
@@ -4074,6 +4236,8 @@ export class FileStorage implements IStorage {
           voidedAt: p.voidedAt,
           voidReason: p.voidReason,
           receiptId: p.invoicePaymentId,
+          refundId: p.refundId ?? null,
+          refundNumber: p.refundId ? (this.db.refunds.find((x) => x.id === p.refundId)?.number ?? null) : null,
           receiptNumber: receipt?.number ?? null,
           invoiceNumber: receipt ? (this.db.invoices.find((i) => i.id === receipt.invoiceId)?.number ?? null) : null,
           orderNumber: order?.orderNumber ?? null,

@@ -21,6 +21,7 @@ import {
   invoices,
   invoicePayments,
   cashShifts,
+  refunds,
   consumptionNorms,
   labConsumptions,
   auditLog,
@@ -207,6 +208,9 @@ import type {
   ShiftReport,
   ShiftSummary,
   ReceiptSlip,
+  Refund,
+  RefundView,
+  RequestRefundInput,
   Bill,
   BillSummary,
   Invoice,
@@ -311,7 +315,20 @@ import {
   resolveFlag,
   type BillQuery,
   type ShiftQuery,
+  type RefundQuery,
 } from "./storage-types";
+import {
+  PAYMENT_IS_REFUND,
+  REFUND_BILL_CHANGED,
+  REFUND_NOTHING,
+  REFUND_SELF_APPROVAL,
+  allocateRefund,
+  isOpenRefund,
+  refundActionProblem,
+  refundAvailable,
+  refundTooMuch,
+  type RefundStatus,
+} from "@shared/refund";
 import type { LockState } from "@shared/lockout";
 
 /**
@@ -2144,6 +2161,14 @@ export class PgStorage implements IStorage {
         await tx.update(invoices).set({ patientId: targetId }).where(eq(invoices.patientId, sourceId));
         await tx.update(invoicePayments).set({ patientId: targetId }).where(eq(invoicePayments.patientId, sourceId));
       }
+      // Refunds (B7.4) follow the patient, re-pointed at the surviving visit of the day.
+      if (await tableExists(tx, "refunds")) {
+        await tx.execute(sql`
+          UPDATE refunds rf SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND rf.visit_id = sv.id`);
+        await tx.update(refunds).set({ patientId: targetId }).where(eq(refunds.patientId, sourceId));
+      }
       await tx.execute(sql`
         DELETE FROM ${visits} sv USING ${visits} tv
         WHERE sv.patient_id = ${sourceId} AND tv.patient_id = ${targetId} AND tv.visit_date = sv.visit_date`);
@@ -3047,13 +3072,14 @@ export class PgStorage implements IStorage {
           voidReason: reason,
         })
         .where(and(eq(payments.id, paymentId), isNull(payments.voidedAt)))
-        .returning({ orderId: payments.orderId, invoicePaymentId: payments.invoicePaymentId });
+        .returning({ orderId: payments.orderId, invoicePaymentId: payments.invoicePaymentId, refundId: payments.refundId });
       if (!row) {
         const [exists] = await tx.select({ id: payments.id }).from(payments).where(eq(payments.id, paymentId)).limit(1);
         if (exists) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
         return undefined;
       }
-      // A share of a bill receipt goes with its receipt (B7.1), never alone; throwing undoes the update.
+      // A refund handed out (B7.4) stays; a receipt share goes with its receipt (B7.1). Throwing undoes the update.
+      if (row.refundId) throw new StorageConflict(PAYMENT_IS_REFUND);
       if (row.invoicePaymentId || !row.orderId) throw new StorageConflict(PAYMENT_IS_RECEIPT_SHARE);
       await this.syncPaid(tx as unknown as typeof db, row.orderId, actor);
       return row.orderId;
@@ -4735,7 +4761,14 @@ export class PgStorage implements IStorage {
       .where(eq(visits.id, visitId))
       .limit(1);
     if (!v) return undefined;
-    const [lines, [invoice]] = await Promise.all([this.billLines(db, visitId), db.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1)]);
+    const [lines, [invoice], billRefunds] = await Promise.all([
+      this.billLines(db, visitId),
+      db.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1),
+      this.listRefunds({ visitId }).catch((e) => {
+        if ((e as { code?: string })?.code === "42P01") return [] as RefundView[];
+        throw e;
+      }),
+    ]);
     let receipts: InvoiceReceipt[] = [];
     if (invoice) {
       const recs = await db.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoice.id)).orderBy(desc(invoicePayments.number));
@@ -4766,6 +4799,7 @@ export class PgStorage implements IStorage {
       invoice: invoice ? { ...invoice, createdAt: iso(invoice.createdAt) ?? invoice.createdAt } : null,
       lines,
       receipts,
+      refunds: billRefunds,
       totals: billTotals(lines),
     };
   }
@@ -4914,6 +4948,142 @@ export class PgStorage implements IStorage {
     return filterBills(rows, query.status);
   }
 
+  // ------------------------------------------------------------ B7.4 refunds
+
+  private refundViewQuery() {
+    return db
+      .select({ r: refunds, patientNumber: patients.patientNumber, patientName: patients.fullName, visitDate: visits.visitDate, shiftNumber: cashShifts.number })
+      .from(refunds)
+      .innerJoin(patients, eq(patients.id, refunds.patientId))
+      .innerJoin(visits, eq(visits.id, refunds.visitId))
+      .leftJoin(cashShifts, eq(cashShifts.id, refunds.shiftId));
+  }
+
+  private mapRefundView(x: { r: typeof refunds.$inferSelect; patientNumber: number; patientName: string; visitDate: string; shiftNumber: number | null }): RefundView {
+    const r = x.r;
+    return {
+      ...r,
+      method: r.method as Refund["method"],
+      status: r.status as RefundStatus,
+      requestedAt: iso(r.requestedAt),
+      decidedAt: iso(r.decidedAt),
+      paidAt: iso(r.paidAt),
+      cancelledAt: iso(r.cancelledAt),
+      patientNumber: x.patientNumber,
+      patientName: x.patientName,
+      visitDate: x.visitDate,
+      shiftNumber: x.shiftNumber ?? null,
+    };
+  }
+
+  async getRefund(id: string): Promise<RefundView | undefined> {
+    const [row] = await this.refundViewQuery().where(eq(refunds.id, id)).limit(1);
+    return row && this.mapRefundView(row);
+  }
+
+  async listRefunds(query: RefundQuery): Promise<RefundView[]> {
+    // An open refund is listed whenever it was asked: it is waiting for someone.
+    const dated = query.status && isOpenRefund(query.status) ? undefined : and(query.from ? gte(refunds.requestedAt, query.from) : undefined, query.to ? sql`${refunds.requestedAt} < ${query.to}` : undefined);
+    const rows = await this.refundViewQuery()
+      .where(and(query.visitId ? eq(refunds.visitId, query.visitId) : undefined, query.status ? eq(refunds.status, query.status) : undefined, dated))
+      .orderBy(desc(refunds.requestedAt))
+      .limit(query.limit ?? 300);
+    return rows.map((x) => this.mapRefundView(x));
+  }
+
+  async requestRefund(visitId: string, input: RequestRefundInput, actor: Actor): Promise<RefundView | undefined> {
+    const id = await db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      // The visit row serialises everything that moves this bill's money, refund requests included.
+      const [v] = await tx.select().from(visits).where(eq(visits.id, visitId)).for("update");
+      if (!v) return undefined;
+      const [lines, held] = await Promise.all([
+        this.billLines(exec, visitId, true),
+        tx.select({ amount: refunds.amount, status: refunds.status }).from(refunds).where(eq(refunds.visitId, visitId)),
+      ]);
+      const available = refundAvailable(lines, held.map((h) => ({ amount: h.amount, status: h.status as RefundStatus })));
+      if (!available) throw new StorageConflict(REFUND_NOTHING);
+      if (input.amount > available) throw new StorageConflict(refundTooMuch(available));
+      const [row] = await tx
+        .insert(refunds)
+        .values({ patientId: v.patientId, visitId, amount: input.amount, method: input.method, reason: input.reason, requestedBy: actor.id, requestedByName: actor.name })
+        .returning({ id: refunds.id });
+      return row.id;
+    });
+    return id ? this.getRefund(id) : undefined;
+  }
+
+  async decideRefund(id: string, approve: boolean, note: string | null, actor: Actor): Promise<RefundView | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const [r] = await tx.select().from(refunds).where(eq(refunds.id, id)).for("update");
+      if (!r) return false;
+      if (r.requestedBy && r.requestedBy === actor.id) throw new StorageConflict(REFUND_SELF_APPROVAL);
+      const problem = refundActionProblem(r.status as RefundStatus, approve ? "approve" : "reject");
+      if (problem) throw new StorageConflict(problem);
+      await tx
+        .update(refunds)
+        .set({ status: approve ? "approved" : "rejected", decidedAt: new Date().toISOString(), decidedBy: actor.id, decidedByName: actor.name, decisionNote: note })
+        .where(eq(refunds.id, id));
+      return true;
+    });
+    return found ? this.getRefund(id) : undefined;
+  }
+
+  async payRefund(id: string, actor: Actor): Promise<RefundView | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      const [r] = await tx.select().from(refunds).where(eq(refunds.id, id)).for("update");
+      if (!r) return false;
+      const problem = refundActionProblem(r.status as RefundStatus, "pay");
+      if (problem) throw new StorageConflict(problem);
+      const shiftId = await this.lockShift(exec, actor);
+      await tx.select({ id: visits.id }).from(visits).where(eq(visits.id, r.visitId)).for("update");
+      const lines = await this.billLines(exec, r.visitId, true);
+      const plan = allocateRefund(lines, r.amount);
+      if (plan.taken < r.amount) throw new StorageConflict(REFUND_BILL_CHANGED);
+      await tx.insert(payments).values(
+        plan.lines.map((l) => ({
+          orderId: l.source === "order" ? l.sourceId : null,
+          appointmentId: l.source === "appointment" ? l.sourceId : null,
+          refundId: r.id,
+          amount: -l.amount,
+          method: r.method,
+          note: `Qaytarish №${r.number}`,
+          createdBy: actor.id,
+          createdByName: actor.name,
+          shiftId,
+        })),
+      );
+      for (const l of plan.lines) if (l.source === "order") await this.syncPaid(exec, l.sourceId, actor);
+      await tx
+        .update(refunds)
+        .set({ status: "paid", paidAt: new Date().toISOString(), paidBy: actor.id, paidByName: actor.name, shiftId, lines: plan.lines })
+        .where(eq(refunds.id, id));
+      return true;
+    });
+    return found ? this.getRefund(id) : undefined;
+  }
+
+  async cancelRefund(id: string, reason: string, actor: Actor): Promise<RefundView | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const [r] = await tx.select().from(refunds).where(eq(refunds.id, id)).for("update");
+      if (!r) return false;
+      const problem = refundActionProblem(r.status as RefundStatus, "cancel");
+      if (problem) throw new StorageConflict(problem);
+      await tx
+        .update(refunds)
+        .set({ status: "cancelled", cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
+        .where(eq(refunds.id, id));
+      return true;
+    });
+    return found ? this.getRefund(id) : undefined;
+  }
+
+  async markRefundPrinted(id: string): Promise<number | undefined> {
+    const [row] = await db.update(refunds).set({ printCount: sql`print_count + 1` }).where(eq(refunds.id, id)).returning({ printCount: refunds.printCount });
+    return row?.printCount;
+  }
+
   async getReceiptSlip(receiptId: string): Promise<ReceiptSlip | undefined> {
     const [row] = await db
       .select({
@@ -4983,6 +5153,8 @@ export class PgStorage implements IStorage {
         voidedAt: payments.voidedAt,
         voidReason: payments.voidReason,
         receiptId: payments.invoicePaymentId,
+        refundId: payments.refundId,
+        refundNumber: refunds.number,
         receiptNumber: invoicePayments.number,
         invoiceNumber: invoices.number,
         orderNumber: orders.orderNumber,
@@ -4993,8 +5165,9 @@ export class PgStorage implements IStorage {
       .innerJoin(cashShifts, eq(cashShifts.id, payments.shiftId))
       .leftJoin(invoicePayments, eq(invoicePayments.id, payments.invoicePaymentId))
       .leftJoin(invoices, eq(invoices.id, invoicePayments.invoiceId))
+      .leftJoin(refunds, eq(refunds.id, payments.refundId))
       .leftJoin(orders, eq(orders.id, payments.orderId))
-      .leftJoin(patients, sql`${patients.id} = coalesce(${invoicePayments.patientId}, ${orders.patientId})`)
+      .leftJoin(patients, sql`${patients.id} = coalesce(${invoicePayments.patientId}, ${refunds.patientId}, ${orders.patientId})`)
       .where(where)
       .orderBy(asc(payments.createdAt));
     const out = new Map<string, ShiftPaymentRow[]>();

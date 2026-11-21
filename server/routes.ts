@@ -125,6 +125,8 @@ import { registerInventoryRoutes } from "./routes-inventory";
 import { registerConsumptionRoutes } from "./routes-consumption";
 import { registerBillingRoutes } from "./routes-billing";
 import { registerCashDeskRoutes, tillActor } from "./routes-cashdesk";
+import { registerRefundRoutes } from "./routes-refunds";
+import { REFUNDS_BY_REQUEST } from "@shared/refund";
 import { consumeForOrder } from "./reagent-consumption";
 import { describeConsumption } from "@shared/consumption";
 
@@ -1297,20 +1299,12 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/orders/:id/payments",
-    requirePermission("payments.create", "payments.refund"),
+    requirePermission("payments.create"),
     handle(async (req, res) => {
       const input = createPaymentSchema.parse(req.body);
-      // A refund hands cash back out of the till; TZ §9.2 reserves it for an
-      // authorised person, so it is checked apart from taking a payment.
-      const needed: Permission = input.amount < 0 ? "payments.refund" : "payments.create";
-      if (!hasPermission(req, needed)) {
-        return res.status(403).json({
-          message:
-            needed === "payments.refund"
-              ? "To'lovni qaytarish uchun ruxsatingiz yo'q"
-              : "To'lov qabul qilish uchun ruxsatingiz yo'q",
-        });
-      }
+      // Money handed back goes one way only since B7.4: a request on the bill,
+      // approved by someone else (TZ §9.2), paid out of a cash shift.
+      if (input.amount < 0) return res.status(409).json({ message: REFUNDS_BY_REQUEST });
       // Taken or handed back, the money goes through the actor's open cash shift (B7.5).
       const till = await tillActor(req, res);
       if (!till) return;
@@ -2444,6 +2438,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   registerConsumptionRoutes(app);
   registerBillingRoutes(app);
   registerCashDeskRoutes(app);
+  registerRefundRoutes(app);
 
   // An unknown API path is a 404 in JSON, not the client app's index.html with
   // a 200 — which is what the SPA fallback further down would otherwise serve.

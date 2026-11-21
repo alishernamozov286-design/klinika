@@ -2652,3 +2652,79 @@ describe("receipt chek (B7.6)", () => {
     expect(await storage.getReceiptSlip("missing")).toBeUndefined();
   });
 });
+
+describe("refunds (B7.4)", () => {
+  const CASHIER = { id: "kassa1", name: "Yusupova Malika" };
+  const BOSS = { id: "rahbar1", name: "Karimov Akmal" };
+
+  it("ask → approve by someone else → pay from a shift; the ledgers follow and nothing more than the credit leaves", async () => {
+    const patient = await storage.createPatient({ fullName: "Aliyeva Shahnoza", phone: "+998907777777", gender: "ayol", age: 45, address: null });
+    const a = await storage.createOrder({ patientId: patient.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: CASHIER.id });
+    const b = await storage.createOrder({ patientId: patient.id, testIds: ["4"], discount: 0, paidAmount: 0, createdBy: CASHIER.id });
+    const visitId = a.visitId!;
+    const shift = await storage.openShift({ openingCash: 0, note: null }, CASHIER);
+    const till = { ...CASHIER, shiftId: shift.id };
+    await storage.payBill(visitId, { amount: a.totalAmount + b.totalAmount, method: "naqd", note: null }, till);
+
+    // Nothing to refund while every service stands.
+    await expect(storage.requestRefund(visitId, { amount: 1000, method: "naqd", reason: "Bemor so'radi" }, CASHIER)).rejects.toThrow(/ortiqcha to'lov yo'q/);
+    // One order is cancelled: its money is credit.
+    await storage.updateOrder(a.id, { status: "cancelled" }, BOSS);
+    expect((await storage.getBill(visitId))!.totals.credit).toBe(a.totalAmount);
+    await expect(storage.requestRefund(visitId, { amount: a.totalAmount + 1, method: "naqd", reason: "Tahlil bekor qilindi" }, CASHIER)).rejects.toThrow(/Qaytarish mumkin bo'lgan summa/);
+    const r = (await storage.requestRefund(visitId, { amount: a.totalAmount, method: "naqd", reason: "Tahlil bekor qilindi" }, CASHIER))!;
+    expect(r).toMatchObject({ number: 1, status: "requested", patientName: "Aliyeva Shahnoza" });
+    // The credit is held: a second request for it is refused.
+    await expect(storage.requestRefund(visitId, { amount: 1000, method: "naqd", reason: "Yana bir marta" }, CASHIER)).rejects.toThrow(/ortiqcha to'lov yo'q/);
+
+    // Not paid before approval; never approved by the one who asked.
+    await expect(storage.payRefund(r.id, till)).rejects.toThrow(/pulni berish mumkin emas/);
+    await expect(storage.decideRefund(r.id, true, null, CASHIER)).rejects.toThrow(/O'zingiz so'ragan/);
+    const ok = (await storage.decideRefund(r.id, true, "Tasdiqlayman", BOSS))!;
+    expect(ok).toMatchObject({ status: "approved", decidedByName: "Karimov Akmal", decisionNote: "Tasdiqlayman" });
+    await expect(storage.decideRefund(r.id, false, "kech", BOSS)).rejects.toThrow(/Tasdiqlangan/);
+
+    const paid = (await storage.payRefund(r.id, till))!;
+    expect(paid).toMatchObject({ status: "paid", shiftNumber: shift.number, paidByName: CASHIER.name });
+    expect(paid.lines).toEqual([{ source: "order", sourceId: a.id, title: `Laboratoriya #${a.orderNumber}`, amount: a.totalAmount }]);
+    expect((await storage.getOrder(a.id))!.paidAmount).toBe(0);
+    const bill = (await storage.getBill(visitId))!;
+    expect(bill.totals).toMatchObject({ credit: 0, due: 0 });
+    expect(bill.refunds.map((x) => [x.number, x.status])).toEqual([[1, "paid"]]);
+    // The shift hands it out of the drawer, as one entry.
+    const report = (await storage.getShift(shift.id))!;
+    expect(report.totals).toMatchObject({ refunds: 1, expectedCash: b.totalAmount });
+    expect(report.entries.find((e) => e.kind === "refund")).toMatchObject({ title: "Qaytarish №1", amount: -a.totalAmount, patientName: "Aliyeva Shahnoza" });
+    // A payout row is never voided; paying twice is refused.
+    const row = (await storage.getOrder(a.id))!.payments!.find((p) => p.refundId === r.id)!;
+    await expect(storage.voidPayment(row.id, "xato kiritilgan", BOSS)).rejects.toThrow(/qaytarishning bir qismi/);
+    await expect(storage.payRefund(r.id, till)).rejects.toThrow(/Qaytarildi/);
+    expect(await storage.markRefundPrinted(r.id)).toBe(1);
+  });
+
+  it("reject, cancel, a bill changed under an approved refund, and the list", async () => {
+    const patient = await storage.createPatient({ fullName: "Ismoilov Bobur", phone: "+998908888888", gender: "erkak", age: 52, address: null });
+    const o = await storage.createOrder({ patientId: patient.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: CASHIER.id });
+    const shift = await storage.openShift({ openingCash: 0, note: null }, CASHIER);
+    const till = { ...CASHIER, shiftId: shift.id };
+    await storage.payBill(o.visitId!, { amount: o.totalAmount, method: "karta", note: null }, till);
+    await storage.updateOrder(o.id, { status: "cancelled" }, BOSS);
+
+    const r1 = (await storage.requestRefund(o.visitId!, { amount: 5000, method: "karta", reason: "Qisman qaytarish" }, CASHIER))!;
+    expect((await storage.decideRefund(r1.id, false, "Hujjat yo'q", BOSS))!.status).toBe("rejected");
+    const r2 = (await storage.requestRefund(o.visitId!, { amount: o.totalAmount, method: "karta", reason: "Tahlil bekor qilindi" }, CASHIER))!;
+    await storage.decideRefund(r2.id, true, null, BOSS);
+    // The order comes back: the credit is gone, the payout refuses.
+    await storage.updateOrder(o.id, { status: "pending" }, BOSS);
+    await expect(storage.payRefund(r2.id, till)).rejects.toThrow(/Hisobvaraq o'zgargan/);
+    const c = (await storage.cancelRefund(r2.id, "Buyurtma tiklandi", CASHIER))!;
+    expect(c).toMatchObject({ status: "cancelled", cancelReason: "Buyurtma tiklandi" });
+
+    expect((await storage.listRefunds({})).map((x) => x.number)).toEqual([2, 1]);
+    expect((await storage.listRefunds({ status: "rejected" })).map((x) => x.number)).toEqual([1]);
+    // An open refund is listed whatever the period.
+    const r3 = (await storage.requestRefund(o.visitId!, { amount: 1, method: "naqd", reason: "Sinov uchun" }, CASHIER).catch(() => null));
+    expect(r3).toBeNull();
+    expect(await storage.getRefund("missing")).toBeUndefined();
+  });
+});

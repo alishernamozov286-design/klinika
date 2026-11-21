@@ -6,8 +6,11 @@ import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import type { BillFilter } from "@shared/invoice";
-import type { Bill, BillSummary, ReceiptSlip, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
+import type { RefundStatus } from "@shared/refund";
+import type { Bill, BillSummary, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
+/** B7.4: `status` alone lists every refund in it (open ones whenever asked); a range applies to the request time. */
+export type RefundQuery = { status?: RefundStatus; from?: string; to?: string; visitId?: string; limit?: number };
 export type ShiftQuery = { from?: string; to?: string; cashierId?: string; open?: boolean; limit?: number };
 /** Visit days (YYYY-MM-DD, inclusive); none means all time. */
 export type BillQuery = { from?: string; to?: string; patientId?: string; status?: BillFilter; limit?: number };
@@ -936,6 +939,17 @@ export interface IStorage {
   /** Voids a receipt and all its shares, once (StorageConflict after). */
   voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined>;
   listBills(query: BillQuery): Promise<BillSummary[]>;
+  // B7.4 refunds (rules: shared/refund.ts). The payout goes through Actor.shiftId like any money.
+  /** Asks to hand back part of the bill's credit; more than is free of open requests is refused. */
+  requestRefund(visitId: string, input: RequestRefundInput, actor: Actor): Promise<RefundView | undefined>;
+  /** Approves or rejects, once; never by the person who asked (StorageConflict). */
+  decideRefund(id: string, approve: boolean, note: string | null, actor: Actor): Promise<RefundView | undefined>;
+  /** Hands the money out: negative payments on the lines holding the credit, oldest first. */
+  payRefund(id: string, actor: Actor): Promise<RefundView | undefined>;
+  cancelRefund(id: string, reason: string, actor: Actor): Promise<RefundView | undefined>;
+  getRefund(id: string): Promise<RefundView | undefined>;
+  listRefunds(query: RefundQuery): Promise<RefundView[]>;
+  markRefundPrinted(id: string): Promise<number | undefined>;
   /** B7.6: a receipt with its bill, patient and shift — what its chek prints. */
   getReceiptSlip(receiptId: string): Promise<ReceiptSlip | undefined>;
   /** B7.6: counts one print of the chek (atomically); the new count, undefined when there is no such receipt. */

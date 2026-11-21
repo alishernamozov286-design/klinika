@@ -67,6 +67,9 @@ export type ShiftPaymentRow = {
   voidReason: string | null;
   /** The bill receipt this row is a share of, if any. */
   receiptId: string | null;
+  /** B7.4: the refund this (negative) row pays out, if any. */
+  refundId: string | null;
+  refundNumber: number | null;
   receiptNumber: number | null;
   invoiceNumber: number | null;
   orderNumber: number | null;
@@ -100,7 +103,7 @@ export type ShiftEntry = {
 export function shiftEntries(rows: ShiftPaymentRow[]): ShiftEntry[] {
   const byKey = new Map<string, ShiftEntry>();
   for (const r of rows) {
-    const key = r.receiptId ?? r.id;
+    const key = r.receiptId ?? r.refundId ?? r.id;
     const seen = byKey.get(key);
     if (seen) {
       seen.amount += r.amount;
@@ -112,7 +115,9 @@ export function shiftEntries(rows: ShiftPaymentRow[]): ShiftEntry[] {
       kind,
       title: r.receiptId
         ? `Kvitansiya №${r.receiptNumber ?? "—"}${r.invoiceNumber ? ` · Hisobvaraq №${r.invoiceNumber}` : ""}`
-        : `Buyurtma #${r.orderNumber ?? "—"}`,
+        : r.refundId
+          ? `Qaytarish №${r.refundNumber ?? "—"}`
+          : `Buyurtma #${r.orderNumber ?? "—"}`,
       patientName: r.patientName,
       patientNumber: r.patientNumber,
       amount: r.amount,
