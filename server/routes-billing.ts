@@ -4,13 +4,15 @@
  *   payments.create | finance.view   read bills, the debtors list and debt per patient (B7.3)
  *   payments.create                  open a bill (its number), take a payment on it (in an open cash shift, B7.5)
  *   payments.delete                  void a receipt, whole, with a reason
+ *   payments.discount                a discount on the unpaid part of a bill, with a reason (B7.2)
  *   payments.create | finance.view   read a receipt's chek (B7.6); printing it is payments.create
  *
  * A refund is not taken here: it stays with payments.refund (B7.4).
  * Rules: shared/invoice.ts.
  */
 import type { Express } from "express";
-import { payBillSchema, voidPaymentSchema, PAYMENT_METHOD_LABELS, type ReceiptSlipView } from "@shared/schema";
+import { discountBillSchema, payBillSchema, voidPaymentSchema, PAYMENT_METHOD_LABELS, type ReceiptSlipView } from "@shared/schema";
+import { describeDiscount } from "@shared/discount";
 import { BILL_FILTERS, describeShares, type BillFilter } from "@shared/invoice";
 import { requirePermission } from "./rbac";
 import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
@@ -128,6 +130,28 @@ export function registerBillingRoutes(app: Express) {
         `Hisobvaraq №${slip.invoiceNumber}, kvitansiya №${r.number} (${sum(r.amount)}) cheki ${printCount > 1 ? `qayta chop etildi — nusxa (${printCount}-marta)` : "chop etildi"}${r.voidedAt ? ", bekor qilingan kvitansiya" : ""}`,
       );
       res.json({ printCount });
+    }),
+  );
+
+  /** B7.2: a discount on the whole bill or one service, percent or sum, only on what is unpaid. */
+  app.post(
+    "/api/bills/:visitId/discounts",
+    requirePermission("payments.discount"),
+    handle(async (req, res) => {
+      const input = discountBillSchema.parse(req.body);
+      const before = await storage.getBill(req.params.visitId);
+      if (!before) return res.status(404).json({ message: "Tashrif topilmadi" });
+      const out = (await storage.discountBill(req.params.visitId, input, actorOf(req)))!;
+      const d = out.discount;
+      await audit(
+        req,
+        "discount",
+        "invoice",
+        out.bill.invoice?.id ?? req.params.visitId,
+        `№${out.bill.patient.patientNumber} ${out.bill.patient.fullName}, ${out.bill.visitDate}: chegirma ${describeDiscount(d.mode, d.value, d.total)} — ` +
+          `${d.lines.map((l) => `${l.title} ${sum(l.amount)}`).join(" + ")}; qarz ${sum(before.totals.due)} → ${sum(out.bill.totals.due)}. Sabab: ${d.reason}`,
+      );
+      res.status(201).json(out);
     }),
   );
 

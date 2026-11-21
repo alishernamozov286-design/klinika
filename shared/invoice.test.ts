@@ -9,6 +9,7 @@ const line = (over: Partial<BillLine>): BillLine => ({
   detail: "",
   createdAt: "2026-11-20T09:00:00.000Z",
   amount: 100000,
+  discount: 0,
   paid: 0,
   cancelled: false,
   ...over,

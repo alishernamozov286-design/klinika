@@ -153,6 +153,7 @@ import {
 import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type DepartmentLine, type MovementTotal } from "@shared/inventory-reports";
 import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
+import { DISCOUNT_LINE_GONE, DISCOUNT_NOTHING, planDiscount } from "@shared/discount";
 import type {
   Bill,
   BillSummary,
@@ -166,6 +167,8 @@ import type {
   Refund,
   RefundView,
   RequestRefundInput,
+  BillDiscount,
+  DiscountBillInput,
   Invoice,
   InvoiceReceipt,
   PayBillInput,
@@ -774,6 +777,7 @@ export class FileStorage implements IStorage {
       queueNumber: nextQueueNumber(day.map((x) => x.queueNumber)),
       status: "scheduled",
       price: input.price,
+      discount: 0,
       reason: input.reason ?? null,
       referralId: input.referralId ?? null,
       arrivedAt: null,
@@ -1656,6 +1660,7 @@ export class FileStorage implements IStorage {
         for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
         for (const r of this.db.referrals) if (r.visitId === v.id) r.visitId = same.id;
         for (const r of this.db.refunds) if (r.visitId === v.id) r.visitId = same.id;
+        for (const d of this.db.billDiscounts) if (d.visitId === v.id) d.visitId = same.id;
         // Bills (B7.1): the target's bill of the day takes the duplicate's receipts; otherwise the bill moves.
         const theirs = this.db.invoices.find((i) => i.visitId === v.id);
         const ours = this.db.invoices.find((i) => i.visitId === same.id);
@@ -1684,6 +1689,7 @@ export class FileStorage implements IStorage {
     for (const i of this.db.invoices) if (i.patientId === sourceId) i.patientId = targetId;
     for (const r of this.db.invoicePayments) if (r.patientId === sourceId) r.patientId = targetId;
     for (const r of this.db.refunds) if (r.patientId === sourceId) r.patientId = targetId;
+    for (const d of this.db.billDiscounts) if (d.patientId === sourceId) d.patientId = targetId;
     this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
     await this.persist();
     return { orders, contacts, appointments };
@@ -1758,6 +1764,7 @@ export class FileStorage implements IStorage {
       invoices: mine(this.db.invoices),
       invoice_payments: mine(this.db.invoicePayments),
       refunds: mine(this.db.refunds),
+      bill_discounts: mine(this.db.billDiscounts),
     });
     if (problem) throw new StorageConflict(problem);
     const before = this.db.patients.length;
@@ -3924,6 +3931,7 @@ export class FileStorage implements IStorage {
       lines,
       receipts,
       refunds: await this.listRefunds({ visitId }),
+      discounts: this.db.billDiscounts.filter((d) => d.visitId === visitId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       totals: billTotals(lines),
     };
   }
@@ -4046,6 +4054,47 @@ export class FileStorage implements IStorage {
     }
     rows.sort((a, b) => b.visitDate.localeCompare(a.visitDate) || a.patientName.localeCompare(b.patientName));
     return filterBills(rows, query.status).slice(0, query.limit ?? 500);
+  }
+
+  async discountBill(visitId: string, input: DiscountBillInput, actor: Actor): Promise<{ bill: Bill; discount: BillDiscount } | undefined> {
+    const visit = this.db.visits.find((v) => v.id === visitId);
+    if (!visit) return undefined;
+    const lines = this.billLinesOf(visitId);
+    if (input.target && !lines.some((l) => l.source === input.target!.source && l.sourceId === input.target!.sourceId && l.amount > l.paid)) {
+      throw new StorageConflict(DISCOUNT_LINE_GONE);
+    }
+    const plan = planDiscount(lines, input.mode, input.value, input.target);
+    if (!plan.total) throw new StorageConflict(DISCOUNT_NOTHING);
+    const now = new Date().toISOString();
+    for (const l of plan.lines) {
+      if (l.source === "order") {
+        const o = this.db.orders.find((x) => x.id === l.sourceId)!;
+        o.discount += l.amount;
+        o.totalAmount -= l.amount;
+        this.touchOrder(o, actor);
+      } else {
+        const a = this.db.appointments.find((x) => x.id === l.sourceId)!;
+        a.discount = (a.discount ?? 0) + l.amount;
+        a.updatedAt = now;
+        a.updatedBy = actor.id;
+      }
+    }
+    const discount: BillDiscount = {
+      id: randomUUID(),
+      patientId: visit.patientId,
+      visitId,
+      mode: input.mode,
+      value: input.value,
+      total: plan.total,
+      lines: plan.lines,
+      reason: input.reason,
+      createdAt: now,
+      createdBy: actor.id,
+      createdByName: actor.name,
+    };
+    this.db.billDiscounts.push(discount);
+    await this.persist();
+    return { bill: (await this.getBill(visitId))!, discount };
   }
 
   async listDebtors(): Promise<DebtorRow[]> {

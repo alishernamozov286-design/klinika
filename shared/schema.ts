@@ -41,6 +41,7 @@ import { ADMIN_ROUTES, MAX_PRESCRIPTION_LINES, PRESCRIPTION_KINDS, type Treatmen
 import type { BillLine, BillSource, BillTotals } from "./invoice";
 import type { ShiftEntry, ShiftTotals } from "./cash-shift";
 import type { RefundLine, RefundStatus } from "./refund";
+import { DISCOUNT_MODES, type DiscountLine, type DiscountMode } from "./discount";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -463,6 +464,8 @@ export const appointments = pgTable(
     status: text("status").notNull().default("scheduled"),
     /** Price at booking time — a later price change does not rewrite it. */
     price: money("price").notNull().default(0),
+    /** B7.2: discount given on the bill; the charge is price − discount (shared/invoice.ts appointmentCharge). */
+    discount: money("discount").notNull().default(0),
     /** Why the patient is coming, as told to the registrar. */
     reason: text("reason"),
     /** The referral this booking fulfils (B3.5), if any. */
@@ -1091,6 +1094,31 @@ export const refunds = pgTable(
     printCount: integer("print_count").notNull().default(0),
   },
   (t) => [index("IDX_refunds_visit").on(t.visitId), index("IDX_refunds_status").on(t.status), index("IDX_refunds_patient").on(t.patientId)],
+);
+
+/**
+ * Chegirma (B7.2, TZ §9.2): one discount given on a bill — whole or on one
+ * service, percent or sum, with a reason — and what it took off each line
+ * (the lines' own discount columns carry the effect). Append-only.
+ */
+export const billDiscounts = pgTable(
+  "bill_discounts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    patientId: varchar("patient_id").notNull(),
+    visitId: varchar("visit_id").notNull(),
+    mode: text("mode").notNull(),
+    /** Percent (1–100) or the sum asked for. */
+    value: integer("value").notNull(),
+    /** What was actually taken off, in so'm. */
+    total: money("total").notNull(),
+    lines: json("lines").$type<DiscountLine[]>().notNull(),
+    reason: text("reason").notNull(),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    createdByName: text("created_by_name"),
+  },
+  (t) => [index("IDX_bill_discounts_visit").on(t.visitId), index("IDX_bill_discounts_patient").on(t.patientId)],
 );
 
 /** Money out. Without it the reports only ever show turnover, never profit. */
@@ -2102,6 +2130,7 @@ export type Refund = Omit<typeof refunds.$inferSelect, "method" | "status"> & { 
 export type RefundView = Refund & { patientNumber: number; patientName: string; visitDate: string; shiftNumber: number | null };
 /** B7.4: a refund's chek. */
 export type RefundSlipView = { refund: RefundView; clinic: LabSettings; logo: string | null };
+export type BillDiscount = Omit<typeof billDiscounts.$inferSelect, "mode"> & { mode: DiscountMode };
 /** The bill of one visit (B7.1). */
 export type Bill = {
   visitId: string;
@@ -2113,6 +2142,8 @@ export type Bill = {
   receipts: InvoiceReceipt[];
   /** B7.4: refunds asked on this bill, newest first. */
   refunds: RefundView[];
+  /** B7.2: discounts given on this bill, newest first. */
+  discounts: BillDiscount[];
   totals: BillTotals;
 };
 export type CashShift = typeof cashShifts.$inferSelect;
@@ -2455,6 +2486,17 @@ export const closeShiftSchema = z.object({
   note: shiftNote,
 });
 export type CloseShiftInput = z.infer<typeof closeShiftSchema>;
+
+/** B7.2: a discount on a bill — whole (target null) or one service. */
+export const discountBillSchema = z
+  .object({
+    mode: z.enum(DISCOUNT_MODES, { errorMap: () => ({ message: "Chegirma turini tanlang" }) }),
+    value: z.coerce.number({ invalid_type_error: "Qiymatni kiriting" }).int("Butun son bo'lsin").positive("Qiymat musbat bo'lishi kerak").max(1_000_000_000, "Juda katta"),
+    target: z.object({ source: z.enum(["appointment", "order"]), sourceId: z.string().min(1) }).nullish().transform((v) => v ?? null),
+    reason: z.string().trim().min(5, "Chegirma sababini yozing (kamida 5 belgi)").max(300, "Juda uzun"),
+  })
+  .refine((d) => d.mode !== "percent" || d.value <= 100, { message: "Foiz 100 dan oshmasin", path: ["value"] });
+export type DiscountBillInput = z.infer<typeof discountBillSchema>;
 
 /** B7.4: asking to hand back part of a bill's credit. */
 export const requestRefundSchema = z.object({

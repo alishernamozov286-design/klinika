@@ -5,11 +5,11 @@ import type { TestGroup } from "@shared/lab-catalogue";
 import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
-import type { BillFilter } from "@shared/invoice";
+import { appointmentCharge, type BillFilter } from "@shared/invoice";
 import type { RefundStatus } from "@shared/refund";
 import type { CashDayRow } from "@shared/cash-report";
 import type { DebtorRow } from "@shared/debt";
-import type { Bill, BillSummary, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
+import type { Bill, BillDiscount, BillSummary, DiscountBillInput, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
 /** B7.4: `status` alone lists every refund in it (open ones whenever asked); a range applies to the request time. */
 export type RefundQuery = { status?: RefundStatus; from?: string; to?: string; visitId?: string; limit?: number };
@@ -437,7 +437,7 @@ export function buildPatientCard(
     const date = (a.visitId && visitDate.get(a.visitId)) || a.date;
     const g = groups.get(key) ?? { key, date, orders: [], appointments: [], billed: 0, paid: 0 };
     g.appointments.push(a);
-    g.billed += a.price;
+    g.billed += appointmentCharge(a);
     g.paid += apptPaid.get(a.id) ?? 0;
     groups.set(key, g);
   }
@@ -460,7 +460,7 @@ export function buildPatientCard(
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
   const live = orderList.filter((o) => o.status !== "cancelled");
-  const billed = live.reduce((s, o) => s + o.totalAmount, 0) + attended.reduce((s, a) => s + a.price, 0);
+  const billed = live.reduce((s, o) => s + o.totalAmount, 0) + attended.reduce((s, a) => s + appointmentCharge(a), 0);
   const paid = live.reduce((s, o) => s + o.paidAmount, 0) + attended.reduce((s, a) => s + (apptPaid.get(a.id) ?? 0), 0);
   const times = [
     ...orderList.map((o) => o.createdAt),
@@ -941,6 +941,8 @@ export interface IStorage {
   /** Voids a receipt and all its shares, once (StorageConflict after). */
   voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined>;
   listBills(query: BillQuery): Promise<BillSummary[]>;
+  /** B7.2: takes a discount off the unpaid lines (shared/discount.ts planDiscount) and keeps it on the bill. */
+  discountBill(visitId: string, input: DiscountBillInput, actor: Actor): Promise<{ bill: Bill; discount: BillDiscount } | undefined>;
   /** B7.3: every patient still owing across all visits, largest debt first. */
   listDebtors(): Promise<DebtorRow[]>;
   // B7.4 refunds (rules: shared/refund.ts). The payout goes through Actor.shiftId like any money.

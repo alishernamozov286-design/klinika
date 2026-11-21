@@ -35,6 +35,8 @@ export const PATIENT_LINKS = {
   invoice_payments: { merge: "move", delete: "block", label: "to'lov kvitansiyalari" },
   /** B7.4: re-pointed at the surviving visit of the day, like referrals. */
   refunds: { merge: "move", delete: "block", label: "to'lov qaytarishlari" },
+  /** B7.2: re-pointed at the surviving visit of the day, like refunds. */
+  bill_discounts: { merge: "move", delete: "block", label: "chegirmalar" },
 } as const satisfies Record<string, PatientLinkRule>;
 
 export type PatientLinkedTable = keyof typeof PATIENT_LINKS;

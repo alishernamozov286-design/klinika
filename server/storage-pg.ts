@@ -22,6 +22,7 @@ import {
   invoicePayments,
   cashShifts,
   refunds,
+  billDiscounts,
   consumptionNorms,
   labConsumptions,
   auditLog,
@@ -178,6 +179,7 @@ import {
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
+import { DISCOUNT_LINE_GONE, DISCOUNT_NOTHING, planDiscount, type DiscountMode } from "@shared/discount";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
   QC_LOOKBACK,
@@ -213,6 +215,8 @@ import type {
   Refund,
   RefundView,
   RequestRefundInput,
+  BillDiscount,
+  DiscountBillInput,
   Bill,
   BillSummary,
   Invoice,
@@ -415,7 +419,7 @@ const BILL_LINES_SQL = sql`
          WHERE o.visit_id IS NOT NULL
         UNION ALL
         SELECT a.visit_id,
-               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price ELSE 0 END,
+               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price - a.discount ELSE 0 END,
                coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
                (a.status IN ('arrived', 'in_progress', 'completed'))::int,
                1
@@ -2200,6 +2204,14 @@ export class PgStorage implements IStorage {
           WHERE sv.patient_id = ${sourceId} AND si.visit_id = sv.id`);
         await tx.update(invoices).set({ patientId: targetId }).where(eq(invoices.patientId, sourceId));
         await tx.update(invoicePayments).set({ patientId: targetId }).where(eq(invoicePayments.patientId, sourceId));
+      }
+      // Discounts (B7.2) likewise.
+      if (await tableExists(tx, "bill_discounts")) {
+        await tx.execute(sql`
+          UPDATE bill_discounts bd SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND bd.visit_id = sv.id`);
+        await tx.update(billDiscounts).set({ patientId: targetId }).where(eq(billDiscounts.patientId, sourceId));
       }
       // Refunds (B7.4) follow the patient, re-pointed at the surviving visit of the day.
       if (await tableExists(tx, "refunds")) {
@@ -4756,6 +4768,7 @@ export class PgStorage implements IStorage {
         status: orders.status,
         totalAmount: orders.totalAmount,
         paidAmount: orders.paidAmount,
+        discount: orders.discount,
         createdAt: orders.createdAt,
         tests: sql<number>`(SELECT count(*)::int FROM order_tests ot WHERE ot.order_id = "orders"."id")`,
       })
@@ -4768,6 +4781,7 @@ export class PgStorage implements IStorage {
         id: appointments.id,
         status: appointments.status,
         price: appointments.price,
+        discount: appointments.discount,
         startTime: appointments.startTime,
         createdAt: appointments.createdAt,
         serviceName: services.name,
@@ -4801,13 +4815,22 @@ export class PgStorage implements IStorage {
       .where(eq(visits.id, visitId))
       .limit(1);
     if (!v) return undefined;
-    const [lines, [invoice], billRefunds] = await Promise.all([
+    const [lines, [invoice], billRefunds, discountRows] = await Promise.all([
       this.billLines(db, visitId),
       db.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1),
       this.listRefunds({ visitId }).catch((e) => {
         if ((e as { code?: string })?.code === "42P01") return [] as RefundView[];
         throw e;
       }),
+      db
+        .select()
+        .from(billDiscounts)
+        .where(eq(billDiscounts.visitId, visitId))
+        .orderBy(desc(billDiscounts.createdAt))
+        .catch((e) => {
+          if ((e as { code?: string })?.code === "42P01") return [] as (typeof billDiscounts.$inferSelect)[];
+          throw e;
+        }),
     ]);
     let receipts: InvoiceReceipt[] = [];
     if (invoice) {
@@ -4840,6 +4863,7 @@ export class PgStorage implements IStorage {
       lines,
       receipts,
       refunds: billRefunds,
+      discounts: discountRows.map((d) => ({ ...d, mode: d.mode as DiscountMode, createdAt: iso(d.createdAt) ?? d.createdAt })),
       totals: billTotals(lines),
     };
   }
@@ -4970,6 +4994,43 @@ export class PgStorage implements IStorage {
       } satisfies BillSummary;
     });
     return filterBills(rows, query.status);
+  }
+
+  async discountBill(visitId: string, input: DiscountBillInput, actor: Actor): Promise<{ bill: Bill; discount: BillDiscount } | undefined> {
+    const row = await db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      // The visit row serialises everything that moves this bill's money; the order rows are locked too.
+      const [v] = await tx.select().from(visits).where(eq(visits.id, visitId)).for("update");
+      if (!v) return undefined;
+      const lines = await this.billLines(exec, visitId, true);
+      if (input.target && !lines.some((l) => l.source === input.target!.source && l.sourceId === input.target!.sourceId && l.amount > l.paid)) {
+        throw new StorageConflict(DISCOUNT_LINE_GONE);
+      }
+      const plan = planDiscount(lines, input.mode, input.value, input.target);
+      if (!plan.total) throw new StorageConflict(DISCOUNT_NOTHING);
+      const now = new Date().toISOString();
+      for (const l of plan.lines) {
+        if (l.source === "order") {
+          // The order's total is subtotal − discount; both move together (planDiscount never passes what it owes).
+          await tx
+            .update(orders)
+            .set({ discount: sql`discount + ${l.amount}`, totalAmount: sql`total_amount - ${l.amount}`, updatedAt: now, updatedBy: actor.id })
+            .where(eq(orders.id, l.sourceId));
+        } else {
+          await tx
+            .update(appointments)
+            .set({ discount: sql`discount + ${l.amount}`, updatedAt: now, updatedBy: actor.id })
+            .where(eq(appointments.id, l.sourceId));
+        }
+      }
+      const [d] = await tx
+        .insert(billDiscounts)
+        .values({ patientId: v.patientId, visitId, mode: input.mode, value: input.value, total: plan.total, lines: plan.lines, reason: input.reason, createdBy: actor.id, createdByName: actor.name })
+        .returning();
+      return d;
+    });
+    if (!row) return undefined;
+    return { bill: (await this.getBill(visitId))!, discount: { ...row, mode: row.mode as DiscountMode, createdAt: iso(row.createdAt) ?? row.createdAt } };
   }
 
   async listDebtors(): Promise<DebtorRow[]> {

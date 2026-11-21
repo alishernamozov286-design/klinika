@@ -51,8 +51,10 @@ export type BillLine = {
   /** "10:00 · 2 ta tahlil" etc. */
   detail: string;
   createdAt: string;
-  /** What is owed for it, so'm (0 for something cancelled that still holds money). */
+  /** What is owed for it, so'm (0 for something cancelled that still holds money). Already net of its discount. */
   amount: number;
+  /** B7.2: the discount already taken off it (lab order or appointment). */
+  discount: number;
   paid: number;
   cancelled: boolean;
 };
@@ -81,11 +83,15 @@ export function billTotals(lines: readonly Pick<BillLine, "amount" | "paid">[]):
   return { ...sums, status: billStatus(sums, lines.length) };
 }
 
-type OrderForBill = { id: string; orderNumber: number; status: string; totalAmount: number; paidAmount: number; createdAt: string; tests: number };
+/** B7.2: what an appointment charges — its price frozen at booking less its discount. */
+export const appointmentCharge = (a: { price: number; discount?: number | null }) => Math.max(0, a.price - (a.discount ?? 0));
+
+type OrderForBill = { id: string; orderNumber: number; status: string; totalAmount: number; paidAmount: number; createdAt: string; tests: number; discount?: number | null };
 type AppointmentForBill = {
   id: string;
   status: string;
   price: number;
+  discount?: number | null;
   paid: number;
   startTime: string;
   createdAt: string;
@@ -111,7 +117,8 @@ export function buildBillLines(orders: readonly OrderForBill[], appointments: re
       title: a.serviceName ?? `${a.specialty} ko'rigi`,
       detail: `${a.startTime} · ${a.doctorName}${a.serviceName ? ` (${a.specialty})` : ""}`,
       createdAt: a.createdAt,
-      amount: live ? a.price : 0,
+      amount: live ? appointmentCharge(a) : 0,
+      discount: live ? (a.discount ?? 0) : 0,
       paid: a.paid,
       cancelled: !live,
     });
@@ -126,6 +133,7 @@ export function buildBillLines(orders: readonly OrderForBill[], appointments: re
       detail: `${o.tests} ta tahlil`,
       createdAt: o.createdAt,
       amount: live ? o.totalAmount : 0,
+      discount: live ? (o.discount ?? 0) : 0,
       paid: o.paidAmount,
       cancelled: !live,
     });

@@ -2772,3 +2772,33 @@ describe("debtors (B7.3)", () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe("discounts (B7.2)", () => {
+  it("a discount lowers the unpaid lines, follows into the order and the appointment, and stays on the bill", async () => {
+    const cashier = { id: "kassa1", name: "Yusupova Malika" };
+    const user = await storage.createUser({ username: "dr72", password: "parol123", fullName: "Ergashev Jamol", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: null, specialty: "Terapevt", consultationPrice: 80000, slotMinutes: 20, schedule: [], isActive: true }, cashier);
+    const patient = await storage.createPatient({ fullName: "Mirzayeva Kamola", phone: "+998903030303", gender: "ayol", age: 70, address: null });
+    const today = new Date().toISOString().slice(0, 10);
+    const appt = await storage.createAppointment({ patientId: patient.id, doctorId: doctor.id, serviceId: null, date: today, startTime: "09:00", reason: null, durationMinutes: 20, price: 80000 }, cashier, () => null);
+    const arrived = await storage.setAppointmentStatus(appt.id, { from: "scheduled", to: "arrived" }, cashier);
+    const order = await storage.createOrder({ patientId: patient.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: cashier.id });
+    const visitId = arrived.visitId!;
+
+    const out = (await storage.discountBill(visitId, { mode: "percent", value: 10, target: null, reason: "Pensioner chegirmasi" }, cashier))!;
+    expect(out.discount).toMatchObject({ mode: "percent", value: 10, total: 8000 + Math.round(order.totalAmount / 10), reason: "Pensioner chegirmasi" });
+    expect(out.bill.lines.map((l) => [l.source, l.amount, l.discount])).toEqual([
+      ["appointment", 72000, 8000],
+      ["order", order.totalAmount - Math.round(order.totalAmount / 10), Math.round(order.totalAmount / 10)],
+    ]);
+    expect(out.bill.discounts).toHaveLength(1);
+    const o = (await storage.getOrder(order.id))!;
+    expect([o.discount, o.totalAmount]).toEqual([Math.round(order.totalAmount / 10), order.totalAmount - Math.round(order.totalAmount / 10)]);
+    expect((await storage.getPatientCard(patient.id))!.totals.billed).toBe(out.bill.totals.amount);
+
+    // Paid lines take no discount: pay all, then try.
+    await storage.payBill(visitId, { amount: out.bill.totals.due, method: "naqd", note: null }, cashier);
+    await expect(storage.discountBill(visitId, { mode: "amount", value: 1000, target: null, reason: "Yana bir chegirma" }, cashier)).rejects.toThrow(/to'lanmagan summa yo'q/);
+    await expect(storage.discountBill(visitId, { mode: "percent", value: 5, target: { source: "order", sourceId: order.id }, reason: "Faqat tahlilga" }, cashier)).rejects.toThrow(/to'liq to'langan/);
+  });
+});

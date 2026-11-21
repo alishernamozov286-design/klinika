@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ReceiptSlipDialog } from "@/components/cashier/receipt-slip";
 import { BillRefunds, RefundsTab, usePendingRefunds } from "@/components/cashier/refunds";
+import { BillDiscounts, DiscountDialog } from "@/components/cashier/discount";
 import { CashHomeTab, DailyTakingsTab, type CashHomeTarget } from "@/components/cashier/home";
 import { DebtorsTab } from "@/components/cashier/debtors";
 import { PriceListPanel } from "@/pages/services";
@@ -304,6 +305,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
   const { data: desk } = useCashDesk();
   const [openingShift, setOpeningShift] = useState(false);
   const [slipFor, setSlipFor] = useState<string | null>(null);
+  const [discounting, setDiscounting] = useState(false);
 
   const refresh = (b: Bill) => {
     queryClient.setQueryData([key], b);
@@ -415,6 +417,11 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
                           </TableCell>
                           <TableCell className="text-right">
                             <Money value={l.amount} />
+                            {l.discount > 0 && (
+                              <span className="block text-xs text-amber-700 dark:text-amber-300" data-testid={`bill-line-discount-${l.source}-${l.sourceId}`}>
+                                chegirma −{money(l.discount)}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="hidden text-right sm:table-cell">
                             <Money value={l.paid} />
@@ -452,6 +459,16 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
                   </p>
                 )}
               </div>
+
+              {/* A discount moves no money, so it needs no cash shift. */}
+              {can("payments.discount") && due > 0 && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-dashed p-3 text-sm" data-testid="bill-discount-row">
+                  <span className="text-muted-foreground">To'lanmagan {money(due)} — chegirma faqat shu qismga</span>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setDiscounting(true)} data-testid="button-bill-discount">
+                    Chegirma berish
+                  </Button>
+                </div>
+              )}
 
               {can("payments.create") && due > 0 && desk && !desk.shift && (
                 <div className="flex flex-col gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:flex-row sm:items-center sm:justify-between" data-testid="bill-no-shift">
@@ -531,6 +548,8 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
                   </div>
                 </form>
               )}
+
+              <BillDiscounts discounts={bill.discounts} />
 
               <BillRefunds bill={bill} />
 
@@ -633,6 +652,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
       />
       <OpenShiftDialog open={openingShift} onOpenChange={setOpeningShift} desk={desk} />
       <ReceiptSlipDialog receiptId={slipFor} onClose={() => setSlipFor(null)} />
+      {bill && <DiscountDialog bill={bill} open={discounting} onOpenChange={setDiscounting} onDone={refresh} />}
     </Dialog>
   );
 }

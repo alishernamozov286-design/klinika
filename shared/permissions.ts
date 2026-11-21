@@ -259,6 +259,12 @@ export const PERMISSIONS = {
     label: "To'lov qabul qilish",
     description: "Buyurtma uchun to'lov qabul qilish",
   },
+  "payments.discount": {
+    group: "finance",
+    label: "Chegirma berish",
+    description: "Hisobvaraqning to'lanmagan qismiga foiz yoki summa bilan chegirma, sabab bilan (TZ §9.2)",
+    sensitive: true,
+  },
   "payments.refund": {
     group: "finance",
     label: "To'lovni qaytarish",
@@ -415,6 +421,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "orders.cancel",
       "finance.view",
       "payments.refund",
+      "payments.discount",
       "shifts.read",
       "shifts.manage",
       "expenses.read",
@@ -445,6 +452,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "results.send",
       "finance.view",
       "payments.create",
+      "payments.discount",
     ],
   },
   {
