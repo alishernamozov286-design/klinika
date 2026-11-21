@@ -530,7 +530,8 @@ function ServiceForm({
 
 // --------------------------------------------------------------- price list
 
-function PriceListPanel() {
+/** The price list (TZ §9.1 "Xizmatlar narxlari"): also the cash desk's "Narxlar" tab (B7.7). */
+export function PriceListPanel() {
   const { can } = useAuth();
   const [search, setSearch] = useState("");
   const [kindFilter, setKindFilter] = useState<"all" | PriceListKind>("all");

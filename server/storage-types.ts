@@ -7,6 +7,7 @@ import type { ClinicLogo } from "@shared/branding";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import type { BillFilter } from "@shared/invoice";
 import type { RefundStatus } from "@shared/refund";
+import type { CashDayRow } from "@shared/cash-report";
 import type { Bill, BillSummary, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
 /** B7.4: `status` alone lists every refund in it (open ones whenever asked); a range applies to the request time. */
@@ -973,6 +974,8 @@ export interface IStorage {
   /** Issues to departments in the range, net of cancellations, per department and item. */
   departmentLines(range: { from: string; to: string }): Promise<DepartmentLine[]>;
   getRevenueReport(from: string, to: string): Promise<RevenueReportData>;
+  /** B7.7: the money ledger (voided rows out) per local day and method; ISO instants, `to` exclusive. Quiet days are absent. */
+  cashDayTotals(range: { from: string; to: string }): Promise<CashDayRow[]>;
 
   /** Session policy; the defaults when nothing was ever saved. */
   getSecuritySettings(): Promise<SecuritySettings>;

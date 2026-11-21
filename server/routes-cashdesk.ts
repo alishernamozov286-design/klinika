@@ -1,9 +1,10 @@
 /**
  * Kassa smenasi (B7.5, TZ §9.2 "Kassa smenasini yopish").
  *
- *   payments.create | payments.refund   open, read and close one's own shift
+ *   payments.create                     open, read and close one's own shift
  *   shifts.read                         every cashier's shifts and reports
  *   shifts.manage                       close a shift someone left open
+ *   payments.create | finance.view      the desk's home page and daily takings (B7.7)
  *
  * Every route that moves money asks `tillActor` first: no open shift, no
  * money. Rules: shared/cash-shift.ts.
@@ -14,7 +15,8 @@ import { COUNT_OUTCOME_LABELS, SHIFT_REQUIRED, closeProblem, countOutcome } from
 import { hasPermission, requirePermission } from "./rbac";
 import { actorOf, audit, dayRange, emptyIfMissing, handle, stringParam } from "./route-helpers";
 import { storage } from "./storage";
-import type { Actor } from "./storage-types";
+import { todayKey, type Actor } from "./storage-types";
+import { cashDays, cashTotal, type CashOverview } from "@shared/cash-report";
 
 const sum = (n: number) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
 
@@ -32,7 +34,8 @@ export async function tillActor(req: Request, res: Response): Promise<Actor | nu
   return { ...actorOf(req), shiftId: shift.id };
 }
 
-const handlesMoney = (req: Request) => hasPermission(req, "payments.create") || hasPermission(req, "payments.refund");
+// Since B7.4 payments.refund only approves; money moves through payments.create alone.
+const handlesMoney = (req: Request) => hasPermission(req, "payments.create");
 
 /** Own shifts for whoever handles money; everyone's with shifts.read. */
 function mayRead(req: Request, shift: { cashierId: string }) {
@@ -54,11 +57,79 @@ function describeClose(r: ShiftReport): string {
   );
 }
 
+/** YYYY-MM-DD moved by whole days (calendar arithmetic, no clock involved). */
+const addDays = (day: string, n: number) => {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
 export function registerCashDeskRoutes(app: Express) {
+  /** B7.7 Kassa bosh sahifasi: today, the month, 30 days, today's debts, refunds waiting, open shifts — one round. */
+  app.get(
+    "/api/cashier/overview",
+    requirePermission("payments.create", "payments.refund", "finance.view", "shifts.read"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const monthStart = `${today.slice(0, 8)}01`;
+      const first = [addDays(today, -29), monthStart].sort()[0];
+      const range = dayRange(first, today) as { from: string; to: string };
+      const seesShifts = hasPermission(req, "shifts.read") || handlesMoney(req);
+      const [rows, bills, requested, approved, shifts] = await Promise.all([
+        storage.cashDayTotals(range),
+        storage.listBills({ from: today, to: today }).catch((e) => emptyIfMissing(e, [])),
+        storage.listRefunds({ status: "requested" }).catch((e) => emptyIfMissing(e, [])),
+        storage.listRefunds({ status: "approved" }).catch((e) => emptyIfMissing(e, [])),
+        seesShifts
+          ? storage.listShifts({ open: true, cashierId: hasPermission(req, "shifts.read") ? undefined : req.user!.id }).catch((e) => emptyIfMissing(e, []))
+          : Promise.resolve([]),
+      ]);
+      const all = cashDays(rows, first, today);
+      const byDate = new Map(all.map((d) => [d.date, d]));
+      const sumOf = (xs: { amount: number }[]) => xs.reduce((s, x) => s + x.amount, 0);
+      const overview: CashOverview = {
+        today: byDate.get(today)!,
+        weekAgo: byDate.get(addDays(today, -7)) ?? cashDays([], addDays(today, -7), addDays(today, -7))[0],
+        month: { ...cashTotal(all.filter((d) => d.date >= monthStart)), from: monthStart },
+        days: all.filter((d) => d.date >= addDays(today, -29)),
+        bills: {
+          count: bills.length,
+          amount: bills.reduce((s, b) => s + b.totals.amount, 0),
+          paid: bills.reduce((s, b) => s + b.totals.paid, 0),
+          due: bills.reduce((s, b) => s + b.totals.due, 0),
+          debtors: bills
+            .filter((b) => b.totals.due > 0)
+            .sort((a, b) => b.totals.due - a.totals.due)
+            .slice(0, 6)
+            .map((b) => ({ visitId: b.visitId, patientName: b.patientName, patientNumber: b.patientNumber, due: b.totals.due })),
+        },
+        refunds: { requested: { count: requested.length, amount: sumOf(requested) }, approved: { count: approved.length, amount: sumOf(approved) } },
+        openShifts: shifts.map((x) => ({ id: x.id, number: x.number, cashierName: x.cashierName, openedAt: x.openedAt, hours: x.hours, expectedCash: x.totals.expectedCash, net: x.totals.net })),
+      };
+      res.json(overview);
+    }),
+  );
+
+  /** B7.7 Kunlik tushum: every day of a period (YYYY-MM-DD, inclusive), with the period's total. */
+  app.get(
+    "/api/cashier/daily",
+    requirePermission("payments.create", "payments.refund", "finance.view", "shifts.read"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const from = stringParam(req.query.from) ?? `${today.slice(0, 8)}01`;
+      const to = stringParam(req.query.to) ?? today;
+      const range = dayRange(from, to);
+      if ("error" in range) return res.status(400).json({ message: range.error });
+      if (addDays(from, 366) < to) return res.status(400).json({ message: "Davr ko'pi bilan bir yil bo'lishi mumkin" });
+      const days = cashDays(await storage.cashDayTotals(range), from, to);
+      res.json({ from, to, days, total: cashTotal(days) });
+    }),
+  );
+
   /** The person at the desk: their open shift with its live report, and what the last one left. */
   app.get(
     "/api/cash-shifts/current",
-    requirePermission("payments.create", "payments.refund"),
+    requirePermission("payments.create"),
     handle(async (req, res) => {
       res.json(await storage.getCashDesk(req.user!.id).catch((e) => emptyIfMissing(e, { shift: null, last: null })));
     }),
@@ -66,7 +137,7 @@ export function registerCashDeskRoutes(app: Express) {
 
   app.post(
     "/api/cash-shifts",
-    requirePermission("payments.create", "payments.refund"),
+    requirePermission("payments.create"),
     handle(async (req, res) => {
       const input = openShiftSchema.parse(req.body);
       const desk = await storage.getCashDesk(req.user!.id);
@@ -88,7 +159,7 @@ export function registerCashDeskRoutes(app: Express) {
   /** Shifts opened in a period (open ones always), or only those still open. */
   app.get(
     "/api/cash-shifts",
-    requirePermission("payments.create", "payments.refund", "shifts.read"),
+    requirePermission("payments.create", "shifts.read"),
     handle(async (req, res) => {
       const from = stringParam(req.query.from);
       const to = stringParam(req.query.to);
@@ -107,7 +178,7 @@ export function registerCashDeskRoutes(app: Express) {
 
   app.get(
     "/api/cash-shifts/:id",
-    requirePermission("payments.create", "payments.refund", "shifts.read"),
+    requirePermission("payments.create", "shifts.read"),
     handle(async (req, res) => {
       const shift = await storage.getShift(req.params.id);
       if (!shift || !mayRead(req, shift)) return res.status(404).json({ message: "Smena topilmadi" });
@@ -118,7 +189,7 @@ export function registerCashDeskRoutes(app: Express) {
   /** Counts the drawer and freezes the report. Someone else's shift needs shifts.manage. */
   app.post(
     "/api/cash-shifts/:id/close",
-    requirePermission("payments.create", "payments.refund", "shifts.manage"),
+    requirePermission("payments.create", "shifts.manage"),
     handle(async (req, res) => {
       const input = closeShiftSchema.parse(req.body);
       const before = await storage.getShift(req.params.id);

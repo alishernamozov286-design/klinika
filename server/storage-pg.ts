@@ -176,6 +176,7 @@ import {
   type BillLine,
 } from "@shared/invoice";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
+import type { CashDayRow } from "@shared/cash-report";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
   QC_LOOKBACK,
@@ -397,11 +398,25 @@ const strip = (user: typeof users.$inferSelect): PublicUser => {
 };
 
 /**
+ * The clinic's local day in SQL. "Today" and day boundaries come from the
+ * server's clock (TZ=Asia/Tashkent in deploys, `localDay()` / `todayKey()`),
+ * so Postgres must cut days on the same zone — never its session's, which on
+ * Neon is GMT (and over HTTP queries there is no session to SET). Otherwise a
+ * payment at 01:00 Tashkent lands on the day before. The zone name comes from
+ * Node itself and is checked before it is written into SQL.
+ */
+const SERVER_TZ = (() => {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  return /^[A-Za-z0-9_+\-/]+$/.test(zone) ? zone : "UTC";
+})();
+const LOCAL_TZ = sql.raw(`'${SERVER_TZ}'`);
+
+/**
  * Date filters compare on the lab's local day. Postgres stores timestamptz, so
  * the comparison is done in SQL against the server's own timezone rather than
  * pulling rows into JS first.
  */
-const dayExpr = sql`(${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date`;
+const dayExpr = sql`(${orders.createdAt} AT TIME ZONE ${LOCAL_TZ})::date`;
 
 const mapIcd = (row: typeof icd10.$inferSelect): IcdEntry => {
   const { updatedBy: _by, ...rest } = row;
@@ -1948,14 +1963,14 @@ export class PgStorage implements IStorage {
           WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`;
     const visitCount = withAppointments
       ? sql<number>`(SELECT count(DISTINCT k)::int FROM (
-            SELECT coalesce(o.visit_id, ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text) AS k
+            SELECT coalesce(o.visit_id, ((o.created_at AT TIME ZONE ${LOCAL_TZ})::date)::text) AS k
               FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled'
             UNION ALL
             SELECT ap.visit_id FROM appointments ap WHERE ap.patient_id = "patients"."id"
               AND ap.visit_id IS NOT NULL AND ap.status IN ('arrived', 'in_progress', 'completed')
           ) x)`
       : sql<number>`(SELECT count(DISTINCT coalesce(o.visit_id,
-            ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
+            ((o.created_at AT TIME ZONE ${LOCAL_TZ})::date)::text))::int
           FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`;
     let q = db
       .select({ patient: patients, lastVisitAt, visitCount })
@@ -3395,7 +3410,7 @@ export class PgStorage implements IStorage {
         SELECT * FROM ${orders} WHERE status <> 'cancelled'
       ), today AS (
         SELECT * FROM active
-        WHERE (created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${today}::date
+        WHERE (created_at AT TIME ZONE ${LOCAL_TZ})::date = ${today}::date
       )
       SELECT
         (SELECT count(DISTINCT patient_id) FROM today)::int                                   AS today_patients,
@@ -3567,7 +3582,7 @@ export class PgStorage implements IStorage {
           runs: sql<number>`(SELECT count(*)::int FROM qc_results r WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL)`,
           runsToday: sql<number>`(SELECT count(*)::int FROM qc_results r
                                    WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
-                                     AND (r.measured_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date)`,
+                                     AND (r.measured_at AT TIME ZONE ${LOCAL_TZ})::date = ${day}::date)`,
           openRejections: sql<number>`(SELECT count(*)::int FROM qc_results r
                                         WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
                                           AND r.status = 'reject' AND r.reviewed_at IS NULL)`,
@@ -5312,7 +5327,7 @@ export class PgStorage implements IStorage {
       SELECT day,
              sum(CASE WHEN bucket = 'receipt' THEN v ELSE 0 END)::float AS inflow,
              sum(CASE WHEN bucket IN ('department', 'writeoff', 'consumption') THEN -v ELSE 0 END)::float AS outflow
-        FROM (SELECT (m.created_at AT TIME ZONE current_setting('TIMEZONE'))::date::text AS day,
+        FROM (SELECT (m.created_at AT TIME ZONE ${LOCAL_TZ})::date::text AS day,
                      ${MOVEMENT_BUCKET_SQL} AS bucket, ${MOVEMENT_VALUE_SQL} AS v
                 FROM stock_movements m
                 JOIN inventory_batches b ON b.id = m.batch_id
@@ -5321,6 +5336,28 @@ export class PgStorage implements IStorage {
        GROUP BY day
        ORDER BY day`);
     return (res.rows as { day: string; inflow: number; outflow: number }[]).map((r) => ({ date: r.day, in: Number(r.inflow), out: Number(r.outflow) }));
+  }
+
+  async cashDayTotals(range: { from: string; to: string }): Promise<CashDayRow[]> {
+    // A receipt counts once however many services it paid; a refund once however many lines it returned.
+    const res = await db.execute(sql`
+      SELECT (p.created_at AT TIME ZONE ${LOCAL_TZ})::date::text AS day, p.method,
+             coalesce(sum(p.amount) FILTER (WHERE p.amount > 0), 0)::bigint AS taken,
+             coalesce(-sum(p.amount) FILTER (WHERE p.amount < 0), 0)::bigint AS refunded,
+             count(DISTINCT coalesce(p.invoice_payment_id, p.id)) FILTER (WHERE p.amount > 0)::int AS payments,
+             count(DISTINCT coalesce(p.refund_id, p.id)) FILTER (WHERE p.amount < 0)::int AS refunds
+        FROM payments p
+       WHERE p.voided_at IS NULL AND p.created_at >= ${range.from} AND p.created_at < ${range.to}
+       GROUP BY 1, 2
+       ORDER BY 1, 2`);
+    return (res.rows as Record<string, unknown>[]).map((r) => ({
+      date: String(r.day),
+      method: String(r.method) as PaymentMethod,
+      taken: Number(r.taken),
+      refunded: Number(r.refunded),
+      payments: Number(r.payments),
+      refunds: Number(r.refunds),
+    }));
   }
 
   async departmentLines(range: { from: string; to: string }): Promise<DepartmentLine[]> {
@@ -5451,7 +5488,7 @@ export class PgStorage implements IStorage {
     // The same rules as summarizeLabBoard (shared/lab-board.ts), in one
     // statement. Only live orders and those cancelled in the last two days are
     // read; the per-order facts are computed once in "o" and counted below.
-    const local = (col: string) => sql.raw(`(${col} AT TIME ZONE current_setting('TIMEZONE'))::date`);
+    const local = (col: string) => sql.raw(`(${col} AT TIME ZONE '${SERVER_TZ}')::date`);
     const countsQuery = db.execute<LabBoardCounts & { groups: Record<string, number> | null }>(sql`
       WITH o AS (
         SELECT
@@ -5538,10 +5575,10 @@ export class PgStorage implements IStorage {
       WITH today_orders AS (
         SELECT o.total_amount, o.paid_amount FROM orders o
         WHERE o.status <> 'cancelled'
-          AND (o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date
+          AND (o.created_at AT TIME ZONE ${LOCAL_TZ})::date = ${day}::date
       ), new_patients AS (
         SELECT p.id, p.patient_number, p.full_name, p.phone, p.created_at FROM patients p
-        WHERE (p.created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date
+        WHERE (p.created_at AT TIME ZONE ${LOCAL_TZ})::date = ${day}::date
       )
       SELECT
         (SELECT count(DISTINCT v.patient_id) FROM visits v WHERE v.visit_date = ${day}::text)::int AS patients_today,

@@ -151,6 +151,7 @@ import {
   refundTooMuch,
 } from "@shared/refund";
 import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type DepartmentLine, type MovementTotal } from "@shared/inventory-reports";
+import type { CashDayRow } from "@shared/cash-report";
 import type {
   Bill,
   BillSummary,
@@ -4367,6 +4368,28 @@ export class FileStorage implements IStorage {
       acc.set(day, d);
     }
     return Array.from(acc.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  async cashDayTotals(range: { from: string; to: string }): Promise<CashDayRow[]> {
+    const acc = new Map<string, CashDayRow & { seenPay: Set<string>; seenRefund: Set<string> }>();
+    for (const p of this.db.payments) {
+      if (p.voidedAt || p.createdAt < range.from || p.createdAt >= range.to) continue;
+      const date = localDay(p.createdAt);
+      const key = `${date}|${p.method}`;
+      const row = acc.get(key) ?? { date, method: p.method, taken: 0, refunded: 0, payments: 0, refunds: 0, seenPay: new Set<string>(), seenRefund: new Set<string>() };
+      // A receipt counts once however many services it paid; a refund once however many lines it returned.
+      if (p.amount > 0) {
+        row.taken += p.amount;
+        row.seenPay.add(p.invoicePaymentId ?? p.id);
+      } else {
+        row.refunded -= p.amount;
+        row.seenRefund.add(p.refundId ?? p.id);
+      }
+      acc.set(key, row);
+    }
+    return Array.from(acc.values())
+      .map(({ seenPay, seenRefund, ...r }) => ({ ...r, payments: seenPay.size, refunds: seenRefund.size }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.method.localeCompare(b.method));
   }
 
   async departmentLines(range: { from: string; to: string }): Promise<DepartmentLine[]> {

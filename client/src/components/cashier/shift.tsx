@@ -46,10 +46,10 @@ const OUTCOME_TONE: Record<CountOutcome, string> = {
 const OUTCOME_ICON: Record<CountOutcome, typeof CheckCircle2> = { match: CheckCircle2, short: AlertTriangle, over: AlertTriangle };
 const signed = (n: number) => (n > 0 ? `+${money(n)}` : n < 0 ? `−${money(-n)}` : money(0));
 
-/** Whether this user handles money (and so has a shift of their own). */
+/** Whether this user handles money (and so has a shift of their own). Approving refunds (payments.refund) moves none. */
 export function useHandlesMoney() {
   const { can } = useAuth();
-  return can("payments.create") || can("payments.refund");
+  return can("payments.create");
 }
 
 /** The person at the desk: their open shift and what the last one left. */
@@ -58,7 +58,7 @@ export function useCashDesk() {
   return useQuery<CashDesk>({ queryKey: ["/api/cash-shifts/current"], enabled: handles, refetchOnMount: "always", refetchInterval: 30_000 });
 }
 
-export const refreshShifts = () => invalidateApi("/api/cash-shifts");
+export const refreshShifts = () => invalidateApi("/api/cash-shifts", "/api/cashier");
 
 // ---------------------------------------------------------------- bar
 

@@ -36,7 +36,7 @@ const STATUS_TONE: Record<RefundStatus, string> = {
   cancelled: "border-border bg-muted text-muted-foreground",
 };
 
-const refreshRefunds = () => invalidateApi("/api/refunds", "/api/bills", "/api/cash-shifts", "/api/orders", "/api/patients");
+const refreshRefunds = () => invalidateApi("/api/refunds", "/api/bills", "/api/cash-shifts", "/api/cashier", "/api/orders", "/api/patients");
 
 export function RefundStatusBadge({ status }: { status: RefundStatus }) {
   return (

@@ -30,6 +30,8 @@ import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ReceiptSlipDialog } from "@/components/cashier/receipt-slip";
 import { BillRefunds, RefundsTab, usePendingRefunds } from "@/components/cashier/refunds";
+import { CashHomeTab, DailyTakingsTab, type CashHomeTarget } from "@/components/cashier/home";
+import { PriceListPanel } from "@/pages/services";
 import { OpenShiftDialog, ShiftBar, ShiftsTab, refreshShifts, useCashDesk, useHandlesMoney } from "@/components/cashier/shift";
 import { formatDate, formatDateTime, money } from "@/lib/format";
 
@@ -56,17 +58,30 @@ export default function Cashier() {
   const handles = useHandlesMoney();
   const showShifts = handles || can("shifts.read");
   const pending = usePendingRefunds();
-  type Tab = "bills" | "refunds" | "shifts";
+  type Tab = "home" | "bills" | "refunds" | "shifts" | "daily" | "prices";
   const [tab, setTab] = useState<Tab>(() => {
     const asked = new URLSearchParams(window.location.search).get("tab");
-    return asked === "refunds" || (asked === "shifts" && showShifts) ? asked : "bills";
+    // TZ §9.1: the cash desk opens on its home page.
+    return asked === "bills" || asked === "refunds" || asked === "daily" || asked === "prices" || (asked === "shifts" && showShifts) ? asked : "home";
   });
+  // A card on the home page opens the bills on the debtors; a new key starts the desk fresh with that filter.
+  const [billsPreset, setBillsPreset] = useState<{ key: number; filter: BillFilter; period: Period }>({ key: 0, filter: "all", period: "today" });
+  const [homeBill, setHomeBill] = useState<string | null>(null);
+  const openFromHome = (t: CashHomeTarget) => {
+    if (t === "bills-due") {
+      setBillsPreset((p) => ({ key: p.key + 1, filter: "due", period: "today" }));
+      setTab("bills");
+    } else setTab(t === "shifts" && !showShifts ? "home" : t);
+  };
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Kassa" title="Kassa" description="Bemor hisobvarag'i, qaytarishlar (vakolatli tasdiq bilan), kassa smenasi va uning hisoboti (TZ §9)" />
+      <PageHeader eyebrow="Kassa" title="Kassa" description="Kassa bosh sahifasi, bemor hisobvarag'i, qaytarishlar, kassa smenasi, kunlik tushum va xizmatlar narxlari (TZ §9)" />
       {handles && <ShiftBar />}
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList className="h-auto flex-wrap justify-start">
+          <TabsTrigger value="home" data-testid="tab-cashier-home">
+            Bosh sahifa
+          </TabsTrigger>
           <TabsTrigger value="bills" data-testid="tab-cashier-bills">
             Hisobvaraqlar
           </TabsTrigger>
@@ -83,9 +98,24 @@ export default function Cashier() {
               Smenalar
             </TabsTrigger>
           )}
+          <TabsTrigger value="daily" data-testid="tab-cashier-daily">
+            Kunlik tushum
+          </TabsTrigger>
+          <TabsTrigger value="prices" data-testid="tab-cashier-prices">
+            Narxlar
+          </TabsTrigger>
         </TabsList>
+        <TabsContent value="home" className="mt-4">
+          <CashHomeTab onOpen={openFromHome} onOpenBill={setHomeBill} />
+        </TabsContent>
         <TabsContent value="bills" className="mt-4">
-          <BillsDesk />
+          <BillsDesk key={billsPreset.key} initialFilter={billsPreset.filter} initialPeriod={billsPreset.period} />
+        </TabsContent>
+        <TabsContent value="daily" className="mt-4">
+          <DailyTakingsTab />
+        </TabsContent>
+        <TabsContent value="prices" className="mt-4">
+          <PriceListPanel />
         </TabsContent>
         <TabsContent value="refunds" className="mt-4">
           <RefundsTab />
@@ -96,15 +126,16 @@ export default function Cashier() {
           </TabsContent>
         )}
       </Tabs>
+      <BillDialog visitId={homeBill} onClose={() => setHomeBill(null)} />
     </div>
   );
 }
 
-function BillsDesk() {
-  const [period, setPeriod] = useState<Period>("today");
+function BillsDesk({ initialFilter = "all", initialPeriod = "today" }: { initialFilter?: BillFilter; initialPeriod?: Period }) {
+  const [period, setPeriod] = useState<Period>(initialPeriod);
   const [from, setFrom] = useState(localDay());
   const [to, setTo] = useState(localDay());
-  const [filter, setFilter] = useState<BillFilter>("all");
+  const [filter, setFilter] = useState<BillFilter>(initialFilter);
   const [search, setSearch] = useState("");
   const [openVisit, setOpenVisit] = useState<string | null>(null);
 
@@ -269,7 +300,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
 
   const refresh = (b: Bill) => {
     queryClient.setQueryData([key], b);
-    invalidateApi("/api/bills", "/api/orders", "/api/reception", `/api/patients/${b.patient.id}`);
+    invalidateApi("/api/bills", "/api/orders", "/api/reception", "/api/cashier", `/api/patients/${b.patient.id}`);
     refreshShifts();
   };
   const reset = () => {

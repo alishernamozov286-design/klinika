@@ -2728,3 +2728,24 @@ describe("refunds (B7.4)", () => {
     expect(await storage.getRefund("missing")).toBeUndefined();
   });
 });
+
+describe("cash desk takings (B7.7)", () => {
+  it("per day and method from the ledger: a receipt counts once, refunds come off, voided rows never count", async () => {
+    const cashier = { id: "kassa1", name: "Yusupova Malika" };
+    const patient = await storage.createPatient({ fullName: "Nazarova Dilnoza", phone: "+998909999999", gender: "ayol", age: 31, address: null });
+    const a = await storage.createOrder({ patientId: patient.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: cashier.id });
+    const b = await storage.createOrder({ patientId: patient.id, testIds: ["4"], discount: 0, paidAmount: 0, createdBy: cashier.id });
+    // One receipt across both orders (two shares), in cash.
+    await storage.payBill(a.visitId!, { amount: a.totalAmount + b.totalAmount, method: "naqd", note: null }, cashier);
+    // A terminal payment on a third order, then voided; a cash refund on the first.
+    const c = await storage.createOrder({ patientId: patient.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: cashier.id });
+    const paid = (await storage.addPayment(c.id, { amount: 5000, method: "karta" }, cashier))!;
+    await storage.voidPayment(paid.payments![0].id, "ikki marta kiritilgan", cashier);
+    await storage.addPayment(a.id, { amount: -3000, method: "naqd" }, cashier);
+
+    const now = new Date();
+    const rows = await storage.cashDayTotals({ from: new Date(now.getTime() - 86_400_000).toISOString(), to: new Date(now.getTime() + 86_400_000).toISOString() });
+    expect(rows).toEqual([{ date: todayKey(), method: "naqd", taken: a.totalAmount + b.totalAmount, refunded: 3000, payments: 1, refunds: 1 }]);
+    expect(await storage.cashDayTotals({ from: "2999-01-01T00:00:00.000Z", to: "2999-01-02T00:00:00.000Z" })).toEqual([]);
+  });
+});
