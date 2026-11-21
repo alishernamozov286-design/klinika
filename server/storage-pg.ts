@@ -179,6 +179,7 @@ import {
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
+import type { FinanceServiceRow } from "@shared/finance-report";
 import { DISCOUNT_LINE_GONE, DISCOUNT_NOTHING, planDiscount, type DiscountMode } from "@shared/discount";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
@@ -5031,6 +5032,50 @@ export class PgStorage implements IStorage {
     });
     if (!row) return undefined;
     return { bill: (await this.getBill(visitId))!, discount: { ...row, mode: row.mode as DiscountMode, createdAt: iso(row.createdAt) ?? row.createdAt } };
+  }
+
+  async financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]> {
+    const res = await db.execute(sql`
+      SELECT coalesce(s.kind, 'konsultatsiya') AS kind,
+             coalesce(s.name, coalesce(d.specialty, 'Shifokor') || ' ko''rigi') AS name,
+             u.full_name AS doctor,
+             count(*)::int AS count, sum(a.price)::bigint AS gross, sum(a.discount)::bigint AS discount,
+             sum(coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0))::bigint AS paid
+        FROM appointments a
+        LEFT JOIN services s ON s.id = a.service_id
+        LEFT JOIN doctors d ON d.id = a.doctor_id
+        LEFT JOIN users u ON u.id = d.user_id
+       WHERE a.status IN ('arrived', 'in_progress', 'completed') AND a.date >= ${days.from} AND a.date <= ${days.to}
+       GROUP BY 1, 2, 3
+      UNION ALL
+      SELECT 'laboratoriya', 'Laboratoriya tahlillari', NULL,
+             count(*)::int, sum(o.total_amount + o.discount)::bigint, sum(o.discount)::bigint, sum(o.paid_amount)::bigint
+        FROM orders o
+       WHERE o.status <> 'cancelled'
+         AND (o.created_at AT TIME ZONE ${LOCAL_TZ})::date BETWEEN ${days.from}::date AND ${days.to}::date
+      HAVING count(*) > 0`);
+    return (res.rows as Record<string, unknown>[]).map((r) => {
+      const gross = Number(r.gross);
+      const discount = Number(r.discount);
+      return {
+        kind: String(r.kind) as FinanceServiceRow["kind"],
+        name: String(r.name),
+        doctorName: r.doctor === null ? null : String(r.doctor),
+        count: Number(r.count),
+        gross,
+        discount,
+        net: gross - discount,
+        paid: Number(r.paid),
+      };
+    });
+  }
+
+  async countBillDiscounts(range: { from: string; to: string }): Promise<number> {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(billDiscounts)
+      .where(and(gte(billDiscounts.createdAt, range.from), sql`${billDiscounts.createdAt} < ${range.to}`));
+    return Number(row?.n ?? 0);
   }
 
   async listDebtors(): Promise<DebtorRow[]> {

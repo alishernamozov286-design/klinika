@@ -2802,3 +2802,29 @@ describe("discounts (B7.2)", () => {
     await expect(storage.discountBill(visitId, { mode: "percent", value: 5, target: { source: "order", sourceId: order.id }, reason: "Faqat tahlilga" }, cashier)).rejects.toThrow(/to'liq to'langan/);
   });
 });
+
+describe("finance report (B7.8)", () => {
+  it("services rendered by kind, name and doctor, with discounts and what was paid", async () => {
+    const cashier = { id: "kassa1", name: "Yusupova Malika" };
+    const user = await storage.createUser({ username: "dr78", password: "parol123", fullName: "Sodiqov Anvar", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: null, specialty: "Kardiolog", consultationPrice: 90000, slotMinutes: 20, schedule: [], isActive: true }, cashier);
+    const patient = await storage.createPatient({ fullName: "Tursunov Ilhom", phone: "+998904040404", gender: "erkak", age: 48, address: null });
+    const today = todayKey();
+    const appt = await storage.createAppointment({ patientId: patient.id, doctorId: doctor.id, serviceId: null, date: today, startTime: "10:00", reason: null, durationMinutes: 20, price: 90000 }, cashier, () => null);
+    const arrived = await storage.setAppointmentStatus(appt.id, { from: "scheduled", to: "arrived" }, cashier);
+    // Booked but never came: not a service rendered.
+    await storage.createAppointment({ patientId: patient.id, doctorId: doctor.id, serviceId: null, date: today, startTime: "11:00", reason: null, durationMinutes: 20, price: 90000 }, cashier, () => null).catch(() => null);
+    const order = await storage.createOrder({ patientId: patient.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: cashier.id });
+    await storage.discountBill(arrived.visitId!, { mode: "amount", value: 10000, target: { source: "appointment", sourceId: appt.id }, reason: "Kardiolog chegirmasi" }, cashier);
+    await storage.payBill(arrived.visitId!, { amount: 50000, method: "naqd", note: null }, cashier);
+
+    const rows = await storage.financeServices({ from: today, to: today });
+    expect(rows.sort((a, b) => a.kind.localeCompare(b.kind))).toEqual([
+      { kind: "konsultatsiya", name: "Kardiolog ko'rigi", doctorName: "Sodiqov Anvar", count: 1, gross: 90000, discount: 10000, net: 80000, paid: 50000 },
+      { kind: "laboratoriya", name: "Laboratoriya tahlillari", doctorName: null, count: 1, gross: order.totalAmount, discount: 0, net: order.totalAmount, paid: 0 },
+    ]);
+    expect(await storage.financeServices({ from: "2999-01-01", to: "2999-01-31" })).toEqual([]);
+    const now = Date.now();
+    expect(await storage.countBillDiscounts({ from: new Date(now - 60_000).toISOString(), to: new Date(now + 60_000).toISOString() })).toBe(1);
+  });
+});

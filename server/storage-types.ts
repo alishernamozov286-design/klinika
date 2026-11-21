@@ -9,6 +9,7 @@ import { appointmentCharge, type BillFilter } from "@shared/invoice";
 import type { RefundStatus } from "@shared/refund";
 import type { CashDayRow } from "@shared/cash-report";
 import type { DebtorRow } from "@shared/debt";
+import type { FinanceServiceRow } from "@shared/finance-report";
 import type { Bill, BillDiscount, BillSummary, DiscountBillInput, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
 /** B7.4: `status` alone lists every refund in it (open ones whenever asked); a range applies to the request time. */
@@ -943,6 +944,10 @@ export interface IStorage {
   listBills(query: BillQuery): Promise<BillSummary[]>;
   /** B7.2: takes a discount off the unpaid lines (shared/discount.ts planDiscount) and keeps it on the bill. */
   discountBill(visitId: string, input: DiscountBillInput, actor: Actor): Promise<{ bill: Bill; discount: BillDiscount } | undefined>;
+  /** B7.8: services rendered on local days `from`..`to` (YYYY-MM-DD, inclusive), by kind, name and doctor. */
+  financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]>;
+  /** B7.8: discounts given on bills in the instants [from, to). */
+  countBillDiscounts(range: { from: string; to: string }): Promise<number>;
   /** B7.3: every patient still owing across all visits, largest debt first. */
   listDebtors(): Promise<DebtorRow[]>;
   // B7.4 refunds (rules: shared/refund.ts). The payout goes through Actor.shiftId like any money.

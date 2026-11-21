@@ -153,6 +153,7 @@ import {
 import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type DepartmentLine, type MovementTotal } from "@shared/inventory-reports";
 import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
+import type { FinanceServiceRow } from "@shared/finance-report";
 import { DISCOUNT_LINE_GONE, DISCOUNT_NOTHING, planDiscount } from "@shared/discount";
 import type {
   Bill,
@@ -4095,6 +4096,47 @@ export class FileStorage implements IStorage {
     this.db.billDiscounts.push(discount);
     await this.persist();
     return { bill: (await this.getBill(visitId))!, discount };
+  }
+
+  async financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]> {
+    const acc = new Map<string, FinanceServiceRow>();
+    const put = (r: FinanceServiceRow) => {
+      const key = `${r.kind}|${r.name}|${r.doctorName ?? ""}`;
+      const t = acc.get(key) ?? { ...r, count: 0, gross: 0, discount: 0, net: 0, paid: 0 };
+      t.count += r.count;
+      t.gross += r.gross;
+      t.discount += r.discount;
+      t.net += r.net;
+      t.paid += r.paid;
+      acc.set(key, t);
+    };
+    for (const a of this.db.appointments) {
+      if (!["arrived", "in_progress", "completed"].includes(a.status) || a.date < days.from || a.date > days.to) continue;
+      const service = a.serviceId ? this.db.services.find((s) => s.id === a.serviceId) : undefined;
+      const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
+      const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : undefined;
+      const discount = a.discount ?? 0;
+      put({
+        kind: (service?.kind ?? "konsultatsiya") as FinanceServiceRow["kind"],
+        name: service?.name ?? `${doctor?.specialty ?? "Shifokor"} ko'rigi`,
+        doctorName: user?.fullName ?? null,
+        count: 1,
+        gross: a.price,
+        discount,
+        net: a.price - discount,
+        paid: this.db.payments.filter((p) => p.appointmentId === a.id && !p.voidedAt).reduce((s, p) => s + p.amount, 0),
+      });
+    }
+    for (const o of this.db.orders) {
+      const day = localDay(o.createdAt);
+      if (o.status === "cancelled" || day < days.from || day > days.to) continue;
+      put({ kind: "laboratoriya", name: "Laboratoriya tahlillari", doctorName: null, count: 1, gross: o.totalAmount + o.discount, discount: o.discount, net: o.totalAmount, paid: o.paidAmount });
+    }
+    return [...acc.values()];
+  }
+
+  async countBillDiscounts(range: { from: string; to: string }): Promise<number> {
+    return this.db.billDiscounts.filter((d) => d.createdAt >= range.from && d.createdAt < range.to).length;
   }
 
   async listDebtors(): Promise<DebtorRow[]> {

@@ -30,6 +30,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, MeterBar, PageHeader, SectionCard, StatCard } from "@/components/ui-kit";
 import { ExportButtons } from "@/components/export-buttons";
+import { FinanceReportView } from "@/components/reports/finance";
 import type { ExportDoc, ExportSection } from "@/lib/export-types";
 import { dayKey, daysAgo, formatDate, money, moneyShort } from "@/lib/format";
 
@@ -81,7 +82,29 @@ function ChartTooltip({
   );
 }
 
+/** The page: the accountant's finance report first (B7.8), the lab report beside it. */
 export default function Reports() {
+  const [view, setView] = useState<"finance" | "lab">(() => (new URLSearchParams(window.location.search).get("view") === "lab" ? "lab" : "finance"));
+  return (
+    <div className="space-y-6">
+      <PageHeader eyebrow="Analitika" title="Hisobotlar" description="Moliyaviy hisobot (barcha xizmatlar, kassa, xarajatlar) va laboratoriya ko'rsatkichlari" />
+      <Tabs value={view} onValueChange={(v) => setView(v as "finance" | "lab")}>
+        <TabsList>
+          <TabsTrigger value="finance" data-testid="tab-report-finance">
+            Moliyaviy hisobot
+          </TabsTrigger>
+          <TabsTrigger value="lab" data-testid="tab-report-lab">
+            Laboratoriya
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {view === "finance" ? <FinanceReportView /> : <LabReport />}
+    </div>
+  );
+}
+
+/** Lab orders only: tests, categories, referrers (the report from before B7.1). */
+function LabReport() {
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("30");
 
   const from = daysAgo(Number(range) - 1);
@@ -167,8 +190,8 @@ export default function Reports() {
     }
 
     return {
-      filename: "hisobot",
-      title: "Moliyaviy hisobot",
+      filename: "laboratoriya-hisoboti",
+      title: "Laboratoriya hisoboti",
       subtitle: `${formatDate(from)} — ${formatDate(to)} · ${data.points.length} kun`,
       sheetName: "Hisobot",
       orientation: "portrait",
@@ -187,25 +210,23 @@ export default function Reports() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="Analitika"
-        title="Hisobotlar"
-        description={`${formatDate(from)} — ${formatDate(to)} oralig'idagi ko'rsatkichlar`}
-        actions={
-          <>
-            <Tabs value={range} onValueChange={(v) => setRange(v as typeof range)}>
-              <TabsList>
-                {RANGES.map((r) => (
-                  <TabsTrigger key={r.key} value={r.key} data-testid={`tab-range-${r.key}`}>
-                    {r.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-            <ExportButtons testIdPrefix="export-report" disabled={isLoading} build={buildExport} />
-          </>
-        }
-      />
+      <div className="card-premium flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <Tabs value={range} onValueChange={(v) => setRange(v as typeof range)}>
+            <TabsList>
+              {RANGES.map((r) => (
+                <TabsTrigger key={r.key} value={r.key} data-testid={`tab-range-${r.key}`}>
+                  {r.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <span className="text-xs text-muted-foreground">
+            {formatDate(from)} — {formatDate(to)} · faqat laboratoriya buyurtmalari
+          </span>
+        </div>
+        <ExportButtons testIdPrefix="export-report" disabled={isLoading} build={buildExport} />
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -237,12 +258,12 @@ export default function Reports() {
         />
         <StatCard
           index={3}
-          label="Sof foyda"
-          value={money(data?.netProfit ?? 0, false)}
+          label="O'rtacha chek"
+          value={money(Math.round(avgCheck), false)}
           suffix="so'm"
-          hint={`Xarajat: ${money(data?.totalExpenses ?? 0)} · O'rtacha chek: ${money(avgCheck)}`}
+          hint="Bir bemorga laboratoriya tushumi · foyda — Moliyaviy hisobotda"
           icon={PiggyBank}
-          tone={(data?.netProfit ?? 0) < 0 ? "rose" : "emerald"}
+          tone="emerald"
           isLoading={isLoading}
         />
       </div>

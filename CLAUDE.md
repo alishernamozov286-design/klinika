@@ -47,6 +47,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - `shared/medical-record.ts`: ko'rik yozuvi qoidalari (tasdiqlash shartlari, versiyalar orasidagi farq, tashxislar tarixi).
 - `shared/invoice.ts`: bemor hisobvarag'i qoidalari — tashrif qatorlari, holat, to'lovni eng eski qarzdan taqsimlash, filtrlar (B7.1). `server/routes-billing.ts`: hisobvaraq, to'lov, kvitansiyani bekor qilish API. `client/src/pages/cashier.tsx`: Kassa sahifasi.
 - `shared/cash-shift.ts`: kassa smenasi qoidalari — kutilgan naqd, smena hisoboti, kvitansiya bitta amal, yopish shartlari, kupyuralar (B7.5). `server/routes-cashdesk.ts`: smena API va `tillActor` (pul harakatlaydigan har bir route ochiq smenani shu orqali oladi). `client/src/components/cashier/shift.tsx`: smena paneli, ochish/yopish oynalari, hisobot, smenalar ro'yxati.
+- `shared/finance-report.ts`: moliyaviy hisobot — ko'rsatilgan xizmatlar (hisoblash usuli) va pul oqimi (kassa usuli) alohida, natija, xizmatlar va shifokorlar reytingi (B7.8). `server/routes-finance.ts`, `client/src/components/reports/finance.tsx`.
 - `shared/discount.ts`: chegirma qoidalari — foiz yoki summani to'lanmagan qatorlarga taqsimlash (B7.2). `appointmentCharge` (`shared/invoice.ts`): qabul narxi = muzlatilgan narx − chegirma, hamma joyda shu orqali. `client/src/components/cashier/discount.tsx`: chegirma oynasi va hisobvaraqdagi ro'yxat.
 - `shared/cash-report.ts`: kassa bosh sahifasi va kunlik tushum — pul daftaridan kun × usul, bo'sh kunlar, davr jami, usullar ulushi (B7.7). `client/src/components/cashier/home.tsx`: Kassa bosh sahifasi va "Kunlik tushum". `client/src/components/flow-chart.tsx`: ikki yo'nalishli kunlik pul grafigi (ombor va kassa uchun umumiy).
 - `shared/refund.ts`: to'lovni qaytarish qoidalari — nima qaytariladi (hisobvaraq krediti, ochiq so'rovlarsiz), holatlar oqimi, to'lovni qatorlarga taqsimlash (B7.4). `server/routes-refunds.ts`: so'rov, tasdiq/rad, smenadan to'lash, bekor qilish, chek, bildirishnomalar. `client/src/components/cashier/refunds.tsx`: so'rov oynasi, amallar, hisobvaraqdagi blok, "Qaytarishlar" tabi.
@@ -115,7 +116,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-21. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 57.5 → ≈76%**.
+> Holat 2026-11-21. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 58 → ≈76%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -382,7 +383,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B6.6** Integratsiya (`§8.2`): lab buyurtmasi kartadan, dori sarfi omborga, xizmatlar (yotoq-kun, muolajalar) kassa hisobiga.
 - [ ] **B6.7** Chiqarish va epikriz (`§8.1.5`): yakuniy tashxis, xulosa, epikriz (avto-to‘ldirish + tahrir), tavsiyalar, PDF.
 
-### Bosqich 7: Kassa va moliya (`§9`, `§15.7`) 94%
+### Bosqich 7: Kassa va moliya (`§9`, `§15.7`) 100%
 
 - [x] **B7.1** Bemor hisobvarag‘i (`§9.1`, `invoices`): barcha modullardagi xizmatlar (ko‘rik, lab, UZI, muolaja, statsionar) bitta hisobvaraqqa tushadi (`§11`).
   - **Hisobvaraq = bitta tashrif** (bemor + kun, B2.5). Qatorlari tashrifning lab buyurtmalari va qabullaridan (ko'rik, UZI, muolaja — "keldi", "qabulda", "yakunlandi" holatidagilar, muzlatilgan narxda) **tirik o'qiladi**, nusxa ko'chirilmaydi: narx o'zgarsa yoki buyurtma bekor qilinsa hisobvaraq hech qachon eskirmaydi. Pul olingandan keyin bekor qilingan xizmat 0 summa bilan qoladi — undagi pul "ortiqcha to'langan, qaytariladi" deb ko'rinadi, yo'qolmaydi. Qoidalar `shared/invoice.ts` (`buildBillLines`, `billTotals`, `allocatePayment`), ikkala storage uchun bitta.
@@ -452,13 +453,19 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - **Yo'l-yo'lakay (vaqt mintaqasi):** Postgres'dagi barcha "mahalliy kun" hisoblari (`current_setting('TIMEZONE')`, 10 joy: buyurtmalar sana filtri, bemorlar tashriflari soni, lab bosh sahifasi, QC "bugun", ombor kunlik oqimi, tushum hisoboti) Neon sessiyasining **GMT** mintaqasida kun kesardi — Toshkent bo'yicha 00:00–05:00 dagi yozuvlar oldingi kunga tushardi (fayl ombori to'g'ri edi, shuning uchun testlar ko'rmagan). Endi serverning o'z mintaqasi (`SERVER_TZ`, Node'dan, nomi tekshiriladi) ishlatiladi. Neon'da tekshirildi: 01:00 Toshkent eski usulda 20-noyabr, yangisida 21-noyabr.
   - Neon'da ROLLBACK qilingan tranzaksiyada tekshirildi: real daftar kun × usul bo'yicha oddiy yig'indiga teng; kvitansiya bir marta, qaytarish ayiriladi, bekor qilingan hisobga kirmaydi; shakllantirilgan jami.
   - Testlar: `shared/cash-report.test.ts` (3), `storage-file.test.ts` (1), brauzerda kassir, rahbar, buxgalter va laborant yo'li (36 tekshiruv; kvitansiya fayl omborida 3 kun oldinga surildi: bosh sahifa raqamlari, grafik tooltip va jadval, qarzdordan hisobvaraq, qarz kartasidan "Qarzdorlar", kunlik tushum va jami, to'lovsiz kunlar, narxlar, eksport, ruxsatlar, ombor grafigi o'zgarmagan, telefon).
-- [~] **B7.8** Moliyaviy hisobotlar (`§9.1`): tushum va xarajatlar bor. **Qoldi:** buxgalter uchun davr bo‘yicha to‘liq hisobot.
+- [x] **B7.8** Moliyaviy hisobotlar (`§9.1`): buxgalter uchun davr bo'yicha to'liq hisobot.
+  - **Hisobotlar → "Moliyaviy hisobot"** (standart tab; eski laboratoriya hisoboti yonidagi "Laboratoriya" tabida, u endi o'zini "faqat laboratoriya buyurtmalari" deb ataydi va xarajatlarni faqat lab tushumidan ayiradigan noto'g'ri "Sof foyda" kartasi o'rniga "O'rtacha chek" ko'rsatadi). Davr: Bu oy / O'tgan oy / Yil boshidan / 30 kun / ixtiyoriy (ko'pi bilan bir yil).
+  - **Ikki ko'rinish, aralashtirilmaydi:** *hisoblash usuli* — davrda ko'rsatilgan xizmatlar (qabullar o'z kunida "keldi/qabulda/yakunlandi", bekor qilinmagan lab buyurtmalari o'z kunida): xizmat turi bo'yicha (shifokor ko'rigi, UZI, muolaja, boshqa, laboratoriya) soni, chegirmagacha narx, chegirma, hisoblangan, shundan to'langan, qarz; *kassa usuli* — davrda harakatlangan pul (B7.7 daftari): to'lov usullari bo'yicha qabul qilingan, qaytarilgan, sof. **Sof foyda = sof tushum − xarajatlar** (to'lanmagan hisobvaraq qo'ldagi pul emas), rentabellik foizi; ikki ko'rinish farqi hisobotning o'zida tushuntiriladi.
+  - Shuningdek: pul oqimi grafigi (umumiy komponent), chegirmalar (summa va hisobvaraq orqali necha marta), **xizmatlar daromadi** (har bir xizmat, eng kattasidan), **shifokorlar faoliyati** (qabullar soni va summasi), xarajatlar kategoriya bo'yicha, hozirgi qarzdorlik (B7.3). Bo'limli Excel/PDF eksport (`data.export`).
+  - Bitta so'rov (`GET /api/reports/finance?from&to`, `reports.view`: rahbar, buxgalter, auditor), manbalar parallel: xizmatlar (Postgres'da bitta `UNION` so'rov), pul daftari, chegirmalar, xarajatlar xulosasi, qarzdorlar. Shakllantirish `shared/finance-report.ts`. Migratsiya yo'q.
+  - Real Neon'da (o'qish) tekshirildi: davr xizmatlarining hisoblangan summasi shu davr hisobvaraqlari summasiga teng (ikki xil so'rov, bitta qoida).
+  - Testlar: `shared/finance-report.test.ts` (3), `storage-file.test.ts` (1: tur, nom, shifokor, chegirma, to'langan, kelmagan qabul kirmaydi, chegirmalar soni), brauzerda buxgalter, rahbar, kassir yo'li va telefon (24 tekshiruv).
 - [x] **B7.9** Xarajatlar sahifasi (`§9`, `§10`, `§13`): to'lov usuli va oluvchi; o'chirish o'rniga sababli bekor qilish (yozuv saqlanadi, hisobotlarga kirmaydi); tahrirlash audit bilan; butun davr tahlili (`/api/expenses/summary`: kategoriya, to'lov usuli, kunlik dinamika, o'tgan davr bilan solishtirish); filtrlar (kategoriya, usul, matn, bekor qilinganlar); davr shablonlari; CSV. Migratsiya: `npm run db:expenses` (**yangi kod ishga tushishidan OLDIN** bajarilishi shart).
 
 ### Hisobotlar va rahbariyat paneli (`§13`) 32%
 
 - [~] **R.1** Rahbariyat boshqaruv paneli: hozirgi bosh sahifa statistikasi asos.
-- [~] **R.2** Kunlik bemorlar soni · [ ] shifokorlar faoliyati · [~] lab tahlillari soni · [ ] eng ko‘p buyuriladigan tahlillar · [x] reagent sarfi · [x] ombor qoldig‘i · [ ] statsionar bandligi · [x] kunlik/oylik tushum · [ ] xizmatlar daromadi · [x] qarzdorlik · [x] xarajatlar.
+- [~] **R.2** Kunlik bemorlar soni · [x] shifokorlar faoliyati · [~] lab tahlillari soni · [ ] eng ko‘p buyuriladigan tahlillar · [x] reagent sarfi · [x] ombor qoldig‘i · [ ] statsionar bandligi · [x] kunlik/oylik tushum · [x] xizmatlar daromadi · [x] qarzdorlik · [x] xarajatlar.
 - [~] **R.3** PDF va Excel eksport: bor. Har yangi hisobotga qo‘shiladi.
 
 ### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 11%
@@ -514,6 +521,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-21 · B7.8 · Moliyaviy hisobot: davrda ko'rsatilgan xizmatlar (tur, narx, chegirma, hisoblangan, to'langan, qarz) va pul oqimi (usullar bo'yicha, qaytarishlar) alohida, sof foyda = sof tushum − xarajatlar, xizmatlar daromadi, shifokorlar faoliyati, xarajatlar, qarzdorlik, eksport. Kassa bosqichi yopildi.
 - 2026-11-21 · B7.2 · Chegirmalar: hisobvaraq oynasidan butun hisobvaraqqa yoki bitta xizmatga, foiz yoki summa, sabab bilan, faqat to'lanmagan qismga (to'langani — qaytarish orqali); qabul narxi = narx − chegirma hamma joyda; har bir chegirma hisobvaraqda saqlanadi; yangi `payments.discount` ruxsati.
 - 2026-11-21 · B7.3 · Qarzdorlar sahifasi: bemorlar kesimida barcha tashriflar bo'yicha qarz, eng kattasidan, qarz yoshi (7/30/90 kun) filtri va belgisi, telefon, qarzli hisobvaraqlarni ochib to'lov olish, eksport; hisobvaraq qatorlari Postgres'da bitta umumiy CTE.
 - 2026-11-21 · B7.7 · Kassa bosh sahifasi (bugungi va oylik tushum, 30 kunlik tushum/qaytarish grafigi, to'lov usullari ulushi, e'tibor talab qiladigan ishlar, bugungi qarzdorlar), kunlik tushum (usullar bo'yicha, qaytarishlar ayirilgan, eksport), narxlar tabi; hammasi pul daftaridan. Yo'l-yo'lakay: Postgres'dagi barcha kunlik hisoblar Neon'ning GMT mintaqasida kun kesardi — serverning o'z mintaqasiga o'tkazildi; smena endi faqat `payments.create` egasiga.
