@@ -30,6 +30,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, Money, StatCard, TableSkeleton } from "@/components/ui-kit";
 import { MoneyInput } from "@/components/inputs";
+import { ReceiptSlipDialog } from "@/components/cashier/receipt-slip";
 import { apiRequest, invalidateApi, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -411,6 +412,7 @@ export function ShiftReportDialog({ shiftId, onClose }: { shiftId: string | null
   const handles = useHandlesMoney();
   const { data: r } = useQuery<ShiftReport>({ queryKey: [`/api/cash-shifts/${shiftId}`], enabled: Boolean(shiftId), refetchOnMount: "always" });
   const [closing, setClosing] = useState(false);
+  const [slipFor, setSlipFor] = useState<string | null>(null);
   const mayClose = r && !r.closedAt && (r.cashierId === user?.id ? handles : can("shifts.manage"));
 
   return (
@@ -552,6 +554,12 @@ export function ShiftReportDialog({ shiftId, onClose }: { shiftId: string | null
                                 <span className="sm:hidden"> · {e.patientName ?? "—"}</span>
                               </p>
                               {e.voidedAt && <p className="text-xs text-rose-700 dark:text-rose-300">Bekor qilingan: {e.voidReason}</p>}
+                              {e.kind === "receipt" && (
+                                <button type="button" className="no-print mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline" onClick={() => setSlipFor(e.key)} data-testid={`report-slip-${e.key}`}>
+                                  <Printer className="h-3 w-3" />
+                                  Chek
+                                </button>
+                              )}
                             </TableCell>
                             <TableCell className="hidden sm:table-cell">
                               {e.patientName ?? "—"}
@@ -589,6 +597,7 @@ export function ShiftReportDialog({ shiftId, onClose }: { shiftId: string | null
           )}
         </DialogFooter>
       </DialogContent>
+      <ReceiptSlipDialog receiptId={slipFor} onClose={() => setSlipFor(null)} />
       {r && !r.closedAt && <CloseShiftDialog open={closing} onOpenChange={setClosing} shift={r} onClosed={() => setClosing(false)} />}
     </Dialog>
   );

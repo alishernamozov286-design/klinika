@@ -6,7 +6,7 @@ import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import type { BillFilter } from "@shared/invoice";
-import type { Bill, BillSummary, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
+import type { Bill, BillSummary, ReceiptSlip, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
 export type ShiftQuery = { from?: string; to?: string; cashierId?: string; open?: boolean; limit?: number };
 /** Visit days (YYYY-MM-DD, inclusive); none means all time. */
@@ -936,6 +936,10 @@ export interface IStorage {
   /** Voids a receipt and all its shares, once (StorageConflict after). */
   voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined>;
   listBills(query: BillQuery): Promise<BillSummary[]>;
+  /** B7.6: a receipt with its bill, patient and shift — what its chek prints. */
+  getReceiptSlip(receiptId: string): Promise<ReceiptSlip | undefined>;
+  /** B7.6: counts one print of the chek (atomically); the new count, undefined when there is no such receipt. */
+  markReceiptPrinted(receiptId: string): Promise<number | undefined>;
   // B7.5 cash shifts (rules: shared/cash-shift.ts). Payments carry the shift through Actor.shiftId.
   getOpenShift(cashierId: string): Promise<CashShift | undefined>;
   /** The person's open shift with its report, and what their last closed shift left in the drawer. */

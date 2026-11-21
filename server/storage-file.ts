@@ -149,6 +149,7 @@ import type {
   OpenShiftInput,
   ShiftReport,
   ShiftSummary,
+  ReceiptSlip,
   Invoice,
   InvoiceReceipt,
   PayBillInput,
@@ -3878,6 +3879,10 @@ export class FileStorage implements IStorage {
           .sort((a, b) => b.number - a.number)
           .map((r) => ({
             ...r,
+            // Receipts written before B7.6 carry none of these.
+            tendered: r.tendered ?? null,
+            dueAfter: r.dueAfter ?? null,
+            printCount: r.printCount ?? 0,
             shares: this.db.payments
               .filter((p) => p.invoicePaymentId === r.id)
               .map((p) => {
@@ -3935,6 +3940,9 @@ export class FileStorage implements IStorage {
       amount: taken,
       method: input.method,
       note: input.note ?? null,
+      tendered: input.amount,
+      dueAfter: billTotals(lines).due - taken,
+      printCount: 0,
       createdAt: now,
       createdBy: actor.id,
       createdByName: actor.name,
@@ -4012,6 +4020,26 @@ export class FileStorage implements IStorage {
     }
     rows.sort((a, b) => b.visitDate.localeCompare(a.visitDate) || a.patientName.localeCompare(b.patientName));
     return filterBills(rows, query.status).slice(0, query.limit ?? 500);
+  }
+
+  async getReceiptSlip(receiptId: string): Promise<ReceiptSlip | undefined> {
+    const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
+    const inv = rec && this.db.invoices.find((i) => i.id === rec.invoiceId);
+    if (!rec || !inv) return undefined;
+    const bill = await this.getBill(inv.visitId);
+    const receipt = bill?.receipts.find((r) => r.id === receiptId);
+    if (!bill || !receipt) return undefined;
+    const shiftId = this.db.payments.find((p) => p.invoicePaymentId === receiptId)?.shiftId;
+    const { phone: _phone, ...patient } = bill.patient;
+    return { receipt, invoiceNumber: inv.number, visitDate: bill.visitDate, patient, shiftNumber: this.db.cashShifts.find((s) => s.id === shiftId)?.number ?? null };
+  }
+
+  async markReceiptPrinted(receiptId: string): Promise<number | undefined> {
+    const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
+    if (!rec) return undefined;
+    rec.printCount = (rec.printCount ?? 0) + 1;
+    await this.persist();
+    return rec.printCount;
   }
 
   // ------------------------------------------------------------ B7.5 cash shifts

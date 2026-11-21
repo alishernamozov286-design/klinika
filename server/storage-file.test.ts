@@ -2626,3 +2626,29 @@ describe("cash shift (B7.5)", () => {
     expect((await storage.listShifts({ open: true, cashierId: "nobody" })).length).toBe(0);
   });
 });
+
+describe("receipt chek (B7.6)", () => {
+  it("a receipt keeps what was handed over and what was left; the chek knows its shift; prints are counted", async () => {
+    const cashier = { id: "kassa1", name: "Yusupova Malika" };
+    const patient = await storage.createPatient({ fullName: "Qodirov Jasur", phone: "+998906666666", gender: "erkak", age: 37, address: null });
+    const order = await storage.createOrder({ patientId: patient.id, testIds: ["3", "4"], discount: 0, paidAmount: 0, createdBy: cashier.id });
+    const shift = await storage.openShift({ openingCash: 0, note: null }, cashier);
+    const till = { ...cashier, shiftId: shift.id };
+
+    // Part of the bill, then the rest with more cash than owed.
+    const first = (await storage.payBill(order.visitId!, { amount: 10000, method: "naqd", note: null }, till))!;
+    const second = (await storage.payBill(order.visitId!, { amount: order.totalAmount, method: "naqd", note: "kupyura" }, till))!;
+    const a = (await storage.getReceiptSlip(first.receiptId))!;
+    expect(a.receipt).toMatchObject({ amount: 10000, tendered: 10000, dueAfter: order.totalAmount - 10000, printCount: 0 });
+    const b = (await storage.getReceiptSlip(second.receiptId))!;
+    expect(b.receipt).toMatchObject({ amount: order.totalAmount - 10000, tendered: order.totalAmount, dueAfter: 0, note: "kupyura" });
+    expect(b).toMatchObject({ invoiceNumber: 1, shiftNumber: shift.number, patient: { fullName: "Qodirov Jasur", patientNumber: patient.patientNumber } });
+    expect(b.receipt.shares.map((s) => s.title)).toEqual([`Laboratoriya #${order.orderNumber}`]);
+
+    expect(await storage.markReceiptPrinted(second.receiptId)).toBe(1);
+    expect(await storage.markReceiptPrinted(second.receiptId)).toBe(2);
+    expect((await storage.getReceiptSlip(second.receiptId))!.receipt.printCount).toBe(2);
+    expect(await storage.markReceiptPrinted("missing")).toBeUndefined();
+    expect(await storage.getReceiptSlip("missing")).toBeUndefined();
+  });
+});

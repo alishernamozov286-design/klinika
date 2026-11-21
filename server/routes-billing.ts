@@ -4,12 +4,13 @@
  *   payments.create | finance.view   read bills and the debtors list
  *   payments.create                  open a bill (its number), take a payment on it (in an open cash shift, B7.5)
  *   payments.delete                  void a receipt, whole, with a reason
+ *   payments.create | finance.view   read a receipt's chek (B7.6); printing it is payments.create
  *
  * A refund is not taken here: it stays with payments.refund (B7.4).
  * Rules: shared/invoice.ts.
  */
 import type { Express } from "express";
-import { payBillSchema, voidPaymentSchema, PAYMENT_METHOD_LABELS } from "@shared/schema";
+import { payBillSchema, voidPaymentSchema, PAYMENT_METHOD_LABELS, type ReceiptSlipView } from "@shared/schema";
 import { BILL_FILTERS, describeShares, type BillFilter } from "@shared/invoice";
 import { requirePermission } from "./rbac";
 import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
@@ -83,6 +84,37 @@ export function registerBillingRoutes(app: Express) {
           `${input.amount > out.taken ? `; qarzdan ortig'i ${sum(input.amount - out.taken)} qaytim` : ""}${out.bill.totals.due ? `; qoldi ${sum(out.bill.totals.due)}` : "; to'liq to'landi"}`,
       );
       res.status(201).json({ bill: out.bill, receiptId: out.receiptId, taken: out.taken, change: input.amount - out.taken });
+    }),
+  );
+
+  /** B7.6: the chek of a receipt — what it paid, for whom, by whom, and the clinic that issued it. */
+  app.get(
+    "/api/receipts/:id/slip",
+    requirePermission("payments.create", "finance.view"),
+    handle(async (req, res) => {
+      const [slip, clinic, logo] = await Promise.all([storage.getReceiptSlip(req.params.id), storage.getSettings(), storage.getLogo()]);
+      if (!slip) return res.status(404).json({ message: "Kvitansiya topilmadi" });
+      res.json({ ...slip, clinic, logo: logo?.dataUrl ?? null } satisfies ReceiptSlipView);
+    }),
+  );
+
+  /** Counts a print before it happens: every print after the first comes out marked "NUSXA". */
+  app.post(
+    "/api/receipts/:id/print",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const slip = await storage.getReceiptSlip(req.params.id);
+      if (!slip) return res.status(404).json({ message: "Kvitansiya topilmadi" });
+      const printCount = (await storage.markReceiptPrinted(req.params.id))!;
+      const r = slip.receipt;
+      await audit(
+        req,
+        "print",
+        "invoice",
+        r.invoiceId,
+        `Hisobvaraq №${slip.invoiceNumber}, kvitansiya №${r.number} (${sum(r.amount)}) cheki ${printCount > 1 ? `qayta chop etildi — nusxa (${printCount}-marta)` : "chop etildi"}${r.voidedAt ? ", bekor qilingan kvitansiya" : ""}`,
+      );
+      res.json({ printCount });
     }),
   );
 

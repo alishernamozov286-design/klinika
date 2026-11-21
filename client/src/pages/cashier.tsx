@@ -28,6 +28,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ReceiptSlipDialog } from "@/components/cashier/receipt-slip";
 import { OpenShiftDialog, ShiftBar, ShiftsTab, refreshShifts, useCashDesk, useHandlesMoney } from "@/components/cashier/shift";
 import { formatDate, formatDateTime, money } from "@/lib/format";
 
@@ -247,6 +248,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
   const value = touched ? amount : due;
   const { data: desk } = useCashDesk();
   const [openingShift, setOpeningShift] = useState(false);
+  const [slipFor, setSlipFor] = useState<string | null>(null);
 
   const refresh = (b: Bill) => {
     queryClient.setQueryData([key], b);
@@ -261,10 +263,13 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
   };
 
   const pay = useMutation({
-    mutationFn: async () => (await (await apiRequest("POST", `/api/bills/${visitId}/payments`, { amount: value, method, note: note.trim() || null })).json()) as { bill: Bill; taken: number; change: number },
+    mutationFn: async () =>
+      (await (await apiRequest("POST", `/api/bills/${visitId}/payments`, { amount: value, method, note: note.trim() || null })).json()) as { bill: Bill; receiptId: string; taken: number; change: number },
     onSuccess: (r) => {
       refresh(r.bill);
       reset();
+      // The chek comes up at once: the patient is still at the window.
+      setSlipFor(r.receiptId);
       toast({
         title: `${money(r.taken)} qabul qilindi`,
         description: r.change > 0 ? `Qaytim: ${money(r.change)}` : r.bill.totals.due ? `Qoldi: ${money(r.bill.totals.due)}` : "Hisobvaraq to'liq to'landi",
@@ -498,6 +503,17 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
                               </p>
                             )}
                           </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary"
+                            title="Chek"
+                            aria-label="Chek"
+                            onClick={() => setSlipFor(r.id)}
+                            data-testid={`button-receipt-slip-${r.number}`}
+                          >
+                            <Printer className="h-4 w-4" />
+                          </Button>
                           {!r.voidedAt && can("payments.delete") && (
                             <Button
                               variant="ghost"
@@ -559,6 +575,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
         testId="receipt-void"
       />
       <OpenShiftDialog open={openingShift} onOpenChange={setOpeningShift} desk={desk} />
+      <ReceiptSlipDialog receiptId={slipFor} onClose={() => setSlipFor(null)} />
     </Dialog>
   );
 }

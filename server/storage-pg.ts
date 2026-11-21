@@ -206,6 +206,7 @@ import type {
   OpenShiftInput,
   ShiftReport,
   ShiftSummary,
+  ReceiptSlip,
   Bill,
   BillSummary,
   Invoice,
@@ -4798,7 +4799,17 @@ export class PgStorage implements IStorage {
       const invoice = await this.ensureInvoice(exec, visitId, v.patientId, actor);
       const [receipt] = await tx
         .insert(invoicePayments)
-        .values({ invoiceId: invoice.id, patientId: v.patientId, amount: taken, method: input.method, note: input.note ?? null, createdBy: actor.id, createdByName: actor.name })
+        .values({
+          invoiceId: invoice.id,
+          patientId: v.patientId,
+          amount: taken,
+          method: input.method,
+          note: input.note ?? null,
+          tendered: input.amount,
+          dueAfter: billTotals(lines).due - taken,
+          createdBy: actor.id,
+          createdByName: actor.name,
+        })
         .returning();
       await tx.insert(payments).values(
         shares.map((s) => ({
@@ -4901,6 +4912,33 @@ export class PgStorage implements IStorage {
       } satisfies BillSummary;
     });
     return filterBills(rows, query.status);
+  }
+
+  async getReceiptSlip(receiptId: string): Promise<ReceiptSlip | undefined> {
+    const [row] = await db
+      .select({
+        visitId: invoices.visitId,
+        shiftNumber: sql<number | null>`(SELECT s.number FROM payments p JOIN cash_shifts s ON s.id = p.shift_id WHERE p.invoice_payment_id = "invoice_payments"."id" LIMIT 1)`,
+      })
+      .from(invoicePayments)
+      .innerJoin(invoices, eq(invoices.id, invoicePayments.invoiceId))
+      .where(eq(invoicePayments.id, receiptId))
+      .limit(1);
+    if (!row) return undefined;
+    const bill = await this.getBill(row.visitId);
+    const receipt = bill?.receipts.find((r) => r.id === receiptId);
+    if (!bill || !receipt || !bill.invoice) return undefined;
+    const { phone: _phone, ...patient } = bill.patient;
+    return { receipt, invoiceNumber: bill.invoice.number, visitDate: bill.visitDate, patient, shiftNumber: row.shiftNumber === null ? null : Number(row.shiftNumber) };
+  }
+
+  async markReceiptPrinted(receiptId: string): Promise<number | undefined> {
+    const [row] = await db
+      .update(invoicePayments)
+      .set({ printCount: sql`print_count + 1` })
+      .where(eq(invoicePayments.id, receiptId))
+      .returning({ printCount: invoicePayments.printCount });
+    return row?.printCount;
   }
 
   // ------------------------------------------------------------ B7.5 cash shifts

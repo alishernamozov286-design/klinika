@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocatePayment, billTotals, buildBillLines, describeShares, filterBills, lineCredit, lineDue, type BillLine } from "./invoice";
+import { allocatePayment, billTotals, buildBillLines, describeShares, filterBills, lineCredit, lineDue, slipFigures, type BillLine } from "./invoice";
 import { payBillSchema } from "./schema";
 
 const line = (over: Partial<BillLine>): BillLine => ({
@@ -82,5 +82,12 @@ describe("patient bill (B7.1, TZ §9.1–9.2)", () => {
     expect(payBillSchema.safeParse({ amount: -5 }).success).toBe(false);
     expect(payBillSchema.safeParse({ amount: 10.5 }).success).toBe(false);
     expect(payBillSchema.safeParse({ amount: 10, method: "crypto" }).success).toBe(false);
+  });
+
+  it("the chek: change only for cash handed over above the receipt; a reprint is a copy; old receipts say nothing", () => {
+    expect(slipFigures({ amount: 95000, method: "naqd", tendered: 100000, dueAfter: 0 }, 1)).toEqual({ tendered: 100000, change: 5000, dueAfter: 0, paidInFull: true, copy: false });
+    expect(slipFigures({ amount: 95000, method: "karta", tendered: 120000, dueAfter: 25000 }, 2)).toEqual({ tendered: null, change: 0, dueAfter: 25000, paidInFull: false, copy: true });
+    expect(slipFigures({ amount: 50000, method: "naqd", tendered: 50000, dueAfter: 10000 }, 1).change).toBe(0);
+    expect(slipFigures({ amount: 50000, method: "naqd", tendered: null, dueAfter: null }, 1)).toMatchObject({ change: 0, dueAfter: null, paidInFull: false });
   });
 });

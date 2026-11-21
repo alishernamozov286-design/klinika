@@ -162,3 +162,31 @@ export function describeShares(shares: readonly Allocation[], lines: readonly Bi
     })
     .join(" + ");
 }
+
+/**
+ * What a receipt's chek (B7.6) says beyond the receipt itself: the change
+ * handed back for cash, whether this print is a copy, and where the bill
+ * stood once it was paid. Receipts taken before B7.6 know neither what was
+ * handed over nor what was left, and say nothing rather than guess.
+ */
+export type SlipFigures = {
+  /** Handed over, when it was more than the receipt (cash only); else null. */
+  tendered: number | null;
+  change: number;
+  /** Null when unknown (receipts before B7.6). */
+  dueAfter: number | null;
+  paidInFull: boolean;
+  /** The print this figure is for, 1-based; anything after the first is "NUSXA". */
+  copy: boolean;
+};
+
+export function slipFigures(r: { amount: number; method: string; tendered: number | null; dueAfter: number | null }, printNumber: number): SlipFigures {
+  const change = r.method === "naqd" && r.tendered !== null && r.tendered > r.amount ? r.tendered - r.amount : 0;
+  return {
+    tendered: change ? r.tendered : null,
+    change,
+    dueAfter: r.dueAfter,
+    paidInFull: r.dueAfter === 0,
+    copy: printNumber > 1,
+  };
+}

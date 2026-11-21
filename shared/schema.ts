@@ -995,6 +995,12 @@ export const invoicePayments = pgTable(
     amount: money("amount").notNull(),
     method: text("method").notNull().default("naqd"),
     note: text("note"),
+    /** B7.6: what the patient handed over (≥ amount; the rest was change). Null on receipts before B7.6. */
+    tendered: money("tendered"),
+    /** B7.6: what the bill still owed right after this receipt, as printed on the chek. */
+    dueAfter: money("due_after"),
+    /** B7.6: times its chek was printed; every print after the first is marked a copy ("NUSXA"). */
+    printCount: integer("print_count").notNull().default(0),
     createdAt: isoTimestamp("created_at").defaultNow().notNull(),
     createdBy: varchar("created_by"),
     createdByName: text("created_by_name"),
@@ -2070,6 +2076,16 @@ export type CashDesk = {
   /** Their last closed shift: what it left in the drawer is the next opening's suggestion. */
   last: { id: string; number: number; closedAt: string; carriedCash: number } | null;
 };
+/** B7.6: everything a receipt's chek prints. The clinic's details come from settings. */
+export type ReceiptSlip = {
+  receipt: InvoiceReceipt;
+  invoiceNumber: number;
+  visitDate: string;
+  patient: { id: string; patientNumber: number; fullName: string };
+  shiftNumber: number | null;
+};
+/** The chek as the client draws it: the receipt and the clinic that issued it. */
+export type ReceiptSlipView = ReceiptSlip & { clinic: LabSettings; logo: string | null };
 /** A row of the cash desk's list. */
 export type BillSummary = {
   visitId: string;
