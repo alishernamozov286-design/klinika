@@ -2550,3 +2550,79 @@ describe("patient bill (B7.1)", () => {
     expect(await storage.getBill("missing")).toBeUndefined();
   });
 });
+
+describe("cash shift (B7.5)", () => {
+  const CASHIER = { id: "kassa1", name: "Yusupova Malika" };
+
+  async function billToday() {
+    const patient = await storage.createPatient({ fullName: "Rasulov Bekzod", phone: "+998904444444", gender: "erkak", age: 41, address: null });
+    const order = await storage.createOrder({ patientId: patient.id, testIds: ["3", "4"], discount: 0, paidAmount: 0, createdBy: CASHIER.id });
+    return { patient, order, visitId: order.visitId! };
+  }
+
+  it("payments land in the cashier's open shift; closing freezes the report and the count", async () => {
+    const { order, visitId } = await billToday();
+    const shift = await storage.openShift({ openingCash: 50000, note: null }, CASHIER);
+    expect(shift).toMatchObject({ number: 1, openingCash: 50000, closedAt: null, entries: [] });
+    await expect(storage.openShift({ openingCash: 0, note: null }, CASHIER)).rejects.toThrow(/ochiq smena bor/);
+    const till = { ...CASHIER, shiftId: shift.id };
+
+    // A receipt in cash, a refund in cash on the order, a terminal payment on a new order.
+    await storage.payBill(visitId, { amount: order.totalAmount, method: "naqd", note: null }, till);
+    await storage.addPayment(order.id, { amount: -5000, method: "naqd" }, till);
+    const other = await storage.createPatient({ fullName: "Ergasheva Nilufar", phone: "+998905555555", gender: "ayol", age: 33, address: null });
+    const second = await storage.createOrder({ patientId: other.id, testIds: ["3"], discount: 0, paidAmount: 20000, createdBy: CASHIER.id, shiftId: shift.id });
+    expect(second.payments?.[0].shiftId).toBe(shift.id);
+
+    let desk = await storage.getCashDesk(CASHIER.id);
+    expect(desk.shift!.entries.map((e) => [e.kind, e.amount])).toEqual([
+      ["payment", 20000],
+      ["refund", -5000],
+      ["receipt", order.totalAmount],
+    ]);
+    const expected = 50000 + order.totalAmount - 5000 + 20000;
+    expect(desk.shift!.totals).toMatchObject({ payments: 2, refunds: 1, expectedCash: expected });
+
+    // A count against a stale figure is refused; a mismatch needs a reason.
+    await expect(storage.closeShift(shift.id, { countedCash: expected, carriedCash: 0, expectedCash: expected - 1, note: null }, CASHIER)).rejects.toThrow(/qayta sanang/);
+    await expect(storage.closeShift(shift.id, { countedCash: expected - 2000, carriedCash: 0, expectedCash: expected, note: null }, CASHIER)).rejects.toThrow(/Kamomad/);
+    const closed = (await storage.closeShift(
+      shift.id,
+      { countedCash: expected - 2000, carriedCash: 30000, expectedCash: expected, denominations: { "200000": 0, "1000": 3 }, note: "Qaytim xato berildi" },
+      CASHIER,
+    ))!;
+    expect(closed).toMatchObject({ countedCash: expected - 2000, difference: -2000, carriedCash: 30000, closingNote: "Qaytim xato berildi", denominations: { "1000": 3 } });
+    expect(closed.closedAt).not.toBeNull();
+    await expect(storage.closeShift(shift.id, { countedCash: 0, carriedCash: 0, expectedCash: 0, note: null }, CASHIER)).rejects.toThrow(/allaqachon yopilgan/);
+
+    // Closed: no more money through it, and nothing in its report is voided.
+    await expect(storage.addPayment(second.id, { amount: -1000, method: "naqd" }, till)).rejects.toThrow(/Smena yopilgan/);
+    const receipt = (await storage.getBill(visitId))!.receipts[0];
+    await expect(storage.voidReceipt(receipt.id, "Noto'g'ri bemor", ACTOR)).rejects.toThrow(/Smena №1 hisobotiga kirgan/);
+    await expect(storage.voidPayment(second.payments![0].id, "xato kiritilgan", ACTOR)).rejects.toThrow(/Smena №1/);
+
+    // The next opening is offered what this one left in the drawer.
+    desk = await storage.getCashDesk(CASHIER.id);
+    expect(desk).toMatchObject({ shift: null, last: { number: 1, carriedCash: 30000 } });
+    const listed = await storage.listShifts({});
+    expect(listed.map((s) => [s.number, s.totals.expectedCash, s.difference])).toEqual([[1, expected, -2000]]);
+  });
+
+  it("a payment voided while its shift is open drops out of the drawer; old payments stay voidable", async () => {
+    const legacy = await storage.createOrder({ patientId: (await billToday()).patient.id, testIds: ["3"], discount: 0, paidAmount: 20000, createdBy: CASHIER.id });
+    expect(legacy.payments?.[0].shiftId).toBeNull();
+    const shift = await storage.openShift({ openingCash: 0, note: null }, CASHIER);
+    const till = { ...CASHIER, shiftId: shift.id };
+    const { order } = await billToday();
+    const paid = (await storage.addPayment(order.id, { amount: 30000, method: "naqd" }, till))!;
+    await storage.voidPayment(paid.payments![0].id, "ikki marta kiritilgan", ACTOR);
+    const report = (await storage.getShift(shift.id))!;
+    expect(report.totals).toMatchObject({ expectedCash: 0, payments: 0, voided: { count: 1, amount: 30000 } });
+    await expect(storage.voidPayment(legacy.payments![0].id, "eski to'lov xatosi", ACTOR)).resolves.toBeDefined();
+    // Somebody else's shift id is not a till.
+    await expect(storage.addPayment(order.id, { amount: 1000, method: "naqd" }, { ...ACTOR, shiftId: shift.id })).rejects.toThrow(/Smena yopilgan/);
+    // The open one is always listed, whatever the period.
+    expect((await storage.listShifts({ from: "2999-01-01T00:00:00.000Z", to: "2999-01-02T00:00:00.000Z" })).map((s) => s.id)).toEqual([shift.id]);
+    expect((await storage.listShifts({ open: true, cashierId: "nobody" })).length).toBe(0);
+  });
+});

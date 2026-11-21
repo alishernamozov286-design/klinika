@@ -9,6 +9,7 @@ import {
   Receipt,
   Send,
   XCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { PAYMENT_METHODS, type OrderWithDetails, type Payment, type PaymentMethod } from "@shared/schema";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,7 @@ import { FlagBadge, PaymentBadge, PhoneText, StatusBadge, TelegramBadge } from "
 import { MoneyInput } from "@/components/inputs";
 import { SamplePanel } from "@/components/sample-panel";
 import { useAuth } from "@/hooks/use-auth";
+import { useCashDesk } from "@/components/cashier/shift";
 import { cn } from "@/lib/utils";
 
 export function OrderDetailDialog({
@@ -304,6 +306,7 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
   const { toast } = useToast();
   const { can } = useAuth();
   const debt = Math.max(0, order.totalAmount - order.paidAmount);
+  const { data: desk } = useCashDesk();
 
   const [amount, setAmount] = useState(0);
   const [method, setMethod] = useState<PaymentMethod>("naqd");
@@ -318,7 +321,7 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
       return (await res.json()) as OrderWithDetails;
     },
     onSuccess: (saved) => {
-      invalidateApi("/api/orders", "/api/stats", "/api/reception");
+      invalidateApi("/api/orders", "/api/stats", "/api/reception", "/api/cash-shifts", "/api/bills");
       toast({
         title: "To'lov qayd etildi",
         description: `Qoldiq: ${money(Math.max(0, saved.totalAmount - saved.paidAmount))}`,
@@ -393,7 +396,14 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
         </div>
       )}
 
-      {canEdit && (
+      {canEdit && desk && !desk.shift && (
+        <p className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm" data-testid="order-no-shift">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          To'lov qabul qilish yoki qaytarish uchun avval kassa smenasini oching (Kassa → Smenani ochish).
+        </p>
+      )}
+
+      {canEdit && desk?.shift && (
         <div className="mt-3 space-y-2 rounded-xl border bg-muted/30 p-3">
           <div className="flex flex-wrap gap-2">
             <MoneyInput

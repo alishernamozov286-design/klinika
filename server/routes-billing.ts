@@ -2,7 +2,7 @@
  * Kassa: bemor hisobvarag'i (B7.1, TZ §9.1, §9.2, §11).
  *
  *   payments.create | finance.view   read bills and the debtors list
- *   payments.create                  open a bill (its number), take a payment on it
+ *   payments.create                  open a bill (its number), take a payment on it (in an open cash shift, B7.5)
  *   payments.delete                  void a receipt, whole, with a reason
  *
  * A refund is not taken here: it stays with payments.refund (B7.4).
@@ -14,6 +14,7 @@ import { BILL_FILTERS, describeShares, type BillFilter } from "@shared/invoice";
 import { requirePermission } from "./rbac";
 import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
 import { storage } from "./storage";
+import { tillActor } from "./routes-cashdesk";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const sum = (n: number) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
@@ -67,8 +68,11 @@ export function registerBillingRoutes(app: Express) {
       const input = payBillSchema.parse(req.body);
       const before = await storage.getBill(req.params.visitId);
       if (!before) return res.status(404).json({ message: "Tashrif topilmadi" });
+      // The receipt lands in the cashier's open shift (B7.5).
+      const till = await tillActor(req, res);
+      if (!till) return;
       // Nothing owed is refused inside the storage too, on locked rows (409).
-      const out = (await storage.payBill(req.params.visitId, input, actorOf(req)))!;
+      const out = (await storage.payBill(req.params.visitId, input, till))!;
       const receipt = out.bill.receipts.find((r) => r.id === out.receiptId)!;
       await audit(
         req,

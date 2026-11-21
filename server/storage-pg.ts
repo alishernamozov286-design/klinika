@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { defaultTests, testReferences } from "@shared/tests-data";
 import {
@@ -20,6 +20,7 @@ import {
   stockCountLines,
   invoices,
   invoicePayments,
+  cashShifts,
   consumptionNorms,
   labConsumptions,
   auditLog,
@@ -185,7 +186,26 @@ import {
   roundZ,
   zScore,
 } from "@shared/qc";
+import {
+  SHIFT_ALREADY_CLOSED,
+  SHIFT_ALREADY_OPEN,
+  SHIFT_CLOSED,
+  SHIFT_MOVED,
+  cleanDenominations,
+  closeProblem,
+  paymentInClosedShift,
+  shiftEntries,
+  shiftHours,
+  summarizeShift,
+  type ShiftPaymentRow,
+} from "@shared/cash-shift";
 import type {
+  CashDesk,
+  CashShift,
+  CloseShiftInput,
+  OpenShiftInput,
+  ShiftReport,
+  ShiftSummary,
   Bill,
   BillSummary,
   Invoice,
@@ -289,6 +309,7 @@ import {
   type ResultInput,
   resolveFlag,
   type BillQuery,
+  type ShiftQuery,
 } from "./storage-types";
 import type { LockState } from "@shared/lockout";
 
@@ -2606,6 +2627,7 @@ export class PgStorage implements IStorage {
           method: "naqd",
           createdBy: input.createdBy ?? null,
           createdByName: staff?.fullName ?? "—",
+          shiftId: await this.lockShift(tx as unknown as typeof db, { id: input.createdBy ?? null, shiftId: input.shiftId }),
         });
       }
 
@@ -3003,6 +3025,7 @@ export class PgStorage implements IStorage {
         note: input.note?.trim() || null,
         createdBy: actor.id,
         createdByName: actor.name,
+        shiftId: await this.lockShift(tx as unknown as typeof db, actor),
       });
       await this.syncPaid(tx as unknown as typeof db, orderId, actor);
     });
@@ -3012,6 +3035,7 @@ export class PgStorage implements IStorage {
 
   async voidPayment(paymentId: string, reason: string, actor: Actor): Promise<OrderWithDetails | undefined> {
     const orderId = await db.transaction(async (tx) => {
+      await this.refuseClosedShift(tx as unknown as typeof db, eq(payments.id, paymentId));
       // Conditional on voided_at, so two people voiding at once void it once.
       const [row] = await tx
         .update(payments)
@@ -4767,6 +4791,7 @@ export class PgStorage implements IStorage {
       // The visit row serialises payments on one bill; the orders are locked against a payment taken on the order itself.
       const [v] = await tx.select().from(visits).where(eq(visits.id, visitId)).for("update");
       if (!v) return undefined;
+      const shiftId = await this.lockShift(exec, actor);
       const lines = await this.billLines(exec, visitId, true);
       const { shares, taken } = allocatePayment(lines, input.amount);
       if (taken === 0) throw new StorageConflict(BILL_PAID);
@@ -4785,6 +4810,7 @@ export class PgStorage implements IStorage {
           note: `Hisobvaraq №${invoice.number}, kvitansiya №${receipt.number}`,
           createdBy: actor.id,
           createdByName: actor.name,
+          shiftId,
         })),
       );
       for (const s of shares) if (s.source === "order") await this.syncPaid(exec, s.sourceId, actor);
@@ -4796,6 +4822,7 @@ export class PgStorage implements IStorage {
 
   async voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined> {
     const visitId = await db.transaction(async (tx) => {
+      await this.refuseClosedShift(tx as unknown as typeof db, eq(payments.invoicePaymentId, receiptId));
       const now = new Date().toISOString();
       // Conditional on voided_at: two people voiding at once void it once.
       const [rec] = await tx
@@ -4874,6 +4901,176 @@ export class PgStorage implements IStorage {
       } satisfies BillSummary;
     });
     return filterBills(rows, query.status);
+  }
+
+  // ------------------------------------------------------------ B7.5 cash shifts
+
+  /**
+   * The shift a money write lands in. FOR SHARE: a closing (FOR UPDATE) waits
+   * for this payment to commit and counts it; a payment that comes after the
+   * closing finds the shift closed and is refused.
+   */
+  private async lockShift(exec: typeof db, actor: Pick<Actor, "id" | "shiftId">): Promise<string | null> {
+    if (!actor.shiftId) return null;
+    const [row] = await exec
+      .select({ id: cashShifts.id })
+      .from(cashShifts)
+      .where(and(eq(cashShifts.id, actor.shiftId), eq(cashShifts.cashierId, actor.id ?? ""), isNull(cashShifts.closedAt)))
+      .for("share");
+    if (!row) throw new StorageConflict(SHIFT_CLOSED);
+    return row.id;
+  }
+
+  /** A payment counted in a closed shift's report is never voided (shared/cash-shift.ts). */
+  private async refuseClosedShift(exec: typeof db, which: SQL): Promise<void> {
+    const [row] = await exec
+      .select({ number: cashShifts.number, closedAt: cashShifts.closedAt })
+      .from(payments)
+      .innerJoin(cashShifts, eq(cashShifts.id, payments.shiftId))
+      .where(which)
+      .limit(1)
+      .for("share", { of: cashShifts });
+    if (row?.closedAt) throw new StorageConflict(paymentInClosedShift(row.number));
+  }
+
+  /** Every payments row of the shifts `where` selects, with what each one paid. */
+  private async shiftRows(exec: typeof db, where: SQL | undefined): Promise<Map<string, ShiftPaymentRow[]>> {
+    const rows = await exec
+      .select({
+        shiftId: cashShifts.id,
+        id: payments.id,
+        amount: payments.amount,
+        method: payments.method,
+        createdAt: payments.createdAt,
+        voidedAt: payments.voidedAt,
+        voidReason: payments.voidReason,
+        receiptId: payments.invoicePaymentId,
+        receiptNumber: invoicePayments.number,
+        invoiceNumber: invoices.number,
+        orderNumber: orders.orderNumber,
+        patientName: patients.fullName,
+        patientNumber: patients.patientNumber,
+      })
+      .from(payments)
+      .innerJoin(cashShifts, eq(cashShifts.id, payments.shiftId))
+      .leftJoin(invoicePayments, eq(invoicePayments.id, payments.invoicePaymentId))
+      .leftJoin(invoices, eq(invoices.id, invoicePayments.invoiceId))
+      .leftJoin(orders, eq(orders.id, payments.orderId))
+      .leftJoin(patients, sql`${patients.id} = coalesce(${invoicePayments.patientId}, ${orders.patientId})`)
+      .where(where)
+      .orderBy(asc(payments.createdAt));
+    const out = new Map<string, ShiftPaymentRow[]>();
+    for (const { shiftId, ...r } of rows) {
+      const list = out.get(shiftId) ?? [];
+      list.push({ ...r, method: r.method as PaymentMethod, createdAt: iso(r.createdAt), voidedAt: iso(r.voidedAt) });
+      out.set(shiftId, list);
+    }
+    return out;
+  }
+
+  private shiftSummary(row: CashShift, rows: ShiftPaymentRow[]): ShiftSummary {
+    const shift = { ...row, openedAt: iso(row.openedAt), closedAt: iso(row.closedAt) };
+    return {
+      ...shift,
+      // Closed: the report as it was signed off. Open: live.
+      totals: shift.closedAt && row.totals ? row.totals : summarizeShift(rows, row.openingCash),
+      hours: shiftHours(shift.openedAt, shift.closedAt),
+    };
+  }
+
+  private shiftReport(row: CashShift, rows: ShiftPaymentRow[]): ShiftReport {
+    return { ...this.shiftSummary(row, rows), entries: shiftEntries(rows) };
+  }
+
+  async getOpenShift(cashierId: string): Promise<CashShift | undefined> {
+    const [row] = await db.select().from(cashShifts).where(and(eq(cashShifts.cashierId, cashierId), isNull(cashShifts.closedAt))).limit(1);
+    return row;
+  }
+
+  async getCashDesk(cashierId: string): Promise<CashDesk> {
+    const [open, rows, last] = await Promise.all([
+      this.getOpenShift(cashierId),
+      this.shiftRows(db, and(eq(cashShifts.cashierId, cashierId), isNull(cashShifts.closedAt))),
+      db
+        .select({ id: cashShifts.id, number: cashShifts.number, closedAt: cashShifts.closedAt, carriedCash: cashShifts.carriedCash })
+        .from(cashShifts)
+        .where(and(eq(cashShifts.cashierId, cashierId), sql`${cashShifts.closedAt} IS NOT NULL`))
+        .orderBy(desc(cashShifts.closedAt))
+        .limit(1),
+    ]);
+    return {
+      shift: open ? this.shiftReport(open, rows.get(open.id) ?? []) : null,
+      last: last[0] ? { id: last[0].id, number: last[0].number, closedAt: iso(last[0].closedAt)!, carriedCash: last[0].carriedCash ?? 0 } : null,
+    };
+  }
+
+  async openShift(input: OpenShiftInput, actor: Actor): Promise<ShiftReport> {
+    try {
+      const [row] = await db
+        .insert(cashShifts)
+        .values({ cashierId: actor.id!, cashierName: actor.name, openingCash: input.openingCash, openingNote: input.note ?? null })
+        .returning();
+      return this.shiftReport(row, []);
+    } catch (err) {
+      const e = err as { code?: string; constraint?: string };
+      if (e?.code === "23505" && e.constraint === "UQ_cash_shifts_open") throw new StorageConflict(SHIFT_ALREADY_OPEN);
+      throw err;
+    }
+  }
+
+  async getShift(id: string): Promise<ShiftReport | undefined> {
+    const [[row], rows] = await Promise.all([db.select().from(cashShifts).where(eq(cashShifts.id, id)).limit(1), this.shiftRows(db, eq(cashShifts.id, id))]);
+    return row ? this.shiftReport(row, rows.get(id) ?? []) : undefined;
+  }
+
+  async closeShift(id: string, input: CloseShiftInput, actor: Actor): Promise<ShiftReport | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const exec = tx as unknown as typeof db;
+      // Waits for payments still writing into this shift (they hold it FOR SHARE).
+      const [row] = await tx.select().from(cashShifts).where(eq(cashShifts.id, id)).for("update");
+      if (!row) return false;
+      if (row.closedAt) throw new StorageConflict(SHIFT_ALREADY_CLOSED);
+      const rows = (await this.shiftRows(exec, eq(cashShifts.id, id))).get(id) ?? [];
+      const totals = summarizeShift(rows, row.openingCash);
+      if (totals.expectedCash !== input.expectedCash) throw new StorageConflict(SHIFT_MOVED);
+      const problem = closeProblem(input, totals.expectedCash);
+      if (problem) throw new Error(problem);
+      await tx
+        .update(cashShifts)
+        .set({
+          closedAt: new Date().toISOString(),
+          closedBy: actor.id,
+          closedByName: actor.name,
+          expectedCash: totals.expectedCash,
+          countedCash: input.countedCash,
+          difference: input.countedCash - totals.expectedCash,
+          carriedCash: input.carriedCash,
+          denominations: cleanDenominations(input.denominations),
+          closingNote: input.note ?? null,
+          totals,
+        })
+        .where(and(eq(cashShifts.id, id), isNull(cashShifts.closedAt)));
+      return true;
+    });
+    return found ? this.getShift(id) : undefined;
+  }
+
+  async listShifts(query: ShiftQuery): Promise<ShiftSummary[]> {
+    const cashier = query.cashierId ? eq(cashShifts.cashierId, query.cashierId) : undefined;
+    const range = and(query.from ? gte(cashShifts.openedAt, query.from) : undefined, query.to ? sql`${cashShifts.openedAt} < ${query.to}` : undefined);
+    // An open shift is always listed, whenever it was opened: it is the one that needs closing.
+    const when = query.open ? isNull(cashShifts.closedAt) : query.from || query.to ? or(range, isNull(cashShifts.closedAt)) : undefined;
+    const [list, live] = await Promise.all([
+      db
+        .select()
+        .from(cashShifts)
+        .where(and(cashier, when))
+        .orderBy(sql`${cashShifts.closedAt} IS NULL DESC`, desc(cashShifts.openedAt))
+        .limit(query.limit ?? 200),
+      // Only open shifts need their rows: a closed one carries its frozen report.
+      this.shiftRows(db, and(cashier, isNull(cashShifts.closedAt))),
+    ]);
+    return list.map((row) => this.shiftSummary(row, live.get(row.id) ?? []));
   }
 
   async movementTotals(range: { from: string; to: string }): Promise<MovementTotal[]> {

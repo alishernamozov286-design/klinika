@@ -27,6 +27,8 @@ import { apiRequest, invalidateApi, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OpenShiftDialog, ShiftBar, ShiftsTab, refreshShifts, useCashDesk, useHandlesMoney } from "@/components/cashier/shift";
 import { formatDate, formatDateTime, money } from "@/lib/format";
 
 const localDay = (offset = 0) => {
@@ -48,6 +50,39 @@ const METHOD_ICON: Record<PaymentMethod, typeof Banknote> = { naqd: Banknote, ka
 type Period = "today" | "yesterday" | "week" | "custom" | "all";
 
 export default function Cashier() {
+  const { can } = useAuth();
+  const handles = useHandlesMoney();
+  const showShifts = handles || can("shifts.read");
+  const [tab, setTab] = useState<"bills" | "shifts">(() => (new URLSearchParams(window.location.search).get("tab") === "shifts" ? "shifts" : "bills"));
+  return (
+    <div className="space-y-6">
+      <PageHeader eyebrow="Kassa" title="Kassa" description="Bemor hisobvarag'i: bir tashrifdagi barcha xizmatlar bitta to'lov bilan; kassa smenasi va uning hisoboti (TZ §9)" />
+      {handles && <ShiftBar />}
+      {showShifts ? (
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "bills" | "shifts")}>
+          <TabsList>
+            <TabsTrigger value="bills" data-testid="tab-cashier-bills">
+              Hisobvaraqlar
+            </TabsTrigger>
+            <TabsTrigger value="shifts" data-testid="tab-cashier-shifts">
+              Smenalar
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="bills" className="mt-4">
+            <BillsDesk />
+          </TabsContent>
+          <TabsContent value="shifts" className="mt-4">
+            <ShiftsTab />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <BillsDesk />
+      )}
+    </div>
+  );
+}
+
+function BillsDesk() {
   const [period, setPeriod] = useState<Period>("today");
   const [from, setFrom] = useState(localDay());
   const [to, setTo] = useState(localDay());
@@ -77,8 +112,6 @@ export default function Cashier() {
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Kassa" title="Kassa" description="Bemor hisobvarag'i: bir tashrifdagi barcha xizmatlar — ko'rik, UZI, muolaja, laboratoriya — bitta to'lov bilan (TZ §9)" />
-
       <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         <StatCard index={0} label="Hisobvaraqlar" value={rows.length} hint={debtors ? `${debtors} tasida qarz bor` : "Qarzdor yo'q"} icon={Receipt} isLoading={isLoading} />
         <StatCard index={1} label="Xizmatlar summasi" value={money(totals.amount)} icon={CircleDollarSign} tone="violet" isLoading={isLoading} />
@@ -212,10 +245,13 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
   const [voidError, setVoidError] = useState<string | null>(null);
   const due = bill?.totals.due ?? 0;
   const value = touched ? amount : due;
+  const { data: desk } = useCashDesk();
+  const [openingShift, setOpeningShift] = useState(false);
 
   const refresh = (b: Bill) => {
     queryClient.setQueryData([key], b);
     invalidateApi("/api/bills", "/api/orders", "/api/reception", `/api/patients/${b.patient.id}`);
+    refreshShifts();
   };
   const reset = () => {
     setAmount(0);
@@ -357,7 +393,19 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
                 )}
               </div>
 
-              {can("payments.create") && due > 0 && (
+              {can("payments.create") && due > 0 && desk && !desk.shift && (
+                <div className="flex flex-col gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:flex-row sm:items-center sm:justify-between" data-testid="bill-no-shift">
+                  <p className="flex items-start gap-2 text-sm">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                    To'lov qabul qilish uchun avval kassa smenasini oching — har bir to'lov smena hisobotiga yoziladi.
+                  </p>
+                  <Button size="sm" onClick={() => setOpeningShift(true)} data-testid="button-bill-open-shift">
+                    Smenani ochish
+                  </Button>
+                </div>
+              )}
+
+              {can("payments.create") && due > 0 && desk?.shift && (
                 <form
                   className="rounded-xl border p-4"
                   onSubmit={(e) => {
@@ -510,6 +558,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
         onConfirm={(reason) => voiding && voidReceipt.mutate({ id: voiding, reason })}
         testId="receipt-void"
       />
+      <OpenShiftDialog open={openingShift} onOpenChange={setOpeningShift} desk={desk} />
     </Dialog>
   );
 }

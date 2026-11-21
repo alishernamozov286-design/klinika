@@ -150,7 +150,7 @@ export function OrderDialog({
       return (await res.json()) as OrderWithDetails;
     },
     onSuccess: (saved) => {
-      invalidateApi("/api/orders", "/api/stats", "/api/reception");
+      invalidateApi("/api/orders", "/api/stats", "/api/reception", "/api/cash-shifts", "/api/bills");
       toast({
         title: isEdit ? `Buyurtma #${saved.orderNumber} yangilandi` : `Buyurtma #${saved.orderNumber} yaratildi`,
         description: `${saved.items.length} ta tahlil · ${money(saved.totalAmount)}`,

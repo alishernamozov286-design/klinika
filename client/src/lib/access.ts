@@ -24,5 +24,5 @@ export const ROUTE_ACCESS: Record<string, Permission[]> = {
   "/devices": ["devices.read"],
   "/qc": ["qc.read"],
   "/inventory": ["inventory.read"],
-  "/cashier": ["payments.create", "finance.view"],
+  "/cashier": ["payments.create", "payments.refund", "finance.view", "shifts.read"],
 };

@@ -6,6 +6,7 @@ import type {
   ConsumptionNorm,
   Invoice,
   InvoiceReceipt,
+  CashShift,
   LabConsumption,
   InventoryBatch,
   StockMovement,
@@ -83,6 +84,8 @@ export type DbShape = {
   consumptionNorms: ConsumptionNorm[];
   invoices: Invoice[];
   invoicePayments: Omit<InvoiceReceipt, "shares">[];
+  /** B7.5 cash shifts; payments carry their id. */
+  cashShifts: CashShift[];
   labConsumptions: LabConsumption[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
@@ -103,7 +106,7 @@ export type DbShape = {
   telegramContacts: TelegramContact[];
   settings: LabSettings;
   /** Last number handed out for each human-facing sequence; next = value + 1. */
-  counters: { orderNumber: number; patientNumber: number; referralNumber: number; receiptNumber: number; issueNumber: number; countNumber: number; invoiceNumber: number; invoiceReceiptNumber: number };
+  counters: { orderNumber: number; patientNumber: number; referralNumber: number; receiptNumber: number; issueNumber: number; countNumber: number; invoiceNumber: number; invoiceReceiptNumber: number; shiftNumber: number };
 };
 
 /**
@@ -148,6 +151,7 @@ export const emptyDb = (): DbShape => ({
   consumptionNorms: [],
   invoices: [],
   invoicePayments: [],
+  cashShifts: [],
   labConsumptions: [],
   icdUzNames: {},
   security: null,
@@ -172,7 +176,7 @@ export const emptyDb = (): DbShape => ({
     director: null,
     licenseNumber: null,
   },
-  counters: { orderNumber: 1000, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0, invoiceNumber: 0, invoiceReceiptNumber: 0 },
+  counters: { orderNumber: 1000, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0, invoiceNumber: 0, invoiceReceiptNumber: 0, shiftNumber: 0 },
 });
 
 export function readDbSync(): DbShape {

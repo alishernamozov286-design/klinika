@@ -39,6 +39,7 @@ import {
 } from "./inventory";
 import { ADMIN_ROUTES, MAX_PRESCRIPTION_LINES, PRESCRIPTION_KINDS, type TreatmentEntry } from "./prescription";
 import type { BillLine, BillSource, BillTotals } from "./invoice";
+import type { ShiftEntry, ShiftTotals } from "./cash-shift";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -944,6 +945,8 @@ export const payments = pgTable("payments", {
   appointmentId: varchar("appointment_id"),
   /** B7.1: the bill receipt this is a share of; null for a payment taken on the order itself. */
   invoicePaymentId: varchar("invoice_payment_id"),
+  /** B7.5: the cash shift it was recorded in; null for payments taken before shifts existed. */
+  shiftId: varchar("shift_id"),
   /** Negative for a refund, so the history reads as a ledger. */
   amount: money("amount").notNull(),
   method: text("method").notNull().default("naqd"),
@@ -1001,6 +1004,44 @@ export const invoicePayments = pgTable(
     voidReason: text("void_reason"),
   },
   (t) => [index("IDX_invoice_payments_invoice").on(t.invoiceId)],
+);
+
+/**
+ * Kassa smenasi (B7.5, TZ §9.2 "Kassa smenasini yopish"): one person's till
+ * from opening to closing. Payments carry its id (payments.shift_id). Open
+ * while closed_at is null — one open shift per person (UQ_cash_shifts_open).
+ * At closing the expected cash, the count, the difference and the whole
+ * report are frozen here. Never deleted, never reopened.
+ */
+export const cashShifts = pgTable(
+  "cash_shifts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+    cashierId: varchar("cashier_id").notNull(),
+    cashierName: text("cashier_name").notNull(),
+    openedAt: isoTimestamp("opened_at").defaultNow().notNull(),
+    /** Cash in the drawer at opening (the float). */
+    openingCash: money("opening_cash").notNull().default(0),
+    openingNote: text("opening_note"),
+    closedAt: isoTimestamp("closed_at"),
+    closedBy: varchar("closed_by"),
+    closedByName: text("closed_by_name"),
+    expectedCash: money("expected_cash"),
+    countedCash: money("counted_cash"),
+    /** counted − expected: negative is a shortage. */
+    difference: money("difference"),
+    /** Left in the drawer for the next shift; the rest is handed over. */
+    carriedCash: money("carried_cash"),
+    /** The note-by-note count, when the counting aid was used. */
+    denominations: json("denominations").$type<Record<string, number>>(),
+    closingNote: text("closing_note"),
+    totals: json("totals").$type<ShiftTotals>(),
+  },
+  (t) => [
+    uniqueIndex("UQ_cash_shifts_open").on(t.cashierId).where(sql`closed_at IS NULL`),
+    index("IDX_cash_shifts_opened").on(t.openedAt),
+  ],
 );
 
 /** Money out. Without it the reports only ever show turnover, never profit. */
@@ -2018,6 +2059,17 @@ export type Bill = {
   receipts: InvoiceReceipt[];
   totals: BillTotals;
 };
+export type CashShift = typeof cashShifts.$inferSelect;
+/** A shift with its figures: live while open, the frozen report once closed. */
+export type ShiftSummary = CashShift & { totals: ShiftTotals; hours: number };
+/** The shift report (B7.5): figures and every entry recorded in it. */
+export type ShiftReport = ShiftSummary & { entries: ShiftEntry[] };
+/** What the cash desk needs to know about the person at it. */
+export type CashDesk = {
+  shift: ShiftReport | null;
+  /** Their last closed shift: what it left in the drawer is the next opening's suggestion. */
+  last: { id: string; number: number; closedAt: string; carriedCash: number } | null;
+};
 /** A row of the cash desk's list. */
 export type BillSummary = {
   visitId: string;
@@ -2313,6 +2365,30 @@ export const payBillSchema = z.object({
     .transform((v) => v || null),
 });
 export type PayBillInput = z.infer<typeof payBillSchema>;
+
+const shiftCash = (label: string) =>
+  z.coerce.number({ invalid_type_error: `${label}ni kiriting` }).int(`${label} butun so'mda bo'lsin`).min(0, `${label} manfiy bo'lishi mumkin emas`).max(2_000_000_000, `${label} juda katta`);
+const shiftNote = z
+  .string()
+  .trim()
+  .max(500, "Izoh juda uzun")
+  .nullish()
+  .transform((v) => v || null);
+
+/** Opening a shift (B7.5): the cash already in the drawer. */
+export const openShiftSchema = z.object({ openingCash: shiftCash("Boshlang'ich summa").default(0), note: shiftNote });
+export type OpenShiftInput = z.infer<typeof openShiftSchema>;
+
+/** Closing a shift: the drawer as counted, what stays in it, and why it differs if it does. */
+export const closeShiftSchema = z.object({
+  countedCash: shiftCash("Sanalgan summa"),
+  carriedCash: shiftCash("Qoldiriladigan summa").default(0),
+  /** The expected cash the cashier saw; a payment recorded since makes the count stale (409). */
+  expectedCash: z.coerce.number().int(),
+  denominations: z.record(z.string().regex(/^\d+$/), z.coerce.number().int().min(0).max(100_000)).nullish(),
+  note: shiftNote,
+});
+export type CloseShiftInput = z.infer<typeof closeShiftSchema>;
 
 /** Why a ledger entry is struck out; required, because the row stays forever. */
 export const voidPaymentSchema = z.object({

@@ -124,6 +124,7 @@ import { registerQcRoutes } from "./routes-qc";
 import { registerInventoryRoutes } from "./routes-inventory";
 import { registerConsumptionRoutes } from "./routes-consumption";
 import { registerBillingRoutes } from "./routes-billing";
+import { registerCashDeskRoutes, tillActor } from "./routes-cashdesk";
 import { consumeForOrder } from "./reagent-consumption";
 import { describeConsumption } from "@shared/consumption";
 
@@ -987,7 +988,14 @@ export async function registerRoutes(app: Express): Promise<void> {
     requirePermission("orders.create"),
     handle(async (req, res) => {
       const input = createOrderSchema.parse(req.body);
-      const order = await storage.createOrder({ ...input, createdBy: req.user?.id ?? null });
+      // Money handed over with the order lands in the creator's cash shift (B7.5).
+      let shiftId: string | null = null;
+      if (input.paidAmount > 0) {
+        const till = await tillActor(req, res);
+        if (!till) return;
+        shiftId = till.shiftId ?? null;
+      }
+      const order = await storage.createOrder({ ...input, createdBy: req.user?.id ?? null, shiftId });
       await audit(
         req,
         "create",
@@ -1303,7 +1311,10 @@ export async function registerRoutes(app: Express): Promise<void> {
               : "To'lov qabul qilish uchun ruxsatingiz yo'q",
         });
       }
-      const order = await storage.addPayment(req.params.id, input, actorOf(req));
+      // Taken or handed back, the money goes through the actor's open cash shift (B7.5).
+      const till = await tillActor(req, res);
+      if (!till) return;
+      const order = await storage.addPayment(req.params.id, input, till);
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
       const latest = order.payments?.[0];
       await audit(
@@ -2432,6 +2443,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   registerInventoryRoutes(app);
   registerConsumptionRoutes(app);
   registerBillingRoutes(app);
+  registerCashDeskRoutes(app);
 
   // An unknown API path is a 404 in JSON, not the client app's index.html with
   // a 200 — which is what the SPA fallback further down would otherwise serve.

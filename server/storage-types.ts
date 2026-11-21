@@ -6,7 +6,9 @@ import type { LabBoard } from "@shared/lab-board";
 import type { ClinicLogo } from "@shared/branding";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import type { BillFilter } from "@shared/invoice";
-import type { Bill, BillSummary, PayBillInput } from "@shared/schema";
+import type { Bill, BillSummary, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
+/** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
+export type ShiftQuery = { from?: string; to?: string; cashierId?: string; open?: boolean; limit?: number };
 /** Visit days (YYYY-MM-DD, inclusive); none means all time. */
 export type BillQuery = { from?: string; to?: string; patientId?: string; status?: BillFilter; limit?: number };
 import type {
@@ -182,6 +184,8 @@ export type CreateOrderArgs = {
   notes?: string | null;
   referrer?: string | null;
   createdBy?: string | null;
+  /** B7.5: the creator's open shift; required by the route when an opening payment is taken. */
+  shiftId?: string | null;
 };
 
 export type ResultInput = {
@@ -211,7 +215,16 @@ export function resolveFlag(
 }
 
 /** Who is performing the write — carried into payments, expenses and the log. */
-export type Actor = { id: string | null; name: string };
+export type Actor = {
+  id: string | null;
+  name: string;
+  /**
+   * B7.5: the actor's open cash shift, when the write moves money. The route
+   * finds it; the storage locks it (it must still be open and theirs) and
+   * stamps it on every payments row it writes.
+   */
+  shiftId?: string | null;
+};
 
 /** One line as saveResults will write it. */
 export type ResultChange = { id: string; result: string | null; flag: ResultFlag | null; notes: string | null };
@@ -923,6 +936,17 @@ export interface IStorage {
   /** Voids a receipt and all its shares, once (StorageConflict after). */
   voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined>;
   listBills(query: BillQuery): Promise<BillSummary[]>;
+  // B7.5 cash shifts (rules: shared/cash-shift.ts). Payments carry the shift through Actor.shiftId.
+  getOpenShift(cashierId: string): Promise<CashShift | undefined>;
+  /** The person's open shift with its report, and what their last closed shift left in the drawer. */
+  getCashDesk(cashierId: string): Promise<CashDesk>;
+  /** One open shift per person (StorageConflict otherwise). */
+  openShift(input: OpenShiftInput, actor: Actor): Promise<ShiftReport>;
+  getShift(id: string): Promise<ShiftReport | undefined>;
+  /** Freezes the report; refuses a count made against a figure that has since moved (StorageConflict). */
+  closeShift(id: string, input: CloseShiftInput, actor: Actor): Promise<ShiftReport | undefined>;
+  /** `from` inclusive, `to` exclusive (ISO instants) on the opening time; newest first. */
+  listShifts(query: ShiftQuery): Promise<ShiftSummary[]>;
   // B5.7 reports, straight from the ledger (shaping: shared/inventory-reports.ts). Ranges are ISO instants, `to` exclusive.
   /** Signed movement totals per item and turnover bucket: before `from`, and from `from` to `to`. */
   movementTotals(range: { from: string; to: string }): Promise<MovementTotal[]>;

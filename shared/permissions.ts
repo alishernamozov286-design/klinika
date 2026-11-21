@@ -271,6 +271,17 @@ export const PERMISSIONS = {
     description: "Xato kiritilgan to'lovni sabab bilan bekor qilish (yozuv tarixda qoladi)",
     sensitive: true,
   },
+  "shifts.read": {
+    group: "finance",
+    label: "Kassa smenalarini ko'rish",
+    description: "Barcha kassirlarning smenalari va smena hisobotlari (o'z smenasini har bir kassir ko'radi)",
+  },
+  "shifts.manage": {
+    group: "finance",
+    label: "Boshqa kassir smenasini yopish",
+    description: "Yopilmay qolgan smenani kassa sanog'i bilan yopish (TZ §9.2)",
+    sensitive: true,
+  },
   "expenses.read": {
     group: "finance",
     label: "Xarajatlarni ko'rish",
@@ -404,6 +415,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "orders.cancel",
       "finance.view",
       "payments.refund",
+      "shifts.read",
+      "shifts.manage",
       "expenses.read",
       "reports.view",
       "data.export",
@@ -520,6 +533,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     permissions: [
       "orders.read",
       "finance.view",
+      "shifts.read",
       "expenses.read",
       "expenses.manage",
       "reports.view",
@@ -537,6 +551,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "referrals.read",
       "orders.read",
       "finance.view",
+      "shifts.read",
       "expenses.read",
       "reports.view",
       "audit.read",
