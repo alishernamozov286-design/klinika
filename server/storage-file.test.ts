@@ -2749,3 +2749,26 @@ describe("cash desk takings (B7.7)", () => {
     expect(await storage.cashDayTotals({ from: "2999-01-01T00:00:00.000Z", to: "2999-01-02T00:00:00.000Z" })).toEqual([]);
   });
 });
+
+describe("debtors (B7.3)", () => {
+  it("one row per patient across visits; paid and cancelled bills drop out", async () => {
+    const cashier = { id: "kassa1", name: "Yusupova Malika" };
+    const p1 = await storage.createPatient({ fullName: "Hamidov Olim", phone: "+998901010101", gender: "erkak", age: 60, address: null });
+    const p2 = await storage.createPatient({ fullName: "Sobirova Lola", phone: "+998902020202", gender: "ayol", age: 25, address: null });
+    const a = await storage.createOrder({ patientId: p1.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: cashier.id });
+    const b = await storage.createOrder({ patientId: p2.id, testIds: ["3", "4"], discount: 0, paidAmount: 0, createdBy: cashier.id });
+    // p2 pays part; p1 nothing.
+    await storage.payBill(b.visitId!, { amount: 10000, method: "naqd", note: null }, cashier);
+    let rows = await storage.listDebtors();
+    expect(rows.map((r) => [r.patientName, r.due, r.bills, r.phone])).toEqual([
+      ["Sobirova Lola", b.totalAmount - 10000, 1, "+998902020202"],
+      ["Hamidov Olim", a.totalAmount, 1, "+998901010101"],
+    ].sort((x, y) => (y[1] as number) - (x[1] as number)));
+    expect(rows[0].oldest).toBe(todayKey());
+    // p1's order is cancelled: no debt left; p2 pays the rest.
+    await storage.updateOrder(a.id, { status: "cancelled" }, cashier);
+    await storage.payBill(b.visitId!, { amount: b.totalAmount, method: "naqd", note: null }, cashier);
+    rows = await storage.listDebtors();
+    expect(rows).toEqual([]);
+  });
+});

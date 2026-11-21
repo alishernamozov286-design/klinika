@@ -31,6 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ReceiptSlipDialog } from "@/components/cashier/receipt-slip";
 import { BillRefunds, RefundsTab, usePendingRefunds } from "@/components/cashier/refunds";
 import { CashHomeTab, DailyTakingsTab, type CashHomeTarget } from "@/components/cashier/home";
+import { DebtorsTab } from "@/components/cashier/debtors";
 import { PriceListPanel } from "@/pages/services";
 import { OpenShiftDialog, ShiftBar, ShiftsTab, refreshShifts, useCashDesk, useHandlesMoney } from "@/components/cashier/shift";
 import { formatDate, formatDateTime, money } from "@/lib/format";
@@ -58,11 +59,11 @@ export default function Cashier() {
   const handles = useHandlesMoney();
   const showShifts = handles || can("shifts.read");
   const pending = usePendingRefunds();
-  type Tab = "home" | "bills" | "refunds" | "shifts" | "daily" | "prices";
+  type Tab = "home" | "bills" | "debtors" | "refunds" | "shifts" | "daily" | "prices";
   const [tab, setTab] = useState<Tab>(() => {
     const asked = new URLSearchParams(window.location.search).get("tab");
     // TZ §9.1: the cash desk opens on its home page.
-    return asked === "bills" || asked === "refunds" || asked === "daily" || asked === "prices" || (asked === "shifts" && showShifts) ? asked : "home";
+    return asked === "bills" || asked === "debtors" || asked === "refunds" || asked === "daily" || asked === "prices" || (asked === "shifts" && showShifts) ? asked : "home";
   });
   // A card on the home page opens the bills on the debtors; a new key starts the desk fresh with that filter.
   const [billsPreset, setBillsPreset] = useState<{ key: number; filter: BillFilter; period: Period }>({ key: 0, filter: "all", period: "today" });
@@ -84,6 +85,9 @@ export default function Cashier() {
           </TabsTrigger>
           <TabsTrigger value="bills" data-testid="tab-cashier-bills">
             Hisobvaraqlar
+          </TabsTrigger>
+          <TabsTrigger value="debtors" data-testid="tab-cashier-debtors">
+            Qarzdorlar
           </TabsTrigger>
           <TabsTrigger value="refunds" data-testid="tab-cashier-refunds">
             Qaytarishlar
@@ -110,6 +114,9 @@ export default function Cashier() {
         </TabsContent>
         <TabsContent value="bills" className="mt-4">
           <BillsDesk key={billsPreset.key} initialFilter={billsPreset.filter} initialPeriod={billsPreset.period} />
+        </TabsContent>
+        <TabsContent value="debtors" className="mt-4">
+          <DebtorsTab onOpenBill={setHomeBill} />
         </TabsContent>
         <TabsContent value="daily" className="mt-4">
           <DailyTakingsTab />
@@ -300,7 +307,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
 
   const refresh = (b: Bill) => {
     queryClient.setQueryData([key], b);
-    invalidateApi("/api/bills", "/api/orders", "/api/reception", "/api/cashier", `/api/patients/${b.patient.id}`);
+    invalidateApi("/api/bills", "/api/debtors", "/api/orders", "/api/reception", "/api/cashier", `/api/patients/${b.patient.id}`);
     refreshShifts();
   };
   const reset = () => {

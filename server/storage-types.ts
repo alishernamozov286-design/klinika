@@ -8,6 +8,7 @@ import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory
 import type { BillFilter } from "@shared/invoice";
 import type { RefundStatus } from "@shared/refund";
 import type { CashDayRow } from "@shared/cash-report";
+import type { DebtorRow } from "@shared/debt";
 import type { Bill, BillSummary, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
 /** B7.4: `status` alone lists every refund in it (open ones whenever asked); a range applies to the request time. */
@@ -940,6 +941,8 @@ export interface IStorage {
   /** Voids a receipt and all its shares, once (StorageConflict after). */
   voidReceipt(receiptId: string, reason: string, actor: Actor): Promise<Bill | undefined>;
   listBills(query: BillQuery): Promise<BillSummary[]>;
+  /** B7.3: every patient still owing across all visits, largest debt first. */
+  listDebtors(): Promise<DebtorRow[]>;
   // B7.4 refunds (rules: shared/refund.ts). The payout goes through Actor.shiftId like any money.
   /** Asks to hand back part of the bill's credit; more than is free of open requests is refused. */
   requestRefund(visitId: string, input: RequestRefundInput, actor: Actor): Promise<RefundView | undefined>;

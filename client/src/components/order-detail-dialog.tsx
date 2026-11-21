@@ -321,7 +321,7 @@ function PaymentLedger({ order, canEdit }: { order: OrderWithDetails; canEdit: b
       return (await res.json()) as OrderWithDetails;
     },
     onSuccess: (saved) => {
-      invalidateApi("/api/orders", "/api/stats", "/api/reception", "/api/cash-shifts", "/api/bills", "/api/cashier");
+      invalidateApi("/api/orders", "/api/stats", "/api/reception", "/api/cash-shifts", "/api/bills", "/api/debtors", "/api/cashier");
       toast({
         title: "To'lov qayd etildi",
         description: `Qoldiq: ${money(Math.max(0, saved.totalAmount - saved.paidAmount))}`,

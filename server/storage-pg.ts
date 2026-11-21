@@ -177,6 +177,7 @@ import {
 } from "@shared/invoice";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
 import type { CashDayRow } from "@shared/cash-report";
+import { sortDebtors, type DebtorRow } from "@shared/debt";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
   QC_LOOKBACK,
@@ -396,6 +397,30 @@ const strip = (user: typeof users.$inferSelect): PublicUser => {
   const { password: _password, ...pub } = mapUser(user);
   return pub;
 };
+
+/**
+ * Every bill line in SQL — the same rule as buildBillLines (shared/invoice.ts):
+ * an order or an attended appointment owes its amount; cancelled ones owe
+ * nothing but keep what was paid on them. One per row: visit_id, amount, paid,
+ * live (still a service), appt (1 for an appointment). Shared by the desk's
+ * bill list (B7.1) and the debtors (B7.3), so they can never disagree.
+ */
+const BILL_LINES_SQL = sql`
+        SELECT o.visit_id,
+               CASE WHEN o.status = 'cancelled' THEN 0 ELSE o.total_amount END AS amount,
+               o.paid_amount AS paid,
+               (o.status <> 'cancelled')::int AS live,
+               0 AS appt
+          FROM orders o
+         WHERE o.visit_id IS NOT NULL
+        UNION ALL
+        SELECT a.visit_id,
+               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price ELSE 0 END,
+               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
+               (a.status IN ('arrived', 'in_progress', 'completed'))::int,
+               1
+          FROM appointments a
+         WHERE a.visit_id IS NOT NULL`;
 
 /**
  * The clinic's local day in SQL. "Today" and day boundaries come from the
@@ -4914,23 +4939,7 @@ export class PgStorage implements IStorage {
     const to = query.to ?? "9999-12-31";
     const patientFilter = query.patientId ? sql`AND v.patient_id = ${query.patientId}` : sql``;
     const res = await db.execute(sql`
-      WITH lines AS (
-        SELECT o.visit_id,
-               CASE WHEN o.status = 'cancelled' THEN 0 ELSE o.total_amount END AS amount,
-               o.paid_amount AS paid,
-               (o.status <> 'cancelled')::int AS live,
-               0 AS appt
-          FROM orders o
-         WHERE o.visit_id IS NOT NULL
-        UNION ALL
-        SELECT a.visit_id,
-               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price ELSE 0 END,
-               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
-               (a.status IN ('arrived', 'in_progress', 'completed'))::int,
-               1
-          FROM appointments a
-         WHERE a.visit_id IS NOT NULL
-      )
+      WITH lines AS (${BILL_LINES_SQL})
       SELECT v.id AS visit_id, v.visit_date, v.patient_id, pt.patient_number, pt.full_name, i.number AS invoice_number,
              sum(l.amount)::int AS amount, sum(l.paid)::int AS paid,
              sum(greatest(0, l.amount - l.paid))::int AS due, sum(greatest(0, l.paid - l.amount))::int AS credit,
@@ -4961,6 +4970,37 @@ export class PgStorage implements IStorage {
       } satisfies BillSummary;
     });
     return filterBills(rows, query.status);
+  }
+
+  async listDebtors(): Promise<DebtorRow[]> {
+    const res = await db.execute(sql`
+      WITH lines AS (${BILL_LINES_SQL}),
+      owing AS (
+        SELECT v.id, v.patient_id, v.visit_date, sum(greatest(0, l.amount - l.paid))::int AS due
+          FROM visits v
+          JOIN lines l ON l.visit_id = v.id AND (l.live = 1 OR l.paid <> 0)
+         GROUP BY v.id, v.patient_id, v.visit_date
+        HAVING sum(greatest(0, l.amount - l.paid)) > 0
+      )
+      SELECT pt.id AS patient_id, pt.patient_number, pt.full_name, pt.phone,
+             count(*)::int AS bills, sum(w.due)::int AS due, min(w.visit_date) AS oldest, max(w.visit_date) AS latest
+        FROM owing w
+        JOIN patients pt ON pt.id = w.patient_id
+       GROUP BY pt.id, pt.patient_number, pt.full_name, pt.phone
+       ORDER BY due DESC
+       LIMIT 2000`);
+    return sortDebtors(
+      (res.rows as Record<string, unknown>[]).map((r) => ({
+        patientId: String(r.patient_id),
+        patientNumber: Number(r.patient_number),
+        patientName: String(r.full_name),
+        phone: r.phone === null ? null : String(r.phone),
+        bills: Number(r.bills),
+        due: Number(r.due),
+        oldest: String(r.oldest),
+        latest: String(r.latest),
+      })),
+    );
   }
 
   // ------------------------------------------------------------ B7.4 refunds

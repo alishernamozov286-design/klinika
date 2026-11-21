@@ -1,7 +1,7 @@
 /**
  * Kassa: bemor hisobvarag'i (B7.1, TZ §9.1, §9.2, §11).
  *
- *   payments.create | finance.view   read bills and the debtors list
+ *   payments.create | finance.view   read bills, the debtors list and debt per patient (B7.3)
  *   payments.create                  open a bill (its number), take a payment on it (in an open cash shift, B7.5)
  *   payments.delete                  void a receipt, whole, with a reason
  *   payments.create | finance.view   read a receipt's chek (B7.6); printing it is payments.create
@@ -15,6 +15,8 @@ import { BILL_FILTERS, describeShares, type BillFilter } from "@shared/invoice";
 import { requirePermission } from "./rbac";
 import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
 import { storage } from "./storage";
+import { todayKey } from "./storage-types";
+import { summarizeDebt } from "@shared/debt";
 import { tillActor } from "./routes-cashdesk";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -33,6 +35,17 @@ export function registerBillingRoutes(app: Express) {
       const status = stringParam(req.query.status) as BillFilter | undefined;
       if (status && !BILL_FILTERS.includes(status)) return res.status(400).json({ message: "Noma'lum filtr" });
       res.json(await storage.listBills({ from, to, status, patientId: stringParam(req.query.patientId) }).catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  /** B7.3 Qarzdorlik: patients owing across all visits, largest first, with the age of the debt. */
+  app.get(
+    "/api/debtors",
+    requirePermission("payments.create", "finance.view"),
+    handle(async (_req, res) => {
+      const today = todayKey();
+      const rows = await storage.listDebtors().catch((e) => emptyIfMissing(e, []));
+      res.json({ today, rows, summary: summarizeDebt(rows, today) });
     }),
   );
 

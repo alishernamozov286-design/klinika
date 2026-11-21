@@ -152,6 +152,7 @@ import {
 } from "@shared/refund";
 import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type DepartmentLine, type MovementTotal } from "@shared/inventory-reports";
 import type { CashDayRow } from "@shared/cash-report";
+import { sortDebtors, type DebtorRow } from "@shared/debt";
 import type {
   Bill,
   BillSummary,
@@ -4045,6 +4046,31 @@ export class FileStorage implements IStorage {
     }
     rows.sort((a, b) => b.visitDate.localeCompare(a.visitDate) || a.patientName.localeCompare(b.patientName));
     return filterBills(rows, query.status).slice(0, query.limit ?? 500);
+  }
+
+  async listDebtors(): Promise<DebtorRow[]> {
+    const byPatient = new Map<string, DebtorRow>();
+    for (const v of this.db.visits) {
+      const due = billTotals(this.billLinesOf(v.id)).due;
+      if (!due) continue;
+      const p = this.db.patients.find((x) => x.id === v.patientId);
+      const row = byPatient.get(v.patientId) ?? {
+        patientId: v.patientId,
+        patientNumber: p?.patientNumber ?? 0,
+        patientName: p?.fullName ?? "—",
+        phone: p?.phone ?? null,
+        bills: 0,
+        due: 0,
+        oldest: v.visitDate,
+        latest: v.visitDate,
+      };
+      row.bills++;
+      row.due += due;
+      if (v.visitDate < row.oldest) row.oldest = v.visitDate;
+      if (v.visitDate > row.latest) row.latest = v.visitDate;
+      byPatient.set(v.patientId, row);
+    }
+    return sortDebtors(Array.from(byPatient.values()));
   }
 
   // ------------------------------------------------------------ B7.4 refunds
