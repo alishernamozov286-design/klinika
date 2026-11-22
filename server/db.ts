@@ -13,6 +13,8 @@ import type {
   Bed,
   Admission,
   AdmissionBed,
+  AdmissionObservation,
+  CaseHistoryVersion,
   LabConsumption,
   InventoryBatch,
   StockMovement,
@@ -102,6 +104,9 @@ export type DbShape = {
   /** B6.2 stays and their bed periods. */
   admissions: Admission[];
   admissionBeds: AdmissionBed[];
+  /** B6.4 case history versions and daily observations. */
+  caseHistoryVersions: CaseHistoryVersion[];
+  admissionObservations: AdmissionObservation[];
   labConsumptions: LabConsumption[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
@@ -174,6 +179,8 @@ export const emptyDb = (): DbShape => ({
   beds: [],
   admissions: [],
   admissionBeds: [],
+  caseHistoryVersions: [],
+  admissionObservations: [],
   labConsumptions: [],
   icdUzNames: {},
   security: null,

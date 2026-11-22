@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { AlertTriangle, ArrowRightLeft, BedSingle, Loader2, LogIn, Stethoscope, UserRound, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, BedSingle, ClipboardList, Loader2, LogIn, Stethoscope, UserRound, XCircle } from "lucide-react";
 import type { AdmissionView, DoctorWithDetails, Patient, WardView } from "@shared/schema";
 import { ADMISSION_STATUS_LABELS, DISCHARGE_DUE_LABELS, WARD_GENDER_LABELS, dischargeDue, stayDay, type AdmissionStatus } from "@shared/inpatient";
 import { Button } from "@/components/ui/button";
@@ -233,6 +233,7 @@ export function AdmissionDialog({ admissionId, onClose }: { admissionId: string 
   const [error, setError] = useState<string | null>(null);
   const manage = can("admissions.manage") && a?.status === "active";
   const plans = (can("admissions.manage") || can("records.write")) && a?.status === "active";
+  const readsHistory = can("records.read", "inpatient.history", "inpatient.observe");
   const [plan, setPlan] = useState<string | null>(null);
   useEffect(() => setPlan(null), [admissionId]);
   const savePlan = useMutation({
@@ -295,12 +296,22 @@ export function AdmissionDialog({ admissionId, onClose }: { admissionId: string 
                 <PatientNumber value={a.patientNumber} size="sm" />
                 <span className="truncate">{a.patientName}</span>
               </p>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href={`/patients/${a.patientId}`}>
-                  <UserRound className="mr-1.5 h-4 w-4" />
-                  Karta
-                </Link>
-              </Button>
+              <div className="flex shrink-0 gap-1">
+                {readsHistory && (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={`/inpatient/stays/${a.id}`} data-testid="link-case-history">
+                      <ClipboardList className="mr-1.5 h-4 w-4" />
+                      Kasallik tarixi
+                    </Link>
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href={`/patients/${a.patientId}`}>
+                    <UserRound className="mr-1.5 h-4 w-4" />
+                    Karta
+                  </Link>
+                </Button>
+              </div>
             </div>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
               <div>

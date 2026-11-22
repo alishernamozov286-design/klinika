@@ -10,7 +10,8 @@ import type { RefundStatus } from "@shared/refund";
 import type { CashDayRow } from "@shared/cash-report";
 import type { DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
-import type { AdmissionView, AdmitInput, Bed, BedView, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
+import type { AdmissionObservation, AdmissionView, AdmitInput, Bed, BedView, CaseHistoryVersion, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
+import type { CaseText, Vitals } from "@shared/case-history";
 import type { AdmissionStatus, BedState } from "@shared/inpatient";
 export type AdmissionQuery = { status?: AdmissionStatus; patientId?: string; id?: string; limit?: number };
 import type { Bill, BillDiscount, BillSummary, DiscountBillInput, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
@@ -970,6 +971,22 @@ export interface IStorage {
   transferAdmission(id: string, input: TransferInput, actor: Actor): Promise<AdmissionView | undefined>;
   /** B6.3: sets (or clears) the planned discharge day of an active stay. */
   planDischarge(id: string, date: string | null, actor: Actor): Promise<AdmissionView | undefined>;
+
+  // ---- B6.4 case history (TZ §8.1.3)
+  /** Every version of a stay's history, newest first ([0] is the current text). */
+  listCaseHistory(admissionId: string): Promise<CaseHistoryVersion[]>;
+  /**
+   * Writes the next version. `baseVersion` is the one the writer saw (0 before
+   * the first): a newer one exists → StorageConflict (CASE_HISTORY_STALE). Only
+   * an active stay; an unchanged text is refused.
+   */
+  saveCaseHistory(admissionId: string, baseVersion: number, text: CaseText, actor: Actor): Promise<CaseHistoryVersion | undefined>;
+  /** A stay's observations, newest first, struck-out ones included. */
+  listObservations(admissionId: string): Promise<AdmissionObservation[]>;
+  addObservation(admissionId: string, input: { observedAt: string; vitals: Vitals; note: string | null; authorRole: string | null }, actor: Actor): Promise<AdmissionObservation | undefined>;
+  /** Strikes out a mistaken observation with a reason; `any` lets the reader strike out another's. */
+  voidObservation(id: string, reason: string, any: boolean, actor: Actor): Promise<AdmissionObservation | undefined>;
+  getObservation(id: string): Promise<AdmissionObservation | undefined>;
   /** A mistaken stay: closed with a reason, never deleted. */
   cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined>;
   /** B7.8: services rendered on local days `from`..`to` (YYYY-MM-DD, inclusive), by kind, name and doctor. */

@@ -639,8 +639,8 @@ function pickPatient(p: Patient) {
   };
 }
 
-/** Every result entered, newest order first. */
-function labResults(orders: OrderWithDetails[]): LabResultEntry[] {
+/** Every result entered, newest order first. (B6.4 reads it for a stay too.) */
+export function labResults(orders: OrderWithDetails[]): LabResultEntry[] {
   return orders
     .filter((o) => o.status !== "cancelled")
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))

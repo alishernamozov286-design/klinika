@@ -66,6 +66,7 @@ const Inpatient = lazy(() => import("@/pages/inpatient"));
 const Queue = lazy(() => import("@/pages/queue"));
 const Cabinet = lazy(() => import("@/pages/cabinet"));
 const Examination = lazy(() => import("@/pages/examination"));
+const CaseHistory = lazy(() => import("@/pages/case-history"));
 
 /**
  * Wraps a page in its ROUTE_ACCESS rule. Typing the URL of a screen the role
@@ -96,6 +97,7 @@ const QcPage = guarded("/qc", QualityControl);
 const InventoryPage = guarded("/inventory", Inventory);
 const CashierPage = guarded("/cashier", Cashier);
 const InpatientPage = guarded("/inpatient", Inpatient);
+const CaseHistoryPage = guarded("/inpatient/stays", CaseHistory);
 const QueuePage = guarded("/queue", Queue);
 const CabinetPage = guarded("/cabinet", Cabinet);
 const ExaminationPage = guarded("/cabinet/visit", Examination);
@@ -125,6 +127,7 @@ function Router() {
         <Route path="/inventory" component={InventoryPage} />
         <Route path="/cashier" component={CashierPage} />
         <Route path="/inpatient" component={InpatientPage} />
+        <Route path="/inpatient/stays/:id" component={CaseHistoryPage} />
         <Route path="/queue" component={QueuePage} />
         <Route path="/cabinet" component={CabinetPage} />
         <Route path="/cabinet/visit/:id" component={ExaminationPage} />
@@ -254,7 +257,9 @@ function Shell() {
                     ? "Bemor kartasi"
                     : location.startsWith("/cabinet/visit/")
                       ? "Ko'rik oynasi"
-                      : "Sahifa")}</span>
+                      : location.startsWith("/inpatient/stays/")
+                        ? "Kasallik tarixi"
+                        : "Sahifa")}</span>
             </nav>
 
             {/* The palette's own trigger — a shortcut nobody can see is a

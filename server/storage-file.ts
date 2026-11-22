@@ -155,6 +155,18 @@ import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
 import {
+  CASE_CLOSED,
+  CASE_HISTORY_STALE,
+  OBSERVATION_NOT_YOURS,
+  OBSERVATION_VOIDED,
+  caseSaveProblem,
+  caseTextOf,
+  observationProblem,
+  observationTimeProblem,
+  type CaseText,
+  type Vitals,
+} from "@shared/case-history";
+import {
   BED_LABEL_TAKEN,
   BED_MAINTENANCE_NOTE,
   DEPARTMENT_HAS_WARDS,
@@ -200,6 +212,8 @@ import type {
   BedOccupant,
   Admission,
   AdmissionView,
+  AdmissionObservation,
+  CaseHistoryVersion,
   AdmitInput,
   TransferInput,
   InsertWardInput,
@@ -4422,6 +4436,82 @@ export class FileStorage implements IStorage {
     Object.assign(a, { plannedDischargeOn: date, updatedAt: new Date().toISOString(), updatedBy: actor.id });
     await this.persist();
     return this.admissionViewOf(a);
+  }
+
+  // ------------------------------------------------------------ B6.4 case history
+
+  async listCaseHistory(admissionId: string): Promise<CaseHistoryVersion[]> {
+    return this.db.caseHistoryVersions.filter((v) => v.admissionId === admissionId).sort((a, b) => b.version - a.version);
+  }
+
+  private openStay(admissionId: string): Admission | undefined {
+    const a = this.db.admissions.find((x) => x.id === admissionId);
+    if (a && a.status !== "active") throw new StorageConflict(CASE_CLOSED);
+    return a;
+  }
+
+  async saveCaseHistory(admissionId: string, baseVersion: number, text: CaseText, actor: Actor): Promise<CaseHistoryVersion | undefined> {
+    if (!this.openStay(admissionId)) return undefined;
+    const latest = (await this.listCaseHistory(admissionId))[0];
+    if ((latest?.version ?? 0) !== baseVersion) throw new StorageConflict(CASE_HISTORY_STALE);
+    const problem = caseSaveProblem(latest ? caseTextOf(latest) : null, text);
+    if (problem) throw new Error(problem);
+    const row: CaseHistoryVersion = { id: randomUUID(), admissionId, version: baseVersion + 1, ...text, savedAt: new Date().toISOString(), savedBy: actor.id, savedByName: actor.name };
+    this.db.caseHistoryVersions.push(row);
+    await this.persist();
+    return row;
+  }
+
+  async listObservations(admissionId: string): Promise<AdmissionObservation[]> {
+    return this.db.admissionObservations
+      .filter((o) => o.admissionId === admissionId)
+      .sort((a, b) => b.observedAt.localeCompare(a.observedAt) || b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getObservation(id: string): Promise<AdmissionObservation | undefined> {
+    return this.db.admissionObservations.find((o) => o.id === id);
+  }
+
+  async addObservation(
+    admissionId: string,
+    input: { observedAt: string; vitals: Vitals; note: string | null; authorRole: string | null },
+    actor: Actor,
+  ): Promise<AdmissionObservation | undefined> {
+    const problem = observationProblem(input.vitals, input.note);
+    if (problem) throw new Error(problem);
+    const a = this.openStay(admissionId);
+    if (!a) return undefined;
+    const late = observationTimeProblem(input.observedAt, a.admittedAt);
+    if (late) throw new Error(late);
+    const row: AdmissionObservation = {
+      id: randomUUID(),
+      admissionId,
+      observedAt: new Date(input.observedAt).toISOString(),
+      ...input.vitals,
+      note: input.note,
+      authorId: actor.id,
+      authorName: actor.name,
+      authorRole: input.authorRole,
+      createdAt: new Date().toISOString(),
+      voidedAt: null,
+      voidedBy: null,
+      voidedByName: null,
+      voidReason: null,
+    };
+    this.db.admissionObservations.push(row);
+    await this.persist();
+    return row;
+  }
+
+  async voidObservation(id: string, reason: string, any: boolean, actor: Actor): Promise<AdmissionObservation | undefined> {
+    const o = this.db.admissionObservations.find((x) => x.id === id);
+    if (!o) return undefined;
+    if (o.voidedAt) throw new StorageConflict(OBSERVATION_VOIDED);
+    if (!any && o.authorId !== actor.id) throw new StorageConflict(OBSERVATION_NOT_YOURS);
+    this.openStay(o.admissionId);
+    Object.assign(o, { voidedAt: new Date().toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
+    await this.persist();
+    return o;
   }
 
   async cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined> {

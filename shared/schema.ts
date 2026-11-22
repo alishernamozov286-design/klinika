@@ -43,6 +43,7 @@ import type { ShiftEntry, ShiftTotals } from "./cash-shift";
 import type { RefundLine, RefundStatus } from "./refund";
 import { DISCOUNT_MODES, type DiscountLine, type DiscountMode } from "./discount";
 import { BED_STATES, MAX_BEDS_PER_WARD, WARD_GENDERS, type AdmissionStatus, type BedDisplay, type BedState, type WardGender } from "./inpatient";
+import { CASE_FIELD_MAX, VITALS, VITAL_SPEC, type Vital } from "./case-history";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -499,6 +500,63 @@ export const admissionBeds = pgTable(
     uniqueIndex("UQ_admission_beds_open_admission").on(t.admissionId).where(sql`to_at IS NULL`),
     index("IDX_admission_beds_admission").on(t.admissionId),
   ],
+);
+
+/**
+ * Kasallik tarixi (B6.4, TZ §8.1.3): every save of a stay's history is a new
+ * row — version 1, 2, … — and the newest is the current text. Rows are never
+ * changed, so every earlier wording stays. UQ_case_history_versions makes two
+ * saves on the same version collide: one wins, the other reloads.
+ */
+export const caseHistoryVersions = pgTable(
+  "case_history_versions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    admissionId: varchar("admission_id").notNull(),
+    version: integer("version").notNull(),
+    complaints: text("complaints"),
+    anamnesis: text("anamnesis"),
+    examination: text("examination"),
+    diagnosis: text("diagnosis"),
+    /** MKB-10 (B3.4), optional; the text stays the diagnosis. */
+    diagnosisCode: varchar("diagnosis_code"),
+    treatmentPlan: text("treatment_plan"),
+    savedAt: isoTimestamp("saved_at").defaultNow().notNull(),
+    savedBy: varchar("saved_by"),
+    savedByName: text("saved_by_name"),
+  },
+  (t) => [uniqueIndex("UQ_case_history_versions").on(t.admissionId, t.version)],
+);
+
+/**
+ * Kundalik kuzatuv (B6.4): a doctor's or nurse's reading at a moment of the
+ * stay — vital signs and/or a note. Never edited or deleted; a mistaken one is
+ * struck out with a reason.
+ */
+export const admissionObservations = pgTable(
+  "admission_observations",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    admissionId: varchar("admission_id").notNull(),
+    observedAt: isoTimestamp("observed_at").notNull(),
+    temperature: doublePrecision("temperature"),
+    pulse: integer("pulse"),
+    systolic: integer("systolic"),
+    diastolic: integer("diastolic"),
+    respiration: integer("respiration"),
+    spo2: integer("spo2"),
+    note: text("note"),
+    authorId: varchar("author_id"),
+    authorName: text("author_name"),
+    /** "Shifokor", "Hamshira"… — the author's role name when written. */
+    authorRole: text("author_role"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    voidedAt: isoTimestamp("voided_at"),
+    voidedBy: varchar("voided_by"),
+    voidedByName: text("voided_by_name"),
+    voidReason: text("void_reason"),
+  },
+  (t) => [index("IDX_admission_observations_admission").on(t.admissionId, t.observedAt)],
 );
 
 /**
@@ -1888,6 +1946,23 @@ export type AdmissionView = Admission & {
   current: { bedId: string; bedLabel: string; wardId: string; wardName: string; since: string } | null;
 };
 export type WardView = Ward & { departmentName: string; beds: BedView[] };
+export type CaseHistoryVersion = typeof caseHistoryVersions.$inferSelect;
+export type AdmissionObservation = typeof admissionObservations.$inferSelect;
+/** B6.4: everything the case history page shows, in one read. */
+export type CaseHistoryView = {
+  admission: AdmissionView;
+  /** The current text (the newest version), or null before the first save. */
+  current: CaseHistoryVersion | null;
+  versionCount: number;
+  observations: AdmissionObservation[];
+  allergies: PatientAllergy[];
+  /** Approved results of lab orders placed during the stay; null without orders.read. */
+  labResults: LabResultEntry[] | null;
+  /** Signed examinations and consultations during the stay (other doctors, UZI…). */
+  exams: { id: string; date: string; title: string; doctorName: string; conclusion: string | null; diagnosis: string | null }[];
+  /** What the reader may do here. */
+  can: { write: boolean; observe: boolean; voidAny: boolean };
+};
 /** A department as the admin screen lists it: with its doctor head count. */
 export type DepartmentWithUsage = Department & { doctorCount: number };
 
@@ -2687,6 +2762,45 @@ export const dischargePlanSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Sanani tanlang")
     .nullable(),
 });
+
+/** B6.4: a save of the case history, based on the version the writer saw (0 before the first). */
+const caseText = z
+  .string()
+  .max(CASE_FIELD_MAX, `Ko'pi bilan ${CASE_FIELD_MAX} belgi`)
+  .nullish()
+  .transform((v) => v ?? null);
+export const saveCaseHistorySchema = z.object({
+  baseVersion: z.number().int().min(0),
+  complaints: caseText,
+  anamnesis: caseText,
+  examination: caseText,
+  diagnosis: caseText,
+  diagnosisCode: z.string().trim().max(10).nullish().transform((v) => v || null),
+  treatmentPlan: caseText,
+});
+export type SaveCaseHistoryInput = z.infer<typeof saveCaseHistorySchema>;
+
+const vital = (v: Vital) =>
+  z
+    .number({ invalid_type_error: `${VITAL_SPEC[v].label}: raqam kiriting` })
+    .nullish()
+    .transform((x) => (x === undefined ? null : x));
+/** B6.4: a daily observation — vital signs and/or a note. */
+export const observationSchema = z.object({
+  observedAt: z
+    .string()
+    .datetime({ offset: true, message: "Vaqtni to'g'ri kiriting" })
+    .nullish()
+    .transform((v) => v ?? null),
+  ...(Object.fromEntries(VITALS.map((v) => [v, vital(v)])) as Record<Vital, ReturnType<typeof vital>>),
+  note: z
+    .string()
+    .trim()
+    .max(CASE_FIELD_MAX, `Ko'pi bilan ${CASE_FIELD_MAX} belgi`)
+    .nullish()
+    .transform((v) => v || null),
+});
+export type ObservationInput = z.infer<typeof observationSchema>;
 
 /** B7.2: a discount on a bill — whole (target null) or one service. */
 export const discountBillSchema = z

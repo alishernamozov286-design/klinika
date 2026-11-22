@@ -561,6 +561,8 @@ describe("roles", () => {
       "referrals.read",
       "referrals.create",
       "inpatient.read",
+      "inpatient.history",
+      "inpatient.observe",
     ]);
   });
 
@@ -2920,5 +2922,60 @@ describe("admissions (B6.2)", () => {
     await storage.admitPatient({ patientId: p1.id, bedId: bedB.id, doctorId: doctor.id, admittedAt: null, reason: null }, admin);
     await storage.admitPatient({ patientId: p2.id, bedId: bedC.id, doctorId: doctor.id, admittedAt: null, reason: null }, admin);
     await expect(storage.mergePatients(p2.id, p1.id, admin)).rejects.toThrow(/Ikkala kartada ham faol yotqizish/);
+  });
+});
+
+describe("case history (B6.4)", () => {
+  it("versions on every save, stale saves refused; observations validated, struck out, locked with the stay", async () => {
+    const admin = { id: "u-admin", name: "Admin" };
+    const nurse = { id: "u-nurse", name: "Hamshira Dilnoza" };
+    const dept = await storage.createDepartment({ name: "Terapiya statsionari", kind: "statsionar", description: null, isActive: true }, admin);
+    const user = await storage.createUser({ username: "dr64", password: "parol123", fullName: "Karimova Nilufar", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: dept.id, specialty: "Terapevt", consultationPrice: 100000, slotMinutes: 20, schedule: [], isActive: true }, admin);
+    const ward = (await storage.addBeds((await storage.createWard({ departmentId: dept.id, name: "301", floor: 3, gender: "mixed", dayPrice: 150000, note: null }, admin)).id, 1, admin))!;
+    const p = await storage.createPatient({ fullName: "Sodiqov Bobur", phone: "+998907070707", gender: "erkak", age: 60, address: null });
+    const admittedAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const a = await storage.admitPatient({ patientId: p.id, bedId: ward.beds[0].id, doctorId: doctor.id, admittedAt, reason: null }, admin);
+    const dr = { id: user.id, name: "Karimova Nilufar" };
+    const text = { complaints: "Yo'tal, isitma", anamnesis: null, examination: null, diagnosis: "Pnevmoniya", diagnosisCode: null, treatmentPlan: null };
+
+    await expect(storage.saveCaseHistory(a.id, 0, { ...text, complaints: null, diagnosis: null }, dr)).rejects.toThrow(/kamida bitta/);
+    const v1 = (await storage.saveCaseHistory(a.id, 0, text, dr))!;
+    expect(v1).toMatchObject({ version: 1, complaints: "Yo'tal, isitma", savedByName: "Karimova Nilufar" });
+    // A second tab still on version 0 cannot overwrite; an unchanged save is refused.
+    await expect(storage.saveCaseHistory(a.id, 0, { ...text, anamnesis: "boshqa" }, dr)).rejects.toThrow(/boshqa oynada/);
+    await expect(storage.saveCaseHistory(a.id, 1, text, dr)).rejects.toThrow(/O'zgarish yo'q/);
+    const v2 = (await storage.saveCaseHistory(a.id, 1, { ...text, treatmentPlan: "Seftriakson 1 g x 2" }, dr))!;
+    expect(v2.version).toBe(2);
+    expect((await storage.listCaseHistory(a.id)).map((v) => [v.version, v.treatmentPlan])).toEqual([
+      [2, "Seftriakson 1 g x 2"],
+      [1, null],
+    ]);
+
+    // Observations: within the stay, sensible figures, something written.
+    const none = { temperature: null, pulse: null, systolic: null, diastolic: null, respiration: null, spo2: null };
+    const at = new Date(Date.now() - 3_600_000).toISOString();
+    await expect(storage.addObservation(a.id, { observedAt: at, vitals: none, note: "  ", authorRole: "Hamshira" }, nurse)).rejects.toThrow(/Kamida bitta/);
+    await expect(storage.addObservation(a.id, { observedAt: at, vitals: { ...none, temperature: 52 }, note: null, authorRole: "Hamshira" }, nurse)).rejects.toThrow(/Harorat/);
+    await expect(storage.addObservation(a.id, { observedAt: at, vitals: { ...none, systolic: 120 }, note: null, authorRole: "Hamshira" }, nurse)).rejects.toThrow(/ikkala/);
+    await expect(storage.addObservation(a.id, { observedAt: new Date(Date.parse(admittedAt) - 60_000).toISOString(), vitals: { ...none, pulse: 80 }, note: null, authorRole: "Hamshira" }, nurse)).rejects.toThrow(/oldin/);
+    await expect(storage.addObservation(a.id, { observedAt: new Date(Date.now() + 3_600_000).toISOString(), vitals: { ...none, pulse: 80 }, note: null, authorRole: "Hamshira" }, nurse)).rejects.toThrow(/kelajakda/);
+    const o1 = (await storage.addObservation(a.id, { observedAt: at, vitals: { ...none, temperature: 38.4, systolic: 130, diastolic: 85, pulse: 96 }, note: null, authorRole: "Hamshira" }, nurse))!;
+    const o2 = (await storage.addObservation(a.id, { observedAt: new Date().toISOString(), vitals: none, note: "Holati barqaror", authorRole: "Shifokor" }, dr))!;
+    expect((await storage.listObservations(a.id)).map((o) => o.id)).toEqual([o2.id, o1.id]);
+
+    // Struck out, never deleted: only one's own, unless allowed anyone's.
+    await expect(storage.voidObservation(o1.id, "Boshqa bemorniki", false, dr)).rejects.toThrow(/Boshqa xodimning/);
+    const struck = (await storage.voidObservation(o1.id, "Boshqa bemorniki", false, nurse))!;
+    expect(struck).toMatchObject({ voidReason: "Boshqa bemorniki", voidedByName: "Hamshira Dilnoza", temperature: 38.4 });
+    await expect(storage.voidObservation(o1.id, "yana", true, admin)).rejects.toThrow(/allaqachon/);
+    expect((await storage.listObservations(a.id)).length).toBe(2);
+
+    // A closed card takes no more writing.
+    await storage.cancelAdmission(a.id, "Xato yotqizildi", admin);
+    await expect(storage.saveCaseHistory(a.id, 2, { ...text, anamnesis: "kech" }, dr)).rejects.toThrow(/yopilgan/);
+    await expect(storage.addObservation(a.id, { observedAt: new Date().toISOString(), vitals: { ...none, pulse: 70 }, note: null, authorRole: null }, nurse)).rejects.toThrow(/yopilgan/);
+    await expect(storage.voidObservation(o2.id, "kech", true, admin)).rejects.toThrow(/yopilgan/);
+    expect(await storage.saveCaseHistory("missing", 0, text, dr)).toBeUndefined();
   });
 });

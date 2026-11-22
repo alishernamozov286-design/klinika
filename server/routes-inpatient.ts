@@ -6,16 +6,35 @@
  *   beds.state | beds.manage    a bed's state: ready / cleaning / out of service
  *   admissions.manage           admit a patient, move to another bed, cancel a mistaken stay (B6.2)
  *   admissions.manage | records.write   plan the discharge day (B6.3: the doctor decides it)
+ *   inpatient.read + (records.read | inpatient.history | inpatient.observe)   read the case history (B6.4)
+ *   inpatient.history           write the case history (each save a new version)
+ *   inpatient.observe           daily observations; strike out one's own (records.amend: anyone's)
  *
  * Rules: shared/inpatient.ts.
  */
 import type { Express } from "express";
-import { addBedsSchema, admitSchema, bedStateSchema, dischargePlanSchema, insertWardSchema, transferSchema, updateBedSchema, updateWardSchema, voidPaymentSchema, type AdmissionView } from "@shared/schema";
+import {
+  addBedsSchema,
+  admitSchema,
+  bedStateSchema,
+  dischargePlanSchema,
+  insertWardSchema,
+  observationSchema,
+  saveCaseHistorySchema,
+  transferSchema,
+  updateBedSchema,
+  updateWardSchema,
+  voidPaymentSchema,
+  type AdmissionView,
+  type CaseHistoryView,
+} from "@shared/schema";
+import { VITALS, VITAL_SPEC, caseChanges, caseTextOf, formatVital, normalizeCase, vitalsProblem, type Vitals } from "@shared/case-history";
+import { labResults } from "./routes-medical";
 import { ADMISSION_STATUSES, BED_STATE_LABELS, WARD_GENDER_LABELS, buildInpatientOverview, type AdmissionStatus } from "@shared/inpatient";
 import { hasPermission } from "./rbac";
 import { localDay, todayKey } from "./storage-types";
 import { requirePermission } from "./rbac";
-import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
+import { actorOf, audit, emptyIfMissing, handle, logPatientView, stringParam } from "./route-helpers";
 import { storage } from "./storage";
 
 const sum = (n: number) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
@@ -210,6 +229,152 @@ export function registerInpatientRoutes(app: Express) {
       if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
       await audit(req, "update", "admission", a.id, `Statsionar karta №${a.number} (№${a.patientNumber} ${a.patientName}): chiqarish ${date ? `rejasi ${date}` : "rejasi olib tashlandi"}`);
       res.json(a);
+    }),
+  );
+
+  // ------------------------------------------------------------ B6.4 case history
+
+  /** Reading the clinical text: the board alone (registrar, cashier) is not enough. */
+  const readsHistory = (req: Parameters<typeof hasPermission>[0]) =>
+    hasPermission(req, "records.read") || hasPermission(req, "inpatient.history") || hasPermission(req, "inpatient.observe");
+
+  /** TZ §8.1.3: the history, the daily observations, lab results and examinations of the stay — one read. */
+  app.get(
+    "/api/admissions/:id/history",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Kasallik tarixini ko'rish uchun ruxsatingiz yo'q" });
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const seesLab = hasPermission(req, "orders.read");
+      const [versions, observations, allergies, orders, records] = await Promise.all([
+        storage.listCaseHistory(admission.id).catch((e) => emptyIfMissing(e, [])),
+        storage.listObservations(admission.id).catch((e) => emptyIfMissing(e, [])),
+        storage.listAllergies(admission.patientId).catch((e) => emptyIfMissing(e, [])),
+        seesLab ? storage.listOrders({ patientId: admission.patientId }) : Promise.resolve(null),
+        hasPermission(req, "records.read") ? storage.listRecords({ patientId: admission.patientId }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve([]),
+      ]);
+      // The stay's window: from admission to its close (or now).
+      const from = admission.admittedAt;
+      const to = admission.dischargedAt ?? admission.cancelledAt ?? new Date().toISOString();
+      const within = (t: string) => t >= from && t <= to;
+      const firstDay = localDay(from);
+      const lastDay = localDay(to);
+      const view: CaseHistoryView = {
+        admission,
+        current: versions[0] ?? null,
+        versionCount: versions.length,
+        observations,
+        allergies,
+        labResults: orders ? labResults(orders.items.filter((o) => within(o.createdAt))) : null,
+        exams: records
+          .filter((r) => r.status === "signed" && r.date >= firstDay && r.date <= lastDay)
+          .map((r) => ({
+            id: r.id,
+            date: r.date,
+            title: `${r.specialty} ko'rigi`,
+            doctorName: r.doctorName,
+            conclusion: r.examination ?? r.recommendations,
+            diagnosis: r.finalDiagnosis ?? r.preliminaryDiagnosis,
+          })),
+        can: {
+          write: admission.status === "active" && hasPermission(req, "inpatient.history"),
+          observe: admission.status === "active" && hasPermission(req, "inpatient.observe"),
+          voidAny: hasPermission(req, "records.amend"),
+        },
+      };
+      await logPatientView(req, { id: admission.patientId, patientNumber: admission.patientNumber, fullName: admission.patientName }, `kasallik tarixi ochildi (statsionar karta №${admission.number})`);
+      res.json(view);
+    }),
+  );
+
+  /** Every earlier wording, newest first — the history dialog. */
+  app.get(
+    "/api/admissions/:id/history/versions",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Kasallik tarixini ko'rish uchun ruxsatingiz yo'q" });
+      res.json(await storage.listCaseHistory(req.params.id).catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  app.post(
+    "/api/admissions/:id/history",
+    requirePermission("inpatient.history"),
+    handle(async (req, res) => {
+      const { baseVersion, ...input } = saveCaseHistorySchema.parse(req.body);
+      const text = normalizeCase(input);
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const before = (await storage.listCaseHistory(admission.id))[0];
+      if (text.diagnosisCode && text.diagnosisCode !== before?.diagnosisCode) {
+        const [found] = await storage.getIcd([text.diagnosisCode]).catch((e) => emptyIfMissing(e, []));
+        if (!found?.selectable) return res.status(400).json({ message: `MKB-10 katalogida tanlab bo'lmaydigan kod: ${text.diagnosisCode}` });
+      }
+      const saved = await storage.saveCaseHistory(admission.id, baseVersion, text, actorOf(req));
+      if (!saved) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const changed = caseChanges(before ? caseTextOf(before) : null, text);
+      await audit(
+        req,
+        saved.version === 1 ? "create" : "update",
+        "admission",
+        admission.id,
+        `Statsionar karta №${admission.number} (№${admission.patientNumber} ${admission.patientName}): kasallik tarixi, ${saved.version}-versiya — ${changed.join(", ")}`,
+      );
+      res.status(saved.version === 1 ? 201 : 200).json(saved);
+    }),
+  );
+
+  app.post(
+    "/api/admissions/:id/observations",
+    requirePermission("inpatient.observe"),
+    handle(async (req, res) => {
+      const input = observationSchema.parse(req.body);
+      const vitals = Object.fromEntries(VITALS.map((v) => [v, input[v]])) as Vitals;
+      const bad = vitalsProblem(vitals);
+      if (bad) return res.status(400).json({ message: bad });
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const o = await storage.addObservation(
+        admission.id,
+        { observedAt: input.observedAt ?? new Date().toISOString(), vitals, note: input.note, authorRole: req.user?.roleName ?? null },
+        actorOf(req),
+      );
+      if (!o) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const figures = VITALS.filter((v) => v !== "diastolic" && vitals[v] !== null).map((v) =>
+        v === "systolic" ? `AQB ${vitals.systolic}/${vitals.diastolic}` : `${VITAL_SPEC[v].short} ${formatVital(v, vitals[v])}`,
+      );
+      await audit(
+        req,
+        "create",
+        "admission",
+        admission.id,
+        `Statsionar karta №${admission.number} (№${admission.patientNumber} ${admission.patientName}): kundalik kuzatuv${figures.length ? ` — ${figures.join(", ")}` : ""}${o.note ? " (izoh bilan)" : ""}`,
+      );
+      res.status(201).json(o);
+    }),
+  );
+
+  app.post(
+    "/api/observations/:id/void",
+    requirePermission("inpatient.observe", "records.amend"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const found = await storage.getObservation(req.params.id);
+      if (!found) return res.status(404).json({ message: "Kuzatuv topilmadi" });
+      const any = hasPermission(req, "records.amend");
+      if (!any && found.authorId !== req.user?.id) return res.status(403).json({ message: "Boshqa xodimning kuzatuvini faqat tuzatish huquqi bor shifokor bekor qiladi" });
+      const o = await storage.voidObservation(found.id, reason, any, actorOf(req));
+      if (!o) return res.status(404).json({ message: "Kuzatuv topilmadi" });
+      const admission = await storage.getAdmission(o.admissionId);
+      await audit(
+        req,
+        "update",
+        "admission",
+        o.admissionId,
+        `Statsionar karta №${admission?.number ?? "?"}: kundalik kuzatuv (${o.authorName ?? "—"}, ${localDay(o.observedAt)}) bekor qilindi — ${reason}`,
+      );
+      res.json(o);
     }),
   );
 }

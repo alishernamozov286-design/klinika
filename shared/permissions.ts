@@ -280,6 +280,16 @@ export const PERMISSIONS = {
     label: "Yotoq holatini belgilash",
     description: "Yotoqni tozalanmoqda, ta'mirda yoki bo'sh deb belgilash",
   },
+  "inpatient.history": {
+    group: "inpatient",
+    label: "Kasallik tarixini yozish",
+    description: "Statsionar bemorning shikoyati, anamnezi, tashxisi va davolash rejasi; har saqlash yangi versiya (TZ §8.1.3)",
+  },
+  "inpatient.observe": {
+    group: "inpatient",
+    label: "Kundalik kuzatuv",
+    description: "Statsionar bemorning harorati, bosimi, pulsi va holati haqida yozuv; xatosini sabab bilan bekor qilish",
+  },
   "payments.discount": {
     group: "finance",
     label: "Chegirma berish",
@@ -497,6 +507,8 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "referrals.read",
       "referrals.create",
       "inpatient.read",
+      "inpatient.history",
+      "inpatient.observe",
     ],
   },
   {
@@ -554,7 +566,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "hamshira",
     name: "Statsionar hamshirasi",
     description: "Bemor parvarishi, muolajalar va namuna olish",
-    permissions: ["patients.read", "orders.read", "samples.manage", "inpatient.read", "beds.state", "admissions.manage"],
+    permissions: ["patients.read", "orders.read", "samples.manage", "inpatient.read", "beds.state", "admissions.manage", "inpatient.observe"],
   },
   {
     key: "kassir",

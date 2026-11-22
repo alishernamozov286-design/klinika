@@ -27,6 +27,8 @@ import {
   beds,
   admissions,
   admissionBeds,
+  caseHistoryVersions,
+  admissionObservations,
   consumptionNorms,
   labConsumptions,
   auditLog,
@@ -211,6 +213,18 @@ import {
   type BedState,
   type WardGender,
 } from "@shared/inpatient";
+import {
+  CASE_CLOSED,
+  CASE_HISTORY_STALE,
+  OBSERVATION_NOT_YOURS,
+  OBSERVATION_VOIDED,
+  caseSaveProblem,
+  caseTextOf,
+  observationProblem,
+  observationTimeProblem,
+  type CaseText,
+  type Vitals,
+} from "@shared/case-history";
 import { DISCOUNT_LINE_GONE, DISCOUNT_NOTHING, planDiscount, type DiscountMode } from "@shared/discount";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
@@ -257,6 +271,8 @@ import type {
   WardView,
   Admission,
   AdmissionView,
+  AdmissionObservation,
+  CaseHistoryVersion,
   AdmitInput,
   TransferInput,
   Bill,
@@ -5426,6 +5442,98 @@ export class PgStorage implements IStorage {
       return true;
     });
     return found ? this.getAdmission(id) : undefined;
+  }
+
+  // ------------------------------------------------------------ B6.4 case history
+
+  async listCaseHistory(admissionId: string): Promise<CaseHistoryVersion[]> {
+    return db.select().from(caseHistoryVersions).where(eq(caseHistoryVersions.admissionId, admissionId)).orderBy(desc(caseHistoryVersions.version));
+  }
+
+  /** The stay, held FOR SHARE so it cannot be closed while it is written to. */
+  private async openStay(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], admissionId: string) {
+    const [a] = await tx.select({ status: admissions.status, admittedAt: admissions.admittedAt }).from(admissions).where(eq(admissions.id, admissionId)).for("share");
+    if (a && a.status !== "active") throw new StorageConflict(CASE_CLOSED);
+    return a;
+  }
+
+  async saveCaseHistory(admissionId: string, baseVersion: number, text: CaseText, actor: Actor): Promise<CaseHistoryVersion | undefined> {
+    try {
+      return await db.transaction(async (tx) => {
+        if (!(await this.openStay(tx, admissionId))) return undefined;
+        const [latest] = await tx.select().from(caseHistoryVersions).where(eq(caseHistoryVersions.admissionId, admissionId)).orderBy(desc(caseHistoryVersions.version)).limit(1);
+        if ((latest?.version ?? 0) !== baseVersion) throw new StorageConflict(CASE_HISTORY_STALE);
+        const problem = caseSaveProblem(latest ? caseTextOf(latest) : null, text);
+        if (problem) throw new Error(problem);
+        const [row] = await tx
+          .insert(caseHistoryVersions)
+          .values({ admissionId, version: baseVersion + 1, ...text, savedAt: new Date().toISOString(), savedBy: actor.id, savedByName: actor.name })
+          .returning();
+        return row;
+      });
+    } catch (err) {
+      const e = err as { code?: string; constraint?: string };
+      if (e?.code === "23505" && e.constraint === "UQ_case_history_versions") throw new StorageConflict(CASE_HISTORY_STALE);
+      throw err;
+    }
+  }
+
+  async listObservations(admissionId: string): Promise<AdmissionObservation[]> {
+    return db
+      .select()
+      .from(admissionObservations)
+      .where(eq(admissionObservations.admissionId, admissionId))
+      .orderBy(desc(admissionObservations.observedAt), desc(admissionObservations.createdAt));
+  }
+
+  async getObservation(id: string): Promise<AdmissionObservation | undefined> {
+    const [o] = await db.select().from(admissionObservations).where(eq(admissionObservations.id, id)).limit(1);
+    return o;
+  }
+
+  async addObservation(
+    admissionId: string,
+    input: { observedAt: string; vitals: Vitals; note: string | null; authorRole: string | null },
+    actor: Actor,
+  ): Promise<AdmissionObservation | undefined> {
+    const problem = observationProblem(input.vitals, input.note);
+    if (problem) throw new Error(problem);
+    return db.transaction(async (tx) => {
+      const a = await this.openStay(tx, admissionId);
+      if (!a) return undefined;
+      const late = observationTimeProblem(input.observedAt, iso(a.admittedAt) ?? a.admittedAt);
+      if (late) throw new Error(late);
+      const [row] = await tx
+        .insert(admissionObservations)
+        .values({
+          admissionId,
+          observedAt: new Date(input.observedAt).toISOString(),
+          ...input.vitals,
+          note: input.note,
+          authorId: actor.id,
+          authorName: actor.name,
+          authorRole: input.authorRole,
+          createdAt: new Date().toISOString(),
+        })
+        .returning();
+      return row;
+    });
+  }
+
+  async voidObservation(id: string, reason: string, any: boolean, actor: Actor): Promise<AdmissionObservation | undefined> {
+    return db.transaction(async (tx) => {
+      const [o] = await tx.select().from(admissionObservations).where(eq(admissionObservations.id, id)).for("update");
+      if (!o) return undefined;
+      if (o.voidedAt) throw new StorageConflict(OBSERVATION_VOIDED);
+      if (!any && o.authorId !== actor.id) throw new StorageConflict(OBSERVATION_NOT_YOURS);
+      await this.openStay(tx, o.admissionId);
+      const [row] = await tx
+        .update(admissionObservations)
+        .set({ voidedAt: new Date().toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason })
+        .where(eq(admissionObservations.id, id))
+        .returning();
+      return row;
+    });
   }
 
   async financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]> {
