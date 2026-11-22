@@ -93,6 +93,7 @@ const ENTITIES = [
   { value: "refund", label: "To'lov qaytarishlari" },
   { value: "ward", label: "Palatalar" },
   { value: "bed", label: "Yotoqlar" },
+  { value: "admission", label: "Statsionar yotqizishlari" },
   { value: "patient", label: "Bemorlar" },
   { value: "test", label: "Tahlillar" },
   { value: "user", label: "Xodimlar" },

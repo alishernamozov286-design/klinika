@@ -41,3 +41,21 @@ describe("wards and beds (B6.1, TZ §8)", () => {
     expect(bedStateSchema.safeParse({ state: "occupied" }).success).toBe(false);
   });
 });
+
+describe("admissions (B6.2, TZ §8.1.2)", () => {
+  it("a bed takes a patient only when active, ready and empty", async () => {
+    const { bedFreeProblem } = await import("./inpatient");
+    expect(bedFreeProblem({ isActive: true, state: "ready" }, true, false)).toBeNull();
+    expect(bedFreeProblem({ isActive: true, state: "ready" }, true, true)).toMatch(/bemor bor/);
+    expect(bedFreeProblem({ isActive: true, state: "cleaning" }, true, false)).toMatch(/tozalanmoqda/);
+    expect(bedFreeProblem({ isActive: false, state: "ready" }, true, false)).toMatch(/faol emas/);
+    expect(bedFreeProblem({ isActive: true, state: "ready" }, false, false)).toMatch(/faol emas/);
+    expect(bedFreeProblem(undefined, true, false)).toMatch(/topilmadi/);
+  });
+
+  it("the day of the stay: admission day is day 1", async () => {
+    const { stayDay } = await import("./inpatient");
+    expect(stayDay("2026-11-22", "2026-11-22")).toBe(1);
+    expect(stayDay("2026-11-20", "2026-11-22")).toBe(3);
+  });
+});

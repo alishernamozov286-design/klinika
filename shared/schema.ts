@@ -42,7 +42,7 @@ import type { BillLine, BillSource, BillTotals } from "./invoice";
 import type { ShiftEntry, ShiftTotals } from "./cash-shift";
 import type { RefundLine, RefundStatus } from "./refund";
 import { DISCOUNT_MODES, type DiscountLine, type DiscountMode } from "./discount";
-import { BED_STATES, MAX_BEDS_PER_WARD, WARD_GENDERS, type BedDisplay, type BedState, type WardGender } from "./inpatient";
+import { BED_STATES, MAX_BEDS_PER_WARD, WARD_GENDERS, type AdmissionStatus, type BedDisplay, type BedState, type WardGender } from "./inpatient";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -434,6 +434,69 @@ export const beds = pgTable(
     updatedBy: varchar("updated_by"),
   },
   (t) => [index("IDX_beds_ward").on(t.wardId)],
+);
+
+/**
+ * Yotqizish (B6.2, TZ §8.1.2, §10 "admissions"): a patient's inpatient stay.
+ * Its beds are periods in `admission_beds`. One active stay per patient
+ * (UQ_admissions_active_patient). Never deleted: a mistaken one is cancelled
+ * with a reason; discharge (B6.7) closes it.
+ */
+export const admissions = pgTable(
+  "admissions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+    patientId: varchar("patient_id").notNull(),
+    departmentId: varchar("department_id").notNull(),
+    /** The admitting (attending) doctor. */
+    doctorId: varchar("doctor_id").notNull(),
+    admittedAt: isoTimestamp("admitted_at").notNull(),
+    reason: text("reason"),
+    status: text("status").notNull().default("active"),
+    cancelledAt: isoTimestamp("cancelled_at"),
+    cancelledBy: varchar("cancelled_by"),
+    cancelledByName: text("cancelled_by_name"),
+    cancelReason: text("cancel_reason"),
+    dischargedAt: isoTimestamp("discharged_at"),
+    dischargedBy: varchar("discharged_by"),
+    dischargedByName: text("discharged_by_name"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    createdByName: text("created_by_name"),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+  },
+  (t) => [
+    uniqueIndex("UQ_admissions_active_patient").on(t.patientId).where(sql`status = 'active'`),
+    index("IDX_admissions_status").on(t.status),
+  ],
+);
+
+/**
+ * A bed period of a stay: from → to (open while the patient lies there). A
+ * move closes one and opens the next, so the bed-days per ward survive for the
+ * bill (B6.6). One open period per bed (UQ_admission_beds_open_bed) and per
+ * stay (UQ_admission_beds_open_admission).
+ */
+export const admissionBeds = pgTable(
+  "admission_beds",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    admissionId: varchar("admission_id").notNull(),
+    bedId: varchar("bed_id").notNull(),
+    wardId: varchar("ward_id").notNull(),
+    fromAt: isoTimestamp("from_at").notNull(),
+    toAt: isoTimestamp("to_at"),
+    note: text("note"),
+    movedBy: varchar("moved_by"),
+    movedByName: text("moved_by_name"),
+  },
+  (t) => [
+    uniqueIndex("UQ_admission_beds_open_bed").on(t.bedId).where(sql`to_at IS NULL`),
+    uniqueIndex("UQ_admission_beds_open_admission").on(t.admissionId).where(sql`to_at IS NULL`),
+    index("IDX_admission_beds_admission").on(t.admissionId),
+  ],
 );
 
 /**
@@ -1804,8 +1867,24 @@ export type DuplicateCandidate = {
 export type Department = Omit<typeof departments.$inferSelect, "kind"> & { kind: DepartmentKind };
 export type Ward = Omit<typeof wards.$inferSelect, "gender"> & { gender: WardGender };
 export type Bed = Omit<typeof beds.$inferSelect, "state"> & { state: BedState };
+/** Who lies in a bed now (B6.2). */
+export type BedOccupant = { admissionId: string; number: number; patientId: string; patientName: string; patientNumber: number; since: string };
 /** A bed as the board shows it: "occupied" comes from an admission (B6.2). */
-export type BedView = Bed & { display: BedDisplay };
+export type BedView = Bed & { display: BedDisplay; occupant: BedOccupant | null };
+export type Admission = Omit<typeof admissions.$inferSelect, "status"> & { status: AdmissionStatus };
+export type AdmissionBed = typeof admissionBeds.$inferSelect;
+/** A stay with the people and places it names, and its bed periods (oldest first). */
+export type AdmissionView = Admission & {
+  patientName: string;
+  patientNumber: number;
+  patientGender: string | null;
+  doctorName: string;
+  doctorSpecialty: string | null;
+  departmentName: string;
+  stays: (AdmissionBed & { wardName: string; bedLabel: string; dayPrice: number })[];
+  /** The open bed period, if the stay is active. */
+  current: { bedId: string; bedLabel: string; wardId: string; wardName: string; since: string } | null;
+};
 export type WardView = Ward & { departmentName: string; beds: BedView[] };
 /** A department as the admin screen lists it: with its doctor head count. */
 export type DepartmentWithUsage = Department & { doctorCount: number };
@@ -2570,6 +2649,35 @@ export const updateBedSchema = z.object({
 });
 export type UpdateBedInput = z.infer<typeof updateBedSchema>;
 export const bedStateSchema = z.object({ state: z.enum(BED_STATES), note: wardNote });
+
+/** B6.2: taking a patient in. */
+export const admitSchema = z.object({
+  patientId: z.string().min(1, "Bemorni tanlang"),
+  bedId: z.string().min(1, "Yotoqni tanlang"),
+  doctorId: z.string().min(1, "Qabul qiluvchi shifokorni tanlang"),
+  admittedAt: z
+    .string()
+    .datetime({ offset: true, message: "Vaqtni to'g'ri kiriting" })
+    .nullish()
+    .transform((v) => v ?? null),
+  reason: z
+    .string()
+    .trim()
+    .max(500, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+});
+export type AdmitInput = z.infer<typeof admitSchema>;
+export const transferSchema = z.object({
+  bedId: z.string().min(1, "Yangi yotoqni tanlang"),
+  note: z
+    .string()
+    .trim()
+    .max(300, "Juda uzun")
+    .nullish()
+    .transform((v) => v || null),
+});
+export type TransferInput = z.infer<typeof transferSchema>;
 
 /** B7.2: a discount on a bill — whole (target null) or one service. */
 export const discountBillSchema = z

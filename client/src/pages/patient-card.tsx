@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import {
+  BedDouble,
   ArrowLeft,
   CalendarClock,
   CalendarDays,
@@ -61,6 +62,7 @@ import { PatientReferrals } from "@/components/referrals";
 import { ResultsDialog } from "@/components/results-dialog";
 import { PrintDialog } from "@/components/print-dialog";
 import { MergePatientDialog } from "@/components/merge-patient-dialog";
+import { PatientAdmissions } from "@/components/inpatient/admissions";
 import { useAuth } from "@/hooks/use-auth";
 import { ageGender, dayKey, formatDate, formatDateTime, formatDay, formatLongDate, formatPhone, money, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -274,6 +276,12 @@ export default function PatientCardPage() {
             <CalendarClock className="mr-2 h-4 w-4" />
             Qabullar
           </TabsTrigger>
+          {can("inpatient.read") && (
+            <TabsTrigger value="inpatient" data-testid="tab-card-inpatient">
+              <BedDouble className="mr-2 h-4 w-4" />
+              Statsionar
+            </TabsTrigger>
+          )}
           <TabsTrigger value="trend" data-testid="tab-card-trend">
             <TrendingUp className="mr-2 h-4 w-4" />
             Natijalar dinamikasi
@@ -531,6 +539,12 @@ export default function PatientCardPage() {
         {can("records.read") && (
           <TabsContent value="medical" className="mt-6">
             <MedicalCardPanel patientId={p.id} />
+          </TabsContent>
+        )}
+
+        {can("inpatient.read") && (
+          <TabsContent value="inpatient" className="mt-6">
+            <PatientAdmissions patientId={p.id} />
           </TabsContent>
         )}
 

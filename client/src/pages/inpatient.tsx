@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { BedDouble, BedSingle, Brush, Building2, CheckCircle2, Loader2, MoreHorizontal, Pencil, Plus, Trash2, UserRound, Wrench } from "lucide-react";
+import { BedDouble, BedSingle, Brush, Building2, CheckCircle2, Loader2, LogIn, MoreHorizontal, Pencil, Plus, Trash2, UserRound, Wrench } from "lucide-react";
 import type { BedView, Department, WardView } from "@shared/schema";
 import {
   BED_DISPLAY_LABELS,
@@ -31,6 +31,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { EmptyState, PageHeader, StatCard } from "@/components/ui-kit";
 import { MoneyInput } from "@/components/inputs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AdmissionDialog, AdmissionsTab, AdmitDialog } from "@/components/inpatient/admissions";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -45,7 +47,7 @@ const DISPLAY_STYLE: Record<BedDisplay, { tile: string; icon: typeof BedSingle }
   maintenance: { tile: "border-rose-500/35 bg-rose-500/10 text-rose-800 dark:text-rose-300", icon: Wrench },
 };
 type Filter = "all" | BedDisplay;
-const refresh = () => invalidateApi("/api/wards");
+const refresh = () => invalidateApi("/api/wards", "/api/admissions");
 
 export default function Inpatient() {
   const { can } = useAuth();
@@ -59,6 +61,9 @@ export default function Inpatient() {
   const [wardDialog, setWardDialog] = useState<{ open: boolean; ward: WardView | null }>({ open: false, ward: null });
   const [adding, setAdding] = useState<WardView | null>(null);
   const [bed, setBed] = useState<{ bed: BedView; ward: WardView } | null>(null);
+  const [tab, setTab] = useState<"patients" | "beds">(() => (new URLSearchParams(window.location.search).get("tab") === "beds" ? "beds" : "patients"));
+  const [admitting, setAdmitting] = useState<{ open: boolean; bedId: string | null }>({ open: false, bedId: null });
+  const [stay, setStay] = useState<string | null>(null);
   const { toast } = useToast();
 
   const allBeds = wards.filter((w) => w.isActive).flatMap((w) => w.beds);
@@ -102,14 +107,22 @@ export default function Inpatient() {
       <PageHeader
         eyebrow="Statsionar"
         title="Statsionar"
-        description="Palatalar va yotoqlar: bo'lim → palata → yotoq, yotoq-kun narxi va yotoqlar holati (TZ §8)"
+        description="Statsionardagi bemorlar, yotqizish va ko'chirish, palatalar va yotoqlar (TZ §8)"
         actions={
-          manage && inpatientDepts.length > 0 ? (
-            <Button className="shadow-brand" onClick={() => setWardDialog({ open: true, ward: null })} data-testid="button-add-ward">
-              <Plus className="mr-2 h-4 w-4" />
-              Palata qo'shish
-            </Button>
-          ) : undefined
+          <div className="flex flex-wrap gap-2">
+            {can("admissions.manage") && counts.free > 0 && (
+              <Button className="shadow-brand" onClick={() => setAdmitting({ open: true, bedId: null })} data-testid="button-admit">
+                <LogIn className="mr-2 h-4 w-4" />
+                Yotqizish
+              </Button>
+            )}
+            {manage && inpatientDepts.length > 0 && (
+              <Button variant="outline" onClick={() => setWardDialog({ open: true, ward: null })} data-testid="button-add-ward">
+                <Plus className="mr-2 h-4 w-4" />
+                Palata qo'shish
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -129,6 +142,19 @@ export default function Inpatient() {
         />
       </div>
 
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "patients" | "beds")}>
+        <TabsList>
+          <TabsTrigger value="patients" data-testid="tab-inpatient-patients">
+            Bemorlar
+          </TabsTrigger>
+          <TabsTrigger value="beds" data-testid="tab-inpatient-beds">
+            Palata va yotoqlar
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="patients" className="mt-4">
+          <AdmissionsTab onOpen={setStay} />
+        </TabsContent>
+        <TabsContent value="beds" className="mt-4 space-y-6">
       {!isLoading && inpatientDepts.length === 0 && wards.length === 0 ? (
         <div className="card-premium">
           <EmptyState
@@ -262,7 +288,7 @@ export default function Inpatient() {
                                 <button
                                   key={b.id}
                                   type="button"
-                                  onClick={() => setBed({ bed: b, ward: w })}
+                                  onClick={() => (b.occupant ? setStay(b.occupant.admissionId) : setBed({ bed: b, ward: w }))}
                                   className={cn("flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-center transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", st.tile, !b.isActive && "border-dashed opacity-50")}
                                   aria-label={`Yotoq ${b.label}: ${BED_DISPLAY_LABELS[b.display]}`}
                                   data-testid={`bed-${w.name}-${b.label}`}
@@ -272,8 +298,8 @@ export default function Inpatient() {
                                     {b.label}
                                   </span>
                                   <span className="flex items-center gap-1 text-[10px] font-medium leading-tight">
-                                    <Icon className="h-3 w-3" />
-                                    {BED_DISPLAY_LABELS[b.display]}
+                                    <Icon className="h-3 w-3 shrink-0" />
+                                    <span className="line-clamp-1">{b.occupant ? b.occupant.patientName.split(" ")[0] : BED_DISPLAY_LABELS[b.display]}</span>
                                   </span>
                                 </button>
                               );
@@ -290,9 +316,21 @@ export default function Inpatient() {
         </>
       )}
 
+        </TabsContent>
+      </Tabs>
+
       <WardDialog open={wardDialog.open} ward={wardDialog.ward} departments={inpatientDepts} onOpenChange={(o) => setWardDialog((s) => ({ ...s, open: o }))} />
       <AddBedsDialog ward={adding} onClose={() => setAdding(null)} />
-      <BedDialog target={bed} onClose={() => setBed(null)} />
+      <BedDialog
+        target={bed}
+        onClose={() => setBed(null)}
+        onAdmit={(bedId) => {
+          setBed(null);
+          setAdmitting({ open: true, bedId });
+        }}
+      />
+      <AdmitDialog open={admitting.open} presetBedId={admitting.bedId} onOpenChange={(o) => setAdmitting((s) => ({ ...s, open: o }))} />
+      <AdmissionDialog admissionId={stay} onClose={() => setStay(null)} />
     </div>
   );
 }
@@ -460,7 +498,7 @@ function AddBedsDialog({ ward, onClose }: { ward: WardView | null; onClose: () =
 
 const STATE_ICON: Record<BedState, typeof BedSingle> = { ready: CheckCircle2, cleaning: Brush, maintenance: Wrench };
 
-function BedDialog({ target, onClose }: { target: { bed: BedView; ward: WardView } | null; onClose: () => void }) {
+function BedDialog({ target, onClose, onAdmit }: { target: { bed: BedView; ward: WardView } | null; onClose: () => void; onAdmit: (bedId: string) => void }) {
   const { can } = useAuth();
   const { toast } = useToast();
   const manage = can("beds.manage");
@@ -516,6 +554,12 @@ function BedDialog({ target, onClose }: { target: { bed: BedView; ward: WardView
             {b?.stateNote ? ` — ${b.stateNote}` : ""}
           </DialogDescription>
         </DialogHeader>
+        {b && can("admissions.manage") && b.display === "ready" && b.isActive && target?.ward.isActive && (
+          <Button className="w-full shadow-brand" onClick={() => onAdmit(b.id)} data-testid="button-admit-here">
+            <LogIn className="mr-2 h-4 w-4" />
+            Shu yotoqqa yotqizish
+          </Button>
+        )}
         {b && setsState && b.display !== "occupied" && (
           <div className="space-y-3">
             <Label>Holati</Label>

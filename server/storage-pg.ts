@@ -25,6 +25,8 @@ import {
   billDiscounts,
   wards,
   beds,
+  admissions,
+  admissionBeds,
   consumptionNorms,
   labConsumptions,
   auditLog,
@@ -186,6 +188,17 @@ import {
   BED_LABEL_TAKEN,
   BED_MAINTENANCE_NOTE,
   DEPARTMENT_HAS_WARDS,
+  ADMISSION_DOCTOR,
+  ADMISSION_IN_FUTURE,
+  ADMISSION_NOT_ACTIVE,
+  ADMISSION_SAME_BED,
+  BED_HAS_HISTORY,
+  BED_OCCUPIED,
+  PATIENT_ALREADY_ADMITTED,
+  VACATED_NOTE,
+  WARD_OCCUPIED,
+  bedFreeProblem,
+  type AdmissionStatus,
   MAX_BEDS_PER_WARD,
   WARD_DEPARTMENT,
   WARD_HAS_BEDS,
@@ -236,10 +249,15 @@ import type {
   BillDiscount,
   DiscountBillInput,
   BedView,
+  BedOccupant,
   InsertWardInput,
   UpdateBedInput,
   UpdateWardInput,
   WardView,
+  Admission,
+  AdmissionView,
+  AdmitInput,
+  TransferInput,
   Bill,
   BillSummary,
   Invoice,
@@ -345,6 +363,7 @@ import {
   type BillQuery,
   type ShiftQuery,
   type RefundQuery,
+  type AdmissionQuery,
 } from "./storage-types";
 import {
   PAYMENT_IS_REFUND,
@@ -2232,6 +2251,12 @@ export class PgStorage implements IStorage {
           WHERE sv.patient_id = ${sourceId} AND si.visit_id = sv.id`);
         await tx.update(invoices).set({ patientId: targetId }).where(eq(invoices.patientId, sourceId));
         await tx.update(invoicePayments).set({ patientId: targetId }).where(eq(invoicePayments.patientId, sourceId));
+      }
+      // Stays (B6.2) follow the patient; two cards both in hospital cannot become one.
+      if (await tableExists(tx, "admissions")) {
+        const active = await tx.select({ patientId: admissions.patientId }).from(admissions).where(and(inArray(admissions.patientId, [sourceId, targetId]), eq(admissions.status, "active")));
+        if (active.length > 1) throw new StorageConflict("Ikkala kartada ham faol yotqizish bor — avval bittasini chiqaring yoki bekor qiling");
+        await tx.update(admissions).set({ patientId: targetId }).where(eq(admissions.patientId, sourceId));
       }
       // Discounts (B7.2) likewise.
       if (await tableExists(tx, "bill_discounts")) {
@@ -5063,15 +5088,39 @@ export class PgStorage implements IStorage {
 
   // ------------------------------------------------------------ B6.1 wards and beds
 
-  private bedView(b: typeof beds.$inferSelect): BedView {
-    // B6.2 overlays "occupied" from the admissions; until then a bed shows its own state.
-    return { ...b, state: b.state as BedState, display: b.state as BedState, createdAt: iso(b.createdAt) ?? b.createdAt, stateChangedAt: iso(b.stateChangedAt), updatedAt: iso(b.updatedAt) };
+  /** A bed shows "occupied" while an admission's bed period on it is open (B6.2); otherwise its own state. */
+  private bedView(b: typeof beds.$inferSelect, occupant: BedOccupant | null = null): BedView {
+    return {
+      ...b,
+      state: b.state as BedState,
+      display: occupant ? "occupied" : (b.state as BedState),
+      occupant,
+      createdAt: iso(b.createdAt) ?? b.createdAt,
+      stateChangedAt: iso(b.stateChangedAt),
+      updatedAt: iso(b.updatedAt),
+    };
+  }
+
+  /** Who lies where now: the open bed periods, by bed. */
+  private async occupants(exec: typeof db = db): Promise<Map<string, BedOccupant>> {
+    const rows = await exec
+      .select({ bedId: admissionBeds.bedId, since: admissionBeds.fromAt, admissionId: admissions.id, number: admissions.number, patientId: patients.id, patientName: patients.fullName, patientNumber: patients.patientNumber })
+      .from(admissionBeds)
+      .innerJoin(admissions, eq(admissions.id, admissionBeds.admissionId))
+      .innerJoin(patients, eq(patients.id, admissions.patientId))
+      .where(isNull(admissionBeds.toAt))
+      .catch((e) => {
+        if ((e as { code?: string })?.code === "42P01") return [];
+        throw e;
+      });
+    return new Map(rows.map(({ bedId, since, ...o }) => [bedId, { ...o, since: iso(since) ?? since }]));
   }
 
   async listWards(): Promise<WardView[]> {
-    const [rows, bedRows] = await Promise.all([
+    const [rows, bedRows, occ] = await Promise.all([
       db.select({ w: wards, departmentName: departments.name }).from(wards).innerJoin(departments, eq(departments.id, wards.departmentId)),
       db.select().from(beds),
+      this.occupants(),
     ]);
     return sortWards(
       rows.map(({ w, departmentName }) => ({
@@ -5080,7 +5129,7 @@ export class PgStorage implements IStorage {
         createdAt: iso(w.createdAt) ?? w.createdAt,
         updatedAt: iso(w.updatedAt),
         departmentName,
-        beds: sortBeds(bedRows.filter((b) => b.wardId === w.id).map((b) => this.bedView(b))),
+        beds: sortBeds(bedRows.filter((b) => b.wardId === w.id).map((b) => this.bedView(b, occ.get(b.id) ?? null))),
       })),
     );
   }
@@ -5124,6 +5173,11 @@ export class PgStorage implements IStorage {
       if (problem) throw new Error(problem);
     }
     if ((patch.name !== undefined || patch.departmentId) && (await this.wardNameTaken(departmentId, patch.name ?? cur.name, id))) throw new StorageConflict(WARD_NAME_TAKEN);
+    if (patch.isActive === false || (patch.departmentId && patch.departmentId !== cur.departmentId)) {
+      const occ = await this.occupants();
+      const wardBeds = await db.select({ id: beds.id }).from(beds).where(eq(beds.wardId, id));
+      if (wardBeds.some((b) => occ.has(b.id))) throw new StorageConflict(WARD_OCCUPIED);
+    }
     try {
       await db
         .update(wards)
@@ -5174,6 +5228,7 @@ export class PgStorage implements IStorage {
   async updateBed(id: string, patch: UpdateBedInput, actor: Actor): Promise<BedView | undefined> {
     const [cur] = await db.select().from(beds).where(eq(beds.id, id)).limit(1);
     if (!cur) return undefined;
+    if (patch.isActive === false && (await this.occupants()).has(id)) throw new StorageConflict(BED_OCCUPIED);
     if (patch.label !== undefined) {
       const siblings = await db.select({ id: beds.id, label: beds.label }).from(beds).where(eq(beds.wardId, cur.wardId));
       if (siblings.some((s) => s.id !== id && labelKey(s.label) === labelKey(patch.label!))) throw new StorageConflict(BED_LABEL_TAKEN);
@@ -5190,7 +5245,7 @@ export class PgStorage implements IStorage {
         })
         .where(eq(beds.id, id))
         .returning();
-      return this.bedView(row);
+      return this.bedView(row, (await this.occupants()).get(id) ?? null);
     } catch (err) {
       if ((err as { code?: string })?.code === "23505") throw new StorageConflict(BED_LABEL_TAKEN);
       throw err;
@@ -5199,6 +5254,7 @@ export class PgStorage implements IStorage {
 
   async setBedState(id: string, state: BedState, note: string | null, actor: Actor): Promise<BedView | undefined> {
     if (state === "maintenance" && !note) throw new Error(BED_MAINTENANCE_NOTE);
+    if ((await this.occupants()).has(id)) throw new StorageConflict(BED_OCCUPIED);
     const [row] = await db
       .update(beds)
       .set({ state, stateNote: note, stateChangedAt: new Date().toISOString(), stateChangedBy: actor.id, stateChangedByName: actor.name })
@@ -5208,9 +5264,154 @@ export class PgStorage implements IStorage {
   }
 
   async deleteBed(id: string): Promise<boolean> {
-    // B6.2 refuses a bed anyone ever lay in (it stays, deactivated).
+    // A bed anyone ever lay in stays (deactivated): its periods are the stays' history and the bill.
+    if (await tableExists(db, "admission_beds")) {
+      const [used] = await db.select({ id: admissionBeds.id }).from(admissionBeds).where(eq(admissionBeds.bedId, id)).limit(1);
+      if (used) throw new StorageConflict(BED_HAS_HISTORY);
+    }
     const rows = await db.delete(beds).where(eq(beds.id, id)).returning({ id: beds.id });
     return rows.length > 0;
+  }
+
+
+  // ------------------------------------------------------------ B6.2 admissions
+
+  async listAdmissions(query: AdmissionQuery = {}): Promise<AdmissionView[]> {
+    const where = and(query.status ? eq(admissions.status, query.status) : undefined, query.patientId ? eq(admissions.patientId, query.patientId) : undefined, query.id ? eq(admissions.id, query.id) : undefined);
+    const [rows, periods] = await Promise.all([
+      db
+        .select({ a: admissions, patientName: patients.fullName, patientNumber: patients.patientNumber, patientGender: patients.gender, doctorName: users.fullName, doctorSpecialty: doctors.specialty, departmentName: departments.name })
+        .from(admissions)
+        .innerJoin(patients, eq(patients.id, admissions.patientId))
+        .leftJoin(doctors, eq(doctors.id, admissions.doctorId))
+        .leftJoin(users, eq(users.id, doctors.userId))
+        .leftJoin(departments, eq(departments.id, admissions.departmentId))
+        .where(where)
+        .orderBy(desc(admissions.admittedAt))
+        .limit(query.limit ?? 500),
+      db
+        .select({ p: admissionBeds, wardName: wards.name, bedLabel: beds.label, dayPrice: wards.dayPrice })
+        .from(admissionBeds)
+        .innerJoin(admissions, eq(admissions.id, admissionBeds.admissionId))
+        .innerJoin(beds, eq(beds.id, admissionBeds.bedId))
+        .innerJoin(wards, eq(wards.id, admissionBeds.wardId))
+        .where(where)
+        .orderBy(asc(admissionBeds.fromAt)),
+    ]);
+    return rows.map(({ a, ...x }) => {
+      const stays = periods
+        .filter((p) => p.p.admissionId === a.id)
+        .map(({ p, ...y }) => ({ ...p, fromAt: iso(p.fromAt) ?? p.fromAt, toAt: iso(p.toAt), ...y }));
+      const open = stays.find((s) => !s.toAt);
+      return {
+        ...a,
+        status: a.status as AdmissionStatus,
+        admittedAt: iso(a.admittedAt) ?? a.admittedAt,
+        cancelledAt: iso(a.cancelledAt),
+        dischargedAt: iso(a.dischargedAt),
+        createdAt: iso(a.createdAt) ?? a.createdAt,
+        updatedAt: iso(a.updatedAt),
+        patientName: x.patientName,
+        patientNumber: x.patientNumber,
+        patientGender: x.patientGender ?? null,
+        doctorName: x.doctorName ?? "—",
+        doctorSpecialty: x.doctorSpecialty ?? null,
+        departmentName: x.departmentName ?? "—",
+        stays,
+        current: open ? { bedId: open.bedId, bedLabel: open.bedLabel, wardId: open.wardId, wardName: open.wardName, since: open.fromAt } : null,
+      };
+    });
+  }
+
+  async getAdmission(id: string): Promise<AdmissionView | undefined> {
+    return (await this.listAdmissions({ id }))[0];
+  }
+
+  /** Locks a bed and says whether it can take a patient (FOR UPDATE; the open-period index is the last guard). */
+  private async lockFreeBed(tx: typeof db, bedId: string): Promise<{ wardId: string; departmentId: string }> {
+    const [row] = await tx
+      .select({ bed: beds, wardActive: wards.isActive, departmentId: wards.departmentId })
+      .from(beds)
+      .innerJoin(wards, eq(wards.id, beds.wardId))
+      .where(eq(beds.id, bedId))
+      .for("update", { of: beds });
+    const [taken] = row ? await tx.select({ id: admissionBeds.id }).from(admissionBeds).where(and(eq(admissionBeds.bedId, bedId), isNull(admissionBeds.toAt))).limit(1) : [];
+    const problem = bedFreeProblem(row && { isActive: row.bed.isActive, state: row.bed.state as BedState }, row?.wardActive ?? false, Boolean(taken));
+    if (problem) throw new StorageConflict(problem);
+    return { wardId: row.bed.wardId, departmentId: row.departmentId };
+  }
+
+  private openPeriodConflict(err: unknown): never {
+    const e = err as { code?: string; constraint?: string };
+    if (e?.code === "23505" && e.constraint === "UQ_admissions_active_patient") throw new StorageConflict(PATIENT_ALREADY_ADMITTED);
+    if (e?.code === "23505" && e.constraint === "UQ_admission_beds_open_bed") throw new StorageConflict(BED_OCCUPIED);
+    throw err;
+  }
+
+  async admitPatient(input: AdmitInput, actor: Actor): Promise<AdmissionView> {
+    const now = new Date();
+    const admittedAt = input.admittedAt ? new Date(input.admittedAt) : now;
+    if (admittedAt.getTime() > now.getTime() + 60_000) throw new Error(ADMISSION_IN_FUTURE);
+    const [doc] = await db.select({ id: doctors.id }).from(doctors).where(and(eq(doctors.id, input.doctorId), eq(doctors.isActive, true))).limit(1);
+    if (!doc) throw new Error(ADMISSION_DOCTOR);
+    const id = await db
+      .transaction(async (tx) => {
+        const exec = tx as unknown as typeof db;
+        const [p] = await tx.select({ id: patients.id }).from(patients).where(eq(patients.id, input.patientId)).for("update");
+        if (!p) throw new Error("Bemor topilmadi");
+        const [already] = await tx.select({ id: admissions.id }).from(admissions).where(and(eq(admissions.patientId, input.patientId), eq(admissions.status, "active"))).limit(1);
+        if (already) throw new StorageConflict(PATIENT_ALREADY_ADMITTED);
+        const place = await this.lockFreeBed(exec, input.bedId);
+        const [a] = await tx
+          .insert(admissions)
+          .values({ patientId: input.patientId, departmentId: place.departmentId, doctorId: input.doctorId, admittedAt: admittedAt.toISOString(), reason: input.reason, createdBy: actor.id, createdByName: actor.name })
+          .returning({ id: admissions.id });
+        await tx.insert(admissionBeds).values({ admissionId: a.id, bedId: input.bedId, wardId: place.wardId, fromAt: admittedAt.toISOString(), movedBy: actor.id, movedByName: actor.name });
+        return a.id;
+      })
+      .catch((e) => this.openPeriodConflict(e));
+    return (await this.getAdmission(id))!;
+  }
+
+  async transferAdmission(id: string, input: TransferInput, actor: Actor): Promise<AdmissionView | undefined> {
+    const found = await db
+      .transaction(async (tx) => {
+        const exec = tx as unknown as typeof db;
+        const [a] = await tx.select().from(admissions).where(eq(admissions.id, id)).for("update");
+        if (!a) return false;
+        if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+        const [open] = await tx.select().from(admissionBeds).where(and(eq(admissionBeds.admissionId, id), isNull(admissionBeds.toAt))).for("update");
+        if (open?.bedId === input.bedId) throw new StorageConflict(ADMISSION_SAME_BED);
+        const place = await this.lockFreeBed(exec, input.bedId);
+        const now = new Date().toISOString();
+        if (open) {
+          await tx.update(admissionBeds).set({ toAt: now }).where(eq(admissionBeds.id, open.id));
+          // The bed just left wants cleaning before the next patient.
+          await tx.update(beds).set({ state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name }).where(eq(beds.id, open.bedId));
+        }
+        await tx.insert(admissionBeds).values({ admissionId: id, bedId: input.bedId, wardId: place.wardId, fromAt: now, note: input.note, movedBy: actor.id, movedByName: actor.name });
+        await tx.update(admissions).set({ departmentId: place.departmentId, updatedAt: now, updatedBy: actor.id }).where(eq(admissions.id, id));
+        return true;
+      })
+      .catch((e) => this.openPeriodConflict(e));
+    return found ? this.getAdmission(id) : undefined;
+  }
+
+  async cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const [a] = await tx.select().from(admissions).where(eq(admissions.id, id)).for("update");
+      if (!a) return false;
+      if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+      const now = new Date().toISOString();
+      // A mistaken stay frees its bed as it was: nobody may have lain in it.
+      await tx.update(admissionBeds).set({ toAt: now }).where(and(eq(admissionBeds.admissionId, id), isNull(admissionBeds.toAt)));
+      await tx
+        .update(admissions)
+        .set({ status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id })
+        .where(eq(admissions.id, id));
+      return true;
+    });
+    return found ? this.getAdmission(id) : undefined;
   }
 
   async financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]> {

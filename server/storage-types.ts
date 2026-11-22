@@ -10,8 +10,9 @@ import type { RefundStatus } from "@shared/refund";
 import type { CashDayRow } from "@shared/cash-report";
 import type { DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
-import type { Bed, BedView, InsertWardInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
-import type { BedState } from "@shared/inpatient";
+import type { AdmissionView, AdmitInput, Bed, BedView, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
+import type { AdmissionStatus, BedState } from "@shared/inpatient";
+export type AdmissionQuery = { status?: AdmissionStatus; patientId?: string; id?: string; limit?: number };
 import type { Bill, BillDiscount, BillSummary, DiscountBillInput, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
 /** B7.4: `status` alone lists every refund in it (open ones whenever asked); a range applies to the request time. */
@@ -958,7 +959,17 @@ export interface IStorage {
   addBeds(wardId: string, count: number, actor: Actor): Promise<WardView | undefined>;
   updateBed(id: string, patch: UpdateBedInput, actor: Actor): Promise<BedView | undefined>;
   setBedState(id: string, state: BedState, note: string | null, actor: Actor): Promise<BedView | undefined>;
+  /** Refused once anyone lay in the bed. */
   deleteBed(id: string): Promise<boolean>;
+  // B6.2 admissions: a stay and its bed periods (rules: shared/inpatient.ts).
+  listAdmissions(query?: AdmissionQuery): Promise<AdmissionView[]>;
+  getAdmission(id: string): Promise<AdmissionView | undefined>;
+  /** Into a free bed (active, ready, nobody in it); one active stay per patient (StorageConflict). */
+  admitPatient(input: AdmitInput, actor: Actor): Promise<AdmissionView>;
+  /** Closes the bed period and opens the next; the bed left is set to cleaning. */
+  transferAdmission(id: string, input: TransferInput, actor: Actor): Promise<AdmissionView | undefined>;
+  /** A mistaken stay: closed with a reason, never deleted. */
+  cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined>;
   /** B7.8: services rendered on local days `from`..`to` (YYYY-MM-DD, inclusive), by kind, name and doctor. */
   financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]>;
   /** B7.8: discounts given on bills in the instants [from, to). */

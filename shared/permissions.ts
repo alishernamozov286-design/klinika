@@ -270,6 +270,11 @@ export const PERMISSIONS = {
     label: "Palata va yotoqlarni boshqarish",
     description: "Palata qo'shish, yotoq-kun narxi, yotoqlar qo'shish va o'chirish (TZ §8)",
   },
+  "admissions.manage": {
+    group: "inpatient",
+    label: "Yotqizish va ko'chirish",
+    description: "Bemorni statsionarga yotqizish, boshqa yotoqqa ko'chirish, xato yotqizishni bekor qilish (TZ §8.1.2)",
+  },
   "beds.state": {
     group: "inpatient",
     label: "Yotoq holatini belgilash",
@@ -450,6 +455,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "inpatient.read",
       "beds.manage",
       "beds.state",
+      "admissions.manage",
     ],
   },
   {
@@ -473,6 +479,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "payments.create",
       "payments.discount",
       "inpatient.read",
+      "admissions.manage",
     ],
   },
   {
@@ -547,7 +554,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "hamshira",
     name: "Statsionar hamshirasi",
     description: "Bemor parvarishi, muolajalar va namuna olish",
-    permissions: ["patients.read", "orders.read", "samples.manage", "inpatient.read", "beds.state"],
+    permissions: ["patients.read", "orders.read", "samples.manage", "inpatient.read", "beds.state", "admissions.manage"],
   },
   {
     key: "kassir",

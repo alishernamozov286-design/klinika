@@ -4,14 +4,15 @@
  *   inpatient.read              the wards and beds board
  *   beds.manage                 wards (bed-day price), beds: add, rename, deactivate, delete
  *   beds.state | beds.manage    a bed's state: ready / cleaning / out of service
+ *   admissions.manage           admit a patient, move to another bed, cancel a mistaken stay (B6.2)
  *
  * Rules: shared/inpatient.ts.
  */
 import type { Express } from "express";
-import { addBedsSchema, bedStateSchema, insertWardSchema, updateBedSchema, updateWardSchema } from "@shared/schema";
-import { BED_STATE_LABELS, WARD_GENDER_LABELS } from "@shared/inpatient";
+import { addBedsSchema, admitSchema, bedStateSchema, insertWardSchema, transferSchema, updateBedSchema, updateWardSchema, voidPaymentSchema, type AdmissionView } from "@shared/schema";
+import { ADMISSION_STATUSES, BED_STATE_LABELS, WARD_GENDER_LABELS, type AdmissionStatus } from "@shared/inpatient";
 import { requirePermission } from "./rbac";
-import { actorOf, audit, emptyIfMissing, handle } from "./route-helpers";
+import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
 import { storage } from "./storage";
 
 const sum = (n: number) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
@@ -116,6 +117,66 @@ export function registerInpatientRoutes(app: Express) {
       if (!(await storage.deleteBed(req.params.id))) return res.status(404).json({ message: "Yotoq topilmadi" });
       await audit(req, "delete", "bed", req.params.id, `Palata "${ward?.name ?? "—"}": yotoq ${label ?? "—"} o'chirildi`);
       res.status(204).end();
+    }),
+  );
+
+  // ------------------------------------------------------------ B6.2 admissions
+
+  const place = (a: AdmissionView) => (a.current ? `palata ${a.current.wardName}, yotoq ${a.current.bedLabel}` : "—");
+
+  app.get(
+    "/api/admissions",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      const status = stringParam(req.query.status) as AdmissionStatus | undefined;
+      if (status && !ADMISSION_STATUSES.includes(status)) return res.status(400).json({ message: "Noma'lum holat" });
+      res.json(await storage.listAdmissions({ status, patientId: stringParam(req.query.patientId) }).catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  app.get(
+    "/api/admissions/:id",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      const a = await storage.getAdmission(req.params.id);
+      if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      res.json(a);
+    }),
+  );
+
+  app.post(
+    "/api/admissions",
+    requirePermission("admissions.manage"),
+    handle(async (req, res) => {
+      const input = admitSchema.parse(req.body);
+      const a = await storage.admitPatient(input, actorOf(req));
+      await audit(req, "create", "admission", a.id, `Statsionar karta №${a.number}: №${a.patientNumber} ${a.patientName} yotqizildi — ${a.departmentName}, ${place(a)}; shifokor ${a.doctorName}${a.reason ? `. Sabab: ${a.reason}` : ""}`);
+      res.status(201).json(a);
+    }),
+  );
+
+  app.post(
+    "/api/admissions/:id/transfer",
+    requirePermission("admissions.manage"),
+    handle(async (req, res) => {
+      const input = transferSchema.parse(req.body);
+      const before = await storage.getAdmission(req.params.id);
+      if (!before) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const a = (await storage.transferAdmission(req.params.id, input, actorOf(req)))!;
+      await audit(req, "update", "admission", a.id, `Statsionar karta №${a.number} (№${a.patientNumber} ${a.patientName}): ${place(before)} → ${place(a)}${input.note ? `. ${input.note}` : ""}`);
+      res.json(a);
+    }),
+  );
+
+  app.post(
+    "/api/admissions/:id/cancel",
+    requirePermission("admissions.manage"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const a = await storage.cancelAdmission(req.params.id, reason, actorOf(req));
+      if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      await audit(req, "void", "admission", a.id, `Statsionar karta №${a.number} (№${a.patientNumber} ${a.patientName}) bekor qilindi. Sabab: ${reason}`);
+      res.json(a);
     }),
   );
 }

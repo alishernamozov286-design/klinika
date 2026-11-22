@@ -11,6 +11,8 @@ import type {
   BillDiscount,
   Ward,
   Bed,
+  Admission,
+  AdmissionBed,
   LabConsumption,
   InventoryBatch,
   StockMovement,
@@ -97,6 +99,9 @@ export type DbShape = {
   /** B6.1 wards and their beds. */
   wards: Ward[];
   beds: Bed[];
+  /** B6.2 stays and their bed periods. */
+  admissions: Admission[];
+  admissionBeds: AdmissionBed[];
   labConsumptions: LabConsumption[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
@@ -117,7 +122,7 @@ export type DbShape = {
   telegramContacts: TelegramContact[];
   settings: LabSettings;
   /** Last number handed out for each human-facing sequence; next = value + 1. */
-  counters: { orderNumber: number; patientNumber: number; referralNumber: number; receiptNumber: number; issueNumber: number; countNumber: number; invoiceNumber: number; invoiceReceiptNumber: number; shiftNumber: number; refundNumber: number };
+  counters: { orderNumber: number; patientNumber: number; referralNumber: number; receiptNumber: number; issueNumber: number; countNumber: number; invoiceNumber: number; invoiceReceiptNumber: number; shiftNumber: number; refundNumber: number; admissionNumber: number };
 };
 
 /**
@@ -167,6 +172,8 @@ export const emptyDb = (): DbShape => ({
   billDiscounts: [],
   wards: [],
   beds: [],
+  admissions: [],
+  admissionBeds: [],
   labConsumptions: [],
   icdUzNames: {},
   security: null,
@@ -191,7 +198,7 @@ export const emptyDb = (): DbShape => ({
     director: null,
     licenseNumber: null,
   },
-  counters: { orderNumber: 1000, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0, invoiceNumber: 0, invoiceReceiptNumber: 0, shiftNumber: 0, refundNumber: 0 },
+  counters: { orderNumber: 1000, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0, invoiceNumber: 0, invoiceReceiptNumber: 0, shiftNumber: 0, refundNumber: 0, admissionNumber: 0 },
 });
 
 export function readDbSync(): DbShape {

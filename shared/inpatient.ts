@@ -75,3 +75,40 @@ export function sortWards<T extends { departmentName: string; floor: number | nu
 export function sortBeds<T extends { label: string }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => natural(a.label, b.label));
 }
+
+// ---------------------------------------------------------------- B6.2 admissions
+
+/**
+ * Yotqizish (B6.2, TZ §8.1.2, §10 "admissions"): a patient's stay — who took
+ * them in, when, and the beds they lay in. Each bed is a period of its own
+ * (`admission_beds`, from → to), so a move between wards keeps both, and the
+ * bed-days are billed at each ward's own price (B6.6). One active stay per
+ * patient, one patient per bed, both guarded by the database too.
+ */
+export const ADMISSION_STATUSES = ["active", "discharged", "cancelled"] as const;
+export type AdmissionStatus = (typeof ADMISSION_STATUSES)[number];
+export const ADMISSION_STATUS_LABELS: Record<AdmissionStatus, string> = { active: "Statsionarda", discharged: "Chiqarilgan", cancelled: "Bekor qilingan" };
+
+export const PATIENT_ALREADY_ADMITTED = "Bemor allaqachon statsionarda — avval chiqaring yoki boshqa yotoqqa ko'chiring";
+export const BED_OCCUPIED = "Yotoqda bemor bor";
+export const BED_HAS_HISTORY = "Bu yotoqda bemor yotgan — o'chirib bo'lmaydi, faolsizlantiring";
+export const WARD_OCCUPIED = "Palatada bemor bor — avval ularni ko'chiring yoki chiqaring";
+export const ADMISSION_NOT_ACTIVE = "Yotqizish faol emas (chiqarilgan yoki bekor qilingan)";
+export const ADMISSION_SAME_BED = "Bemor shu yotoqda yotibdi";
+export const ADMISSION_IN_FUTURE = "Yotqizish vaqti kelajakda bo'lishi mumkin emas";
+export const ADMISSION_DOCTOR = "Qabul qiluvchi shifokorni tanlang (faol shifokor)";
+export const VACATED_NOTE = "Bemor chiqqandan keyin";
+
+/** Why a bed cannot take a patient now, or null. */
+export function bedFreeProblem(bed: { isActive: boolean; state: BedState } | undefined, wardActive: boolean, occupied: boolean): string | null {
+  if (!bed) return "Yotoq topilmadi";
+  if (!bed.isActive || !wardActive) return "Yotoq yoki palata faol emas";
+  if (occupied) return BED_OCCUPIED;
+  if (bed.state !== "ready") return `Yotoq ${BED_STATE_LABELS[bed.state].toLowerCase()} — avval uni bo'sh deb belgilang`;
+  return null;
+}
+
+/** The day of the stay ("3-kun"): the admission day is day 1 (YYYY-MM-DD, calendar arithmetic). */
+export function stayDay(admittedDay: string, today: string): number {
+  return Math.max(1, Math.round((Date.parse(`${today}T12:00:00Z`) - Date.parse(`${admittedDay}T12:00:00Z`)) / 86_400_000) + 1);
+}

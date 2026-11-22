@@ -158,6 +158,16 @@ import {
   BED_LABEL_TAKEN,
   BED_MAINTENANCE_NOTE,
   DEPARTMENT_HAS_WARDS,
+  ADMISSION_DOCTOR,
+  ADMISSION_IN_FUTURE,
+  ADMISSION_NOT_ACTIVE,
+  ADMISSION_SAME_BED,
+  BED_HAS_HISTORY,
+  BED_OCCUPIED,
+  PATIENT_ALREADY_ADMITTED,
+  VACATED_NOTE,
+  WARD_OCCUPIED,
+  bedFreeProblem,
   MAX_BEDS_PER_WARD,
   WARD_DEPARTMENT,
   WARD_HAS_BEDS,
@@ -186,6 +196,11 @@ import type {
   DiscountBillInput,
   Bed,
   BedView,
+  BedOccupant,
+  Admission,
+  AdmissionView,
+  AdmitInput,
+  TransferInput,
   InsertWardInput,
   UpdateBedInput,
   UpdateWardInput,
@@ -299,6 +314,7 @@ import {
   type BillQuery,
   type ShiftQuery,
   type RefundQuery,
+  type AdmissionQuery,
 } from "./storage-types";
 import type { LockState } from "@shared/lockout";
 
@@ -1657,6 +1673,10 @@ export class FileStorage implements IStorage {
     const source = this.db.patients.find((p) => p.id === sourceId);
     const target = this.db.patients.find((p) => p.id === targetId);
     if (!source || !target || source.id === target.id) return undefined;
+    // Two cards both in hospital cannot become one (B6.2) — checked before anything moves.
+    if (this.db.admissions.filter((a) => (a.patientId === sourceId || a.patientId === targetId) && a.status === "active").length > 1) {
+      throw new StorageConflict("Ikkala kartada ham faol yotqizish bor — avval bittasini chiqaring yoki bekor qiling");
+    }
     const stamp = { updatedAt: new Date().toISOString(), updatedBy: actor?.id ?? null };
     let orders = 0;
     for (const o of this.db.orders) {
@@ -1713,6 +1733,7 @@ export class FileStorage implements IStorage {
     for (const r of this.db.invoicePayments) if (r.patientId === sourceId) r.patientId = targetId;
     for (const r of this.db.refunds) if (r.patientId === sourceId) r.patientId = targetId;
     for (const d of this.db.billDiscounts) if (d.patientId === sourceId) d.patientId = targetId;
+    for (const a of this.db.admissions) if (a.patientId === sourceId) a.patientId = targetId;
     this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
     await this.persist();
     return { orders, contacts, appointments };
@@ -1788,6 +1809,7 @@ export class FileStorage implements IStorage {
       invoice_payments: mine(this.db.invoicePayments),
       refunds: mine(this.db.refunds),
       bill_discounts: mine(this.db.billDiscounts),
+      admissions: mine(this.db.admissions),
     });
     if (problem) throw new StorageConflict(problem);
     const before = this.db.patients.length;
@@ -4122,16 +4144,17 @@ export class FileStorage implements IStorage {
 
   // ------------------------------------------------------------ B6.1 wards and beds
 
-  private bedViewOf(b: Bed): BedView {
-    // B6.2 overlays "occupied" from the admissions; until then a bed shows its own state.
-    return { ...b, display: b.state };
+  /** A bed shows "occupied" while an admission's bed period on it is open (B6.2); otherwise its own state. */
+  private bedViewOf(b: Bed, occ = this.occupantsNow()): BedView {
+    const occupant = occ.get(b.id) ?? null;
+    return { ...b, display: occupant ? "occupied" : b.state, occupant };
   }
 
-  private wardViewOf(w: Ward): WardView {
+  private wardViewOf(w: Ward, occ = this.occupantsNow()): WardView {
     return {
       ...w,
       departmentName: this.db.departments.find((d) => d.id === w.departmentId)?.name ?? "—",
-      beds: sortBeds(this.db.beds.filter((b) => b.wardId === w.id).map((b) => this.bedViewOf(b))),
+      beds: sortBeds(this.db.beds.filter((b) => b.wardId === w.id).map((b) => this.bedViewOf(b, occ))),
     };
   }
 
@@ -4184,6 +4207,10 @@ export class FileStorage implements IStorage {
       if (problem) throw new Error(problem);
     }
     if ((patch.name !== undefined || patch.departmentId) && this.wardNameTaken(patch.departmentId ?? w.departmentId, patch.name ?? w.name, id)) throw new StorageConflict(WARD_NAME_TAKEN);
+    if (patch.isActive === false || (patch.departmentId && patch.departmentId !== w.departmentId)) {
+      const occ = this.occupantsNow();
+      if (this.db.beds.some((b) => b.wardId === id && occ.has(b.id))) throw new StorageConflict(WARD_OCCUPIED);
+    }
     if (patch.departmentId !== undefined) w.departmentId = patch.departmentId;
     if (patch.name !== undefined) w.name = patch.name.trim();
     if (patch.floor !== undefined) w.floor = patch.floor;
@@ -4236,6 +4263,7 @@ export class FileStorage implements IStorage {
   async updateBed(id: string, patch: UpdateBedInput, actor: Actor): Promise<BedView | undefined> {
     const b = this.db.beds.find((x) => x.id === id);
     if (!b) return undefined;
+    if (patch.isActive === false && this.occupantsNow().has(id)) throw new StorageConflict(BED_OCCUPIED);
     if (patch.label !== undefined && this.db.beds.some((x) => x.id !== id && x.wardId === b.wardId && labelKey(x.label) === labelKey(patch.label!))) {
       throw new StorageConflict(BED_LABEL_TAKEN);
     }
@@ -4252,17 +4280,147 @@ export class FileStorage implements IStorage {
     if (state === "maintenance" && !note) throw new Error(BED_MAINTENANCE_NOTE);
     const b = this.db.beds.find((x) => x.id === id);
     if (!b) return undefined;
+    if (this.occupantsNow().has(id)) throw new StorageConflict(BED_OCCUPIED);
     Object.assign(b, { state, stateNote: note, stateChangedAt: new Date().toISOString(), stateChangedBy: actor.id, stateChangedByName: actor.name });
     await this.persist();
     return this.bedViewOf(b);
   }
 
   async deleteBed(id: string): Promise<boolean> {
-    // B6.2 refuses a bed anyone ever lay in (it stays, deactivated).
+    // A bed anyone ever lay in stays (deactivated): its periods are the stays' history and the bill.
     if (!this.db.beds.some((b) => b.id === id)) return false;
+    if (this.db.admissionBeds.some((p) => p.bedId === id)) throw new StorageConflict(BED_HAS_HISTORY);
     this.db.beds = this.db.beds.filter((b) => b.id !== id);
     await this.persist();
     return true;
+  }
+
+
+  // ------------------------------------------------------------ B6.2 admissions
+
+  private occupantsNow(): Map<string, BedOccupant> {
+    const out = new Map<string, BedOccupant>();
+    for (const p of this.db.admissionBeds) {
+      if (p.toAt) continue;
+      const a = this.db.admissions.find((x) => x.id === p.admissionId);
+      const patient = a && this.db.patients.find((x) => x.id === a.patientId);
+      if (!a || !patient) continue;
+      out.set(p.bedId, { admissionId: a.id, number: a.number, patientId: patient.id, patientName: patient.fullName, patientNumber: patient.patientNumber, since: p.fromAt });
+    }
+    return out;
+  }
+
+  private admissionViewOf(a: Admission): AdmissionView {
+    const patient = this.db.patients.find((p) => p.id === a.patientId);
+    const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
+    const user = doctor && this.db.users.find((u) => u.id === doctor.userId);
+    const stays = this.db.admissionBeds
+      .filter((p) => p.admissionId === a.id)
+      .sort((x, y) => x.fromAt.localeCompare(y.fromAt))
+      .map((p) => {
+        const ward = this.db.wards.find((w) => w.id === p.wardId);
+        return { ...p, wardName: ward?.name ?? "—", bedLabel: this.db.beds.find((b) => b.id === p.bedId)?.label ?? "—", dayPrice: ward?.dayPrice ?? 0 };
+      });
+    const open = stays.find((s) => !s.toAt);
+    return {
+      ...a,
+      patientName: patient?.fullName ?? "—",
+      patientNumber: patient?.patientNumber ?? 0,
+      patientGender: patient?.gender ?? null,
+      doctorName: user?.fullName ?? "—",
+      doctorSpecialty: doctor?.specialty ?? null,
+      departmentName: this.db.departments.find((d) => d.id === a.departmentId)?.name ?? "—",
+      stays,
+      current: open ? { bedId: open.bedId, bedLabel: open.bedLabel, wardId: open.wardId, wardName: open.wardName, since: open.fromAt } : null,
+    };
+  }
+
+  async listAdmissions(query: AdmissionQuery = {}): Promise<AdmissionView[]> {
+    return this.db.admissions
+      .filter((a) => (!query.status || a.status === query.status) && (!query.patientId || a.patientId === query.patientId) && (!query.id || a.id === query.id))
+      .sort((x, y) => y.admittedAt.localeCompare(x.admittedAt))
+      .slice(0, query.limit ?? 500)
+      .map((a) => this.admissionViewOf(a));
+  }
+
+  async getAdmission(id: string): Promise<AdmissionView | undefined> {
+    const a = this.db.admissions.find((x) => x.id === id);
+    return a && this.admissionViewOf(a);
+  }
+
+  private freeBed(bedId: string): { ward: Ward } {
+    const bed = this.db.beds.find((b) => b.id === bedId);
+    const ward = bed && this.db.wards.find((w) => w.id === bed.wardId);
+    const problem = bedFreeProblem(bed, ward?.isActive ?? false, this.occupantsNow().has(bedId));
+    if (problem) throw new StorageConflict(problem);
+    return { ward: ward! };
+  }
+
+  async admitPatient(input: AdmitInput, actor: Actor): Promise<AdmissionView> {
+    const now = new Date();
+    const admittedAt = input.admittedAt ? new Date(input.admittedAt) : now;
+    if (admittedAt.getTime() > now.getTime() + 60_000) throw new Error(ADMISSION_IN_FUTURE);
+    if (!this.db.doctors.some((d) => d.id === input.doctorId && d.isActive)) throw new Error(ADMISSION_DOCTOR);
+    if (!this.db.patients.some((p) => p.id === input.patientId)) throw new Error("Bemor topilmadi");
+    if (this.db.admissions.some((a) => a.patientId === input.patientId && a.status === "active")) throw new StorageConflict(PATIENT_ALREADY_ADMITTED);
+    const { ward } = this.freeBed(input.bedId);
+    this.db.counters.admissionNumber += 1;
+    const a: Admission = {
+      id: randomUUID(),
+      number: this.db.counters.admissionNumber,
+      patientId: input.patientId,
+      departmentId: ward.departmentId,
+      doctorId: input.doctorId,
+      admittedAt: admittedAt.toISOString(),
+      reason: input.reason,
+      status: "active",
+      cancelledAt: null,
+      cancelledBy: null,
+      cancelledByName: null,
+      cancelReason: null,
+      dischargedAt: null,
+      dischargedBy: null,
+      dischargedByName: null,
+      createdAt: now.toISOString(),
+      createdBy: actor.id,
+      createdByName: actor.name,
+      updatedAt: null,
+      updatedBy: null,
+    };
+    this.db.admissions.push(a);
+    this.db.admissionBeds.push({ id: randomUUID(), admissionId: a.id, bedId: input.bedId, wardId: ward.id, fromAt: a.admittedAt, toAt: null, note: null, movedBy: actor.id, movedByName: actor.name });
+    await this.persist();
+    return this.admissionViewOf(a);
+  }
+
+  async transferAdmission(id: string, input: TransferInput, actor: Actor): Promise<AdmissionView | undefined> {
+    const a = this.db.admissions.find((x) => x.id === id);
+    if (!a) return undefined;
+    if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+    const open = this.db.admissionBeds.find((p) => p.admissionId === id && !p.toAt);
+    if (open?.bedId === input.bedId) throw new StorageConflict(ADMISSION_SAME_BED);
+    const { ward } = this.freeBed(input.bedId);
+    const now = new Date().toISOString();
+    if (open) {
+      open.toAt = now;
+      const left = this.db.beds.find((b) => b.id === open.bedId);
+      if (left) Object.assign(left, { state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name });
+    }
+    this.db.admissionBeds.push({ id: randomUUID(), admissionId: id, bedId: input.bedId, wardId: ward.id, fromAt: now, toAt: null, note: input.note, movedBy: actor.id, movedByName: actor.name });
+    Object.assign(a, { departmentId: ward.departmentId, updatedAt: now, updatedBy: actor.id });
+    await this.persist();
+    return this.admissionViewOf(a);
+  }
+
+  async cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined> {
+    const a = this.db.admissions.find((x) => x.id === id);
+    if (!a) return undefined;
+    if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+    const now = new Date().toISOString();
+    for (const p of this.db.admissionBeds) if (p.admissionId === id && !p.toAt) p.toAt = now;
+    Object.assign(a, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
+    await this.persist();
+    return this.admissionViewOf(a);
   }
 
   async financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]> {

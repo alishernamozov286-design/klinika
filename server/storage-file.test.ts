@@ -2863,3 +2863,56 @@ describe("wards and beds (B6.1)", () => {
     expect(await storage.listWards()).toEqual([]);
   });
 });
+
+describe("admissions (B6.2)", () => {
+  it("admit into a free bed, one stay per patient, one patient per bed, move, cancel; beds and cards follow", async () => {
+    const admin = { id: "u-admin", name: "Admin" };
+    const dept = await storage.createDepartment({ name: "Jarrohlik statsionari", kind: "statsionar", description: null, isActive: true }, admin);
+    const user = await storage.createUser({ username: "dr62", password: "parol123", fullName: "Jo'rayev Sanjar", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: dept.id, specialty: "Jarroh", consultationPrice: 100000, slotMinutes: 20, schedule: [], isActive: true }, admin);
+    const w1 = (await storage.addBeds((await storage.createWard({ departmentId: dept.id, name: "201", floor: 2, gender: "male", dayPrice: 200000, note: null }, admin)).id, 2, admin))!;
+    const w2 = (await storage.addBeds((await storage.createWard({ departmentId: dept.id, name: "202", floor: 2, gender: "male", dayPrice: 300000, note: null }, admin)).id, 1, admin))!;
+    const p1 = await storage.createPatient({ fullName: "Normatov Aziz", phone: "+998905050505", gender: "erkak", age: 50, address: null });
+    const p2 = await storage.createPatient({ fullName: "Qurbonov Eldor", phone: "+998906060606", gender: "erkak", age: 35, address: null });
+    const [bedA, bedB] = w1.beds;
+
+    await expect(storage.admitPatient({ patientId: p1.id, bedId: bedA.id, doctorId: doctor.id, admittedAt: new Date(Date.now() + 3_600_000).toISOString(), reason: null }, admin)).rejects.toThrow(/kelajakda/);
+    const a = await storage.admitPatient({ patientId: p1.id, bedId: bedA.id, doctorId: doctor.id, admittedAt: null, reason: "O'tkir appenditsit" }, admin);
+    expect(a).toMatchObject({ number: 1, status: "active", patientName: "Normatov Aziz", doctorName: "Jo'rayev Sanjar", departmentName: "Jarrohlik statsionari", current: { wardName: "201", bedLabel: "1" } });
+    await expect(storage.admitPatient({ patientId: p1.id, bedId: bedB.id, doctorId: doctor.id, admittedAt: null, reason: null }, admin)).rejects.toThrow(/allaqachon statsionarda/);
+    await expect(storage.admitPatient({ patientId: p2.id, bedId: bedA.id, doctorId: doctor.id, admittedAt: null, reason: null }, admin)).rejects.toThrow(/Yotoqda bemor bor/);
+
+    // The board shows who lies where; an occupied bed takes no state, no deactivation, no deletion later.
+    let board = await storage.getWard(w1.id);
+    expect(board!.beds[0]).toMatchObject({ display: "occupied", occupant: { patientName: "Normatov Aziz", number: 1 } });
+    await expect(storage.setBedState(bedA.id, "cleaning", null, admin)).rejects.toThrow(/bemor bor/);
+    await expect(storage.updateBed(bedA.id, { isActive: false }, admin)).rejects.toThrow(/bemor bor/);
+    await expect(storage.updateWard(w1.id, { isActive: false }, admin)).rejects.toThrow(/Palatada bemor bor/);
+
+    // Move to the other ward: two periods; the bed left wants cleaning.
+    const bedC = w2.beds[0];
+    await expect(storage.transferAdmission(a.id, { bedId: bedA.id, note: null }, admin)).rejects.toThrow(/shu yotoqda/);
+    const moved = (await storage.transferAdmission(a.id, { bedId: bedC.id, note: "Alohida palata kerak" }, admin))!;
+    expect(moved.stays.map((s) => [s.wardName, s.bedLabel, s.dayPrice, Boolean(s.toAt)])).toEqual([
+      ["201", "1", 200000, true],
+      ["202", "1", 300000, false],
+    ]);
+    board = await storage.getWard(w1.id);
+    expect(board!.beds[0]).toMatchObject({ display: "cleaning", stateNote: "Bemor chiqqandan keyin", occupant: null });
+    await expect(storage.admitPatient({ patientId: p2.id, bedId: bedA.id, doctorId: doctor.id, admittedAt: null, reason: null }, admin)).rejects.toThrow(/tozalanmoqda/);
+    await expect(storage.deleteBed(bedA.id)).rejects.toThrow(/bemor yotgan/);
+
+    // A mistaken stay is cancelled with a reason; the patient may be admitted again.
+    const c = (await storage.cancelAdmission(a.id, "Boshqa bemor bilan adashtirildi", admin))!;
+    expect(c).toMatchObject({ status: "cancelled", cancelReason: "Boshqa bemor bilan adashtirildi", current: null });
+    await expect(storage.cancelAdmission(a.id, "yana bir marta", admin)).rejects.toThrow(/faol emas/);
+    expect((await storage.listAdmissions({ status: "active" })).length).toBe(0);
+    expect((await storage.listAdmissions({ patientId: p1.id })).map((x) => x.status)).toEqual(["cancelled"]);
+
+    // The card with a stay is not deleted; merging two cards in hospital is refused.
+    await expect(storage.deletePatient(p1.id)).rejects.toThrow(/statsionar/);
+    await storage.admitPatient({ patientId: p1.id, bedId: bedB.id, doctorId: doctor.id, admittedAt: null, reason: null }, admin);
+    await storage.admitPatient({ patientId: p2.id, bedId: bedC.id, doctorId: doctor.id, admittedAt: null, reason: null }, admin);
+    await expect(storage.mergePatients(p2.id, p1.id, admin)).rejects.toThrow(/Ikkala kartada ham faol yotqizish/);
+  });
+});
