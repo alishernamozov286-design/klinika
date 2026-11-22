@@ -560,6 +560,7 @@ describe("roles", () => {
       "records.amend",
       "referrals.read",
       "referrals.create",
+      "inpatient.read",
     ]);
   });
 
@@ -2826,5 +2827,39 @@ describe("finance report (B7.8)", () => {
     expect(await storage.financeServices({ from: "2999-01-01", to: "2999-01-31" })).toEqual([]);
     const now = Date.now();
     expect(await storage.countBillDiscounts({ from: new Date(now - 60_000).toISOString(), to: new Date(now + 60_000).toISOString() })).toBe(1);
+  });
+});
+
+describe("wards and beds (B6.1)", () => {
+  it("wards only in an active inpatient department, unique names, beds numbered on, states with a reason", async () => {
+    const admin = { id: "u-admin", name: "Admin" };
+    const clinic = await storage.createDepartment({ name: "Terapiya statsionari", kind: "statsionar", description: null, isActive: true }, admin);
+    const ambulatory = await storage.createDepartment({ name: "Poliklinika", kind: "ambulator", description: null, isActive: true }, admin);
+    await expect(storage.createWard({ departmentId: ambulatory.id, name: "1", floor: null, gender: "mixed", dayPrice: 0, note: null }, admin)).rejects.toThrow(/statsionar bo'lim/);
+
+    const w = await storage.createWard({ departmentId: clinic.id, name: "101", floor: 1, gender: "female", dayPrice: 150000, note: null }, admin);
+    expect(w).toMatchObject({ name: "101", departmentName: "Terapiya statsionari", dayPrice: 150000, beds: [] });
+    await expect(storage.deleteDepartment(clinic.id)).rejects.toThrow(/palatalar bor/);
+    await expect(storage.createWard({ departmentId: clinic.id, name: " 101 ", floor: null, gender: "mixed", dayPrice: 0, note: null }, admin)).rejects.toThrow(/shu nomli palata/);
+
+    let ward = (await storage.addBeds(w.id, 3, admin))!;
+    expect(ward.beds.map((b) => [b.label, b.display])).toEqual([["1", "ready"], ["2", "ready"], ["3", "ready"]]);
+    ward = (await storage.addBeds(w.id, 2, admin))!;
+    expect(ward.beds.map((b) => b.label)).toEqual(["1", "2", "3", "4", "5"]);
+    await expect(storage.addBeds(w.id, 40, admin)).rejects.toThrow(/ko'pi bilan 40/);
+
+    const [b1, b2] = ward.beds;
+    await expect(storage.updateBed(b2.id, { label: "1" }, admin)).rejects.toThrow(/shu raqamli yotoq/);
+    await expect(storage.setBedState(b1.id, "maintenance", null, admin)).rejects.toThrow(/nega ishlatilmasligini/);
+    const fixed = (await storage.setBedState(b1.id, "maintenance", "Karavot singan", admin))!;
+    expect(fixed).toMatchObject({ state: "maintenance", display: "maintenance", stateNote: "Karavot singan", stateChangedByName: "Admin" });
+    expect((await storage.setBedState(b1.id, "ready", null, admin))!.stateNote).toBeNull();
+
+    await expect(storage.deleteWard(w.id)).rejects.toThrow(/yotoqlar bor/);
+    const moved = (await storage.updateWard(w.id, { dayPrice: 180000, isActive: false }, admin))!;
+    expect(moved).toMatchObject({ dayPrice: 180000, isActive: false });
+    for (const b of moved.beds) await storage.deleteBed(b.id);
+    expect(await storage.deleteWard(w.id)).toBe(true);
+    expect(await storage.listWards()).toEqual([]);
   });
 });

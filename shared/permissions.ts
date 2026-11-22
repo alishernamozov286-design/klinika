@@ -18,6 +18,7 @@ export const PERMISSION_GROUPS = [
   { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
   { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
   { key: "warehouse", label: "Ombor", description: "Mahsulotlar katalogi, kirim, chiqim, qoldiq va inventarizatsiya (TZ §7)" },
+  { key: "inpatient", label: "Statsionar", description: "Palatalar, yotoqlar, yotqizish va kasallik tarixi (TZ §8)" },
   { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
   { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
   { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar, shifokorlar va xizmatlar" },
@@ -259,6 +260,21 @@ export const PERMISSIONS = {
     label: "To'lov qabul qilish",
     description: "Buyurtma uchun to'lov qabul qilish",
   },
+  "inpatient.read": {
+    group: "inpatient",
+    label: "Statsionarni ko'rish",
+    description: "Palatalar, yotoqlar va ularning holati",
+  },
+  "beds.manage": {
+    group: "inpatient",
+    label: "Palata va yotoqlarni boshqarish",
+    description: "Palata qo'shish, yotoq-kun narxi, yotoqlar qo'shish va o'chirish (TZ §8)",
+  },
+  "beds.state": {
+    group: "inpatient",
+    label: "Yotoq holatini belgilash",
+    description: "Yotoqni tozalanmoqda, ta'mirda yoki bo'sh deb belgilash",
+  },
   "payments.discount": {
     group: "finance",
     label: "Chegirma berish",
@@ -431,6 +447,9 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "devices.read",
       "qc.read",
       "inventory.read",
+      "inpatient.read",
+      "beds.manage",
+      "beds.state",
     ],
   },
   {
@@ -453,6 +472,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "finance.view",
       "payments.create",
       "payments.discount",
+      "inpatient.read",
     ],
   },
   {
@@ -469,6 +489,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "records.amend",
       "referrals.read",
       "referrals.create",
+      "inpatient.read",
     ],
   },
   {
@@ -526,7 +547,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "hamshira",
     name: "Statsionar hamshirasi",
     description: "Bemor parvarishi, muolajalar va namuna olish",
-    permissions: ["patients.read", "orders.read", "samples.manage"],
+    permissions: ["patients.read", "orders.read", "samples.manage", "inpatient.read", "beds.state"],
   },
   {
     key: "kassir",
@@ -566,6 +587,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "devices.read",
       "qc.read",
       "inventory.read",
+      "inpatient.read",
     ],
   },
 ];

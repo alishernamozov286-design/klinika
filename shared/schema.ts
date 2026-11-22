@@ -42,6 +42,7 @@ import type { BillLine, BillSource, BillTotals } from "./invoice";
 import type { ShiftEntry, ShiftTotals } from "./cash-shift";
 import type { RefundLine, RefundStatus } from "./refund";
 import { DISCOUNT_MODES, type DiscountLine, type DiscountMode } from "./discount";
+import { BED_STATES, MAX_BEDS_PER_WARD, WARD_GENDERS, type BedDisplay, type BedState, type WardGender } from "./inpatient";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -384,6 +385,56 @@ export const departments = pgTable("departments", {
   updatedAt: isoTimestamp("updated_at"),
   updatedBy: varchar("updated_by"),
 });
+
+/**
+ * Palata (B6.1, TZ §8): a room of an inpatient department, with the price of a
+ * bed-day in it (B6.6 bills it). Name unique within the department, case and
+ * spacing aside (UQ_wards_name). Never deleted while it has beds.
+ */
+export const wards = pgTable(
+  "wards",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    departmentId: varchar("department_id").notNull(),
+    name: text("name").notNull(),
+    floor: integer("floor"),
+    gender: text("gender").notNull().default("mixed"),
+    dayPrice: money("day_price").notNull().default(0),
+    note: text("note"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+  },
+  (t) => [index("IDX_wards_department").on(t.departmentId)],
+);
+
+/**
+ * Yotoq (B6.1, TZ §10 "beds"): a bed in a ward. Only the states a person sets
+ * are stored (ready / cleaning / maintenance, with who and when); "occupied"
+ * comes from the admissions (B6.2). Label unique within the ward (UQ_beds_label).
+ */
+export const beds = pgTable(
+  "beds",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    wardId: varchar("ward_id").notNull(),
+    label: text("label").notNull(),
+    state: text("state").notNull().default("ready"),
+    stateNote: text("state_note"),
+    stateChangedAt: isoTimestamp("state_changed_at"),
+    stateChangedBy: varchar("state_changed_by"),
+    stateChangedByName: text("state_changed_by_name"),
+    note: text("note"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    createdBy: varchar("created_by"),
+    updatedAt: isoTimestamp("updated_at"),
+    updatedBy: varchar("updated_by"),
+  },
+  (t) => [index("IDX_beds_ward").on(t.wardId)],
+);
 
 /**
  * A doctor's profile (TZ §10 `doctors`): the clinical side of a staff
@@ -1751,6 +1802,11 @@ export type DuplicateCandidate = {
 };
 
 export type Department = Omit<typeof departments.$inferSelect, "kind"> & { kind: DepartmentKind };
+export type Ward = Omit<typeof wards.$inferSelect, "gender"> & { gender: WardGender };
+export type Bed = Omit<typeof beds.$inferSelect, "state"> & { state: BedState };
+/** A bed as the board shows it: "occupied" comes from an admission (B6.2). */
+export type BedView = Bed & { display: BedDisplay };
+export type WardView = Ward & { departmentName: string; beds: BedView[] };
 /** A department as the admin screen lists it: with its doctor head count. */
 export type DepartmentWithUsage = Department & { doctorCount: number };
 
@@ -2486,6 +2542,34 @@ export const closeShiftSchema = z.object({
   note: shiftNote,
 });
 export type CloseShiftInput = z.infer<typeof closeShiftSchema>;
+
+const wardNote = z
+  .string()
+  .trim()
+  .max(300, "Izoh juda uzun")
+  .nullish()
+  .transform((v) => v || null);
+
+/** B6.1: a ward. */
+export const insertWardSchema = z.object({
+  departmentId: z.string().min(1, "Bo'limni tanlang"),
+  name: z.string().trim().min(1, "Palata raqami yoki nomini kiriting").max(40, "Juda uzun"),
+  floor: z.coerce.number().int("Qavat butun son").min(-5).max(100).nullish().transform((v) => (v === undefined ? null : v)),
+  gender: z.enum(WARD_GENDERS).default("mixed"),
+  dayPrice: z.coerce.number().int("Narx butun so'mda").min(0, "Narx manfiy bo'lmasin").max(100_000_000, "Narx juda katta").default(0),
+  note: wardNote,
+});
+export type InsertWardInput = z.infer<typeof insertWardSchema>;
+export const updateWardSchema = insertWardSchema.partial().extend({ isActive: z.boolean().optional() });
+export type UpdateWardInput = z.infer<typeof updateWardSchema>;
+export const addBedsSchema = z.object({ count: z.coerce.number().int().min(1, "Kamida bitta yotoq").max(MAX_BEDS_PER_WARD, `Ko'pi bilan ${MAX_BEDS_PER_WARD} ta`) });
+export const updateBedSchema = z.object({
+  label: z.string().trim().min(1, "Yotoq raqamini kiriting").max(10, "Juda uzun").optional(),
+  note: wardNote.optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdateBedInput = z.infer<typeof updateBedSchema>;
+export const bedStateSchema = z.object({ state: z.enum(BED_STATES), note: wardNote });
 
 /** B7.2: a discount on a bill — whole (target null) or one service. */
 export const discountBillSchema = z

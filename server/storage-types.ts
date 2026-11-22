@@ -10,6 +10,8 @@ import type { RefundStatus } from "@shared/refund";
 import type { CashDayRow } from "@shared/cash-report";
 import type { DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
+import type { Bed, BedView, InsertWardInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
+import type { BedState } from "@shared/inpatient";
 import type { Bill, BillDiscount, BillSummary, DiscountBillInput, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
 /** B7.4: `status` alone lists every refund in it (open ones whenever asked); a range applies to the request time. */
@@ -944,6 +946,19 @@ export interface IStorage {
   listBills(query: BillQuery): Promise<BillSummary[]>;
   /** B7.2: takes a discount off the unpaid lines (shared/discount.ts planDiscount) and keeps it on the bill. */
   discountBill(visitId: string, input: DiscountBillInput, actor: Actor): Promise<{ bill: Bill; discount: BillDiscount } | undefined>;
+  // B6.1 wards and beds (rules: shared/inpatient.ts). Occupancy comes from admissions (B6.2), never stored.
+  listWards(): Promise<WardView[]>;
+  getWard(id: string): Promise<WardView | undefined>;
+  /** Only into an active "statsionar" department; name unique within it (StorageConflict). */
+  createWard(input: InsertWardInput, actor: Actor): Promise<WardView>;
+  updateWard(id: string, patch: UpdateWardInput, actor: Actor): Promise<WardView | undefined>;
+  /** Refused while the ward has beds. */
+  deleteWard(id: string): Promise<boolean>;
+  /** Adds `count` beds numbered on from the ward's last number. */
+  addBeds(wardId: string, count: number, actor: Actor): Promise<WardView | undefined>;
+  updateBed(id: string, patch: UpdateBedInput, actor: Actor): Promise<BedView | undefined>;
+  setBedState(id: string, state: BedState, note: string | null, actor: Actor): Promise<BedView | undefined>;
+  deleteBed(id: string): Promise<boolean>;
   /** B7.8: services rendered on local days `from`..`to` (YYYY-MM-DD, inclusive), by kind, name and doctor. */
   financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]>;
   /** B7.8: discounts given on bills in the instants [from, to). */

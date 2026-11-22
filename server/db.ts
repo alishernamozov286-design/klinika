@@ -9,6 +9,8 @@ import type {
   CashShift,
   Refund,
   BillDiscount,
+  Ward,
+  Bed,
   LabConsumption,
   InventoryBatch,
   StockMovement,
@@ -92,6 +94,9 @@ export type DbShape = {
   refunds: Refund[];
   /** B7.2 discounts given on bills. */
   billDiscounts: BillDiscount[];
+  /** B6.1 wards and their beds. */
+  wards: Ward[];
+  beds: Bed[];
   labConsumptions: LabConsumption[];
   /** The clinic's Uzbek MKB-10 names by code; the catalogue itself is read from data/icd10. */
   icdUzNames: Record<string, string>;
@@ -160,6 +165,8 @@ export const emptyDb = (): DbShape => ({
   cashShifts: [],
   refunds: [],
   billDiscounts: [],
+  wards: [],
+  beds: [],
   labConsumptions: [],
   icdUzNames: {},
   security: null,

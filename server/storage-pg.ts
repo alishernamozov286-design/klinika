@@ -23,6 +23,8 @@ import {
   cashShifts,
   refunds,
   billDiscounts,
+  wards,
+  beds,
   consumptionNorms,
   labConsumptions,
   auditLog,
@@ -180,6 +182,21 @@ import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory
 import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
+import {
+  BED_LABEL_TAKEN,
+  BED_MAINTENANCE_NOTE,
+  DEPARTMENT_HAS_WARDS,
+  MAX_BEDS_PER_WARD,
+  WARD_DEPARTMENT,
+  WARD_HAS_BEDS,
+  WARD_NAME_TAKEN,
+  labelKey,
+  nextBedLabels,
+  sortBeds,
+  sortWards,
+  type BedState,
+  type WardGender,
+} from "@shared/inpatient";
 import { DISCOUNT_LINE_GONE, DISCOUNT_NOTHING, planDiscount, type DiscountMode } from "@shared/discount";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
@@ -218,6 +235,11 @@ import type {
   RequestRefundInput,
   BillDiscount,
   DiscountBillInput,
+  BedView,
+  InsertWardInput,
+  UpdateBedInput,
+  UpdateWardInput,
+  WardView,
   Bill,
   BillSummary,
   Invoice,
@@ -941,6 +963,11 @@ export class PgStorage implements IStorage {
   }
 
   async deleteDepartment(id: string): Promise<boolean> {
+    // B6.1: an inpatient department keeps its wards; the FK is the last guard, this the readable one.
+    if (await tableExists(db, "wards")) {
+      const [w] = await db.select({ id: wards.id }).from(wards).where(eq(wards.departmentId, id)).limit(1);
+      if (w) throw new StorageConflict(DEPARTMENT_HAS_WARDS);
+    }
     const rows = await db.delete(departments).where(eq(departments.id, id)).returning({ id: departments.id });
     return rows.length > 0;
   }
@@ -5032,6 +5059,158 @@ export class PgStorage implements IStorage {
     });
     if (!row) return undefined;
     return { bill: (await this.getBill(visitId))!, discount: { ...row, mode: row.mode as DiscountMode, createdAt: iso(row.createdAt) ?? row.createdAt } };
+  }
+
+  // ------------------------------------------------------------ B6.1 wards and beds
+
+  private bedView(b: typeof beds.$inferSelect): BedView {
+    // B6.2 overlays "occupied" from the admissions; until then a bed shows its own state.
+    return { ...b, state: b.state as BedState, display: b.state as BedState, createdAt: iso(b.createdAt) ?? b.createdAt, stateChangedAt: iso(b.stateChangedAt), updatedAt: iso(b.updatedAt) };
+  }
+
+  async listWards(): Promise<WardView[]> {
+    const [rows, bedRows] = await Promise.all([
+      db.select({ w: wards, departmentName: departments.name }).from(wards).innerJoin(departments, eq(departments.id, wards.departmentId)),
+      db.select().from(beds),
+    ]);
+    return sortWards(
+      rows.map(({ w, departmentName }) => ({
+        ...w,
+        gender: w.gender as WardGender,
+        createdAt: iso(w.createdAt) ?? w.createdAt,
+        updatedAt: iso(w.updatedAt),
+        departmentName,
+        beds: sortBeds(bedRows.filter((b) => b.wardId === w.id).map((b) => this.bedView(b))),
+      })),
+    );
+  }
+
+  async getWard(id: string): Promise<WardView | undefined> {
+    return (await this.listWards()).find((w) => w.id === id);
+  }
+
+  private async wardDepartmentProblem(departmentId: string): Promise<string | null> {
+    const [d] = await db.select().from(departments).where(eq(departments.id, departmentId)).limit(1);
+    return d && d.isActive && d.kind === "statsionar" ? null : WARD_DEPARTMENT;
+  }
+
+  private async wardNameTaken(departmentId: string, name: string, exceptId?: string): Promise<boolean> {
+    const rows = await db.select({ id: wards.id, name: wards.name }).from(wards).where(eq(wards.departmentId, departmentId));
+    return rows.some((r) => r.id !== exceptId && labelKey(r.name) === labelKey(name));
+  }
+
+  async createWard(input: InsertWardInput, actor: Actor): Promise<WardView> {
+    const problem = await this.wardDepartmentProblem(input.departmentId);
+    if (problem) throw new Error(problem);
+    if (await this.wardNameTaken(input.departmentId, input.name)) throw new StorageConflict(WARD_NAME_TAKEN);
+    try {
+      const [row] = await db
+        .insert(wards)
+        .values({ departmentId: input.departmentId, name: input.name.trim(), floor: input.floor ?? null, gender: input.gender, dayPrice: input.dayPrice, note: input.note ?? null, createdBy: actor.id })
+        .returning();
+      return (await this.getWard(row.id))!;
+    } catch (err) {
+      if ((err as { code?: string })?.code === "23505") throw new StorageConflict(WARD_NAME_TAKEN);
+      throw err;
+    }
+  }
+
+  async updateWard(id: string, patch: UpdateWardInput, actor: Actor): Promise<WardView | undefined> {
+    const [cur] = await db.select().from(wards).where(eq(wards.id, id)).limit(1);
+    if (!cur) return undefined;
+    const departmentId = patch.departmentId ?? cur.departmentId;
+    if (patch.departmentId && patch.departmentId !== cur.departmentId) {
+      const problem = await this.wardDepartmentProblem(patch.departmentId);
+      if (problem) throw new Error(problem);
+    }
+    if ((patch.name !== undefined || patch.departmentId) && (await this.wardNameTaken(departmentId, patch.name ?? cur.name, id))) throw new StorageConflict(WARD_NAME_TAKEN);
+    try {
+      await db
+        .update(wards)
+        .set({
+          ...(patch.departmentId !== undefined && { departmentId: patch.departmentId }),
+          ...(patch.name !== undefined && { name: patch.name.trim() }),
+          ...(patch.floor !== undefined && { floor: patch.floor }),
+          ...(patch.gender !== undefined && { gender: patch.gender }),
+          ...(patch.dayPrice !== undefined && { dayPrice: patch.dayPrice }),
+          ...(patch.note !== undefined && { note: patch.note }),
+          ...(patch.isActive !== undefined && { isActive: patch.isActive }),
+          updatedAt: new Date().toISOString(),
+          updatedBy: actor.id,
+        })
+        .where(eq(wards.id, id));
+    } catch (err) {
+      if ((err as { code?: string })?.code === "23505") throw new StorageConflict(WARD_NAME_TAKEN);
+      throw err;
+    }
+    return this.getWard(id);
+  }
+
+  async deleteWard(id: string): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const [w] = await tx.select({ id: wards.id }).from(wards).where(eq(wards.id, id)).for("update");
+      if (!w) return false;
+      const [b] = await tx.select({ id: beds.id }).from(beds).where(eq(beds.wardId, id)).limit(1);
+      if (b) throw new StorageConflict(WARD_HAS_BEDS);
+      await tx.delete(wards).where(eq(wards.id, id));
+      return true;
+    });
+  }
+
+  async addBeds(wardId: string, count: number, actor: Actor): Promise<WardView | undefined> {
+    const ok = await db.transaction(async (tx) => {
+      // The ward row serialises two people adding beds at once.
+      const [w] = await tx.select({ id: wards.id }).from(wards).where(eq(wards.id, wardId)).for("update");
+      if (!w) return false;
+      const existing = await tx.select({ label: beds.label }).from(beds).where(eq(beds.wardId, wardId));
+      if (existing.length + count > MAX_BEDS_PER_WARD) throw new Error(`Palatada ko'pi bilan ${MAX_BEDS_PER_WARD} ta yotoq bo'ladi`);
+      const labels = nextBedLabels(existing.map((e) => e.label), count);
+      await tx.insert(beds).values(labels.map((label) => ({ wardId, label, createdBy: actor.id })));
+      return true;
+    });
+    return ok ? this.getWard(wardId) : undefined;
+  }
+
+  async updateBed(id: string, patch: UpdateBedInput, actor: Actor): Promise<BedView | undefined> {
+    const [cur] = await db.select().from(beds).where(eq(beds.id, id)).limit(1);
+    if (!cur) return undefined;
+    if (patch.label !== undefined) {
+      const siblings = await db.select({ id: beds.id, label: beds.label }).from(beds).where(eq(beds.wardId, cur.wardId));
+      if (siblings.some((s) => s.id !== id && labelKey(s.label) === labelKey(patch.label!))) throw new StorageConflict(BED_LABEL_TAKEN);
+    }
+    try {
+      const [row] = await db
+        .update(beds)
+        .set({
+          ...(patch.label !== undefined && { label: patch.label.trim() }),
+          ...(patch.note !== undefined && { note: patch.note }),
+          ...(patch.isActive !== undefined && { isActive: patch.isActive }),
+          updatedAt: new Date().toISOString(),
+          updatedBy: actor.id,
+        })
+        .where(eq(beds.id, id))
+        .returning();
+      return this.bedView(row);
+    } catch (err) {
+      if ((err as { code?: string })?.code === "23505") throw new StorageConflict(BED_LABEL_TAKEN);
+      throw err;
+    }
+  }
+
+  async setBedState(id: string, state: BedState, note: string | null, actor: Actor): Promise<BedView | undefined> {
+    if (state === "maintenance" && !note) throw new Error(BED_MAINTENANCE_NOTE);
+    const [row] = await db
+      .update(beds)
+      .set({ state, stateNote: note, stateChangedAt: new Date().toISOString(), stateChangedBy: actor.id, stateChangedByName: actor.name })
+      .where(eq(beds.id, id))
+      .returning();
+    return row ? this.bedView(row) : undefined;
+  }
+
+  async deleteBed(id: string): Promise<boolean> {
+    // B6.2 refuses a bed anyone ever lay in (it stays, deactivated).
+    const rows = await db.delete(beds).where(eq(beds.id, id)).returning({ id: beds.id });
+    return rows.length > 0;
   }
 
   async financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]> {

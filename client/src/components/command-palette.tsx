@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   Warehouse,
+  BedDouble,
   ShieldCheck,
   Microscope,
   ArrowRight,
@@ -147,6 +148,7 @@ export function CommandPalette({
       { kind: "action", id: "go-departments", label: "Bo'limlar", hint: "Bo'limga o'tish", icon: Network, run: () => go("/departments") },
       { kind: "action", id: "go-services", label: "Xizmatlar", hint: "Narxlar ro'yxati", icon: Tags, run: () => go("/services") },
       { kind: "action", id: "go-inventory", label: "Ombor", hint: "Mahsulotlar katalogi", icon: Warehouse, run: () => go("/inventory") },
+      { kind: "action", id: "go-inpatient", label: "Statsionar", hint: "Palatalar va yotoqlar", icon: BedDouble, run: () => go("/inpatient") },
       { kind: "action", id: "go-cashier", label: "Kassa", hint: "Hisobvaraqlar, to'lov, qarzdorlik", icon: Banknote, run: () => go("/cashier") },
       { kind: "action", id: "go-qc", label: "Sifat nazorati", hint: "Levey–Jennings, Westgard, kalibratsiya", icon: ShieldCheck, run: () => go("/qc") },
       { kind: "action", id: "go-devices", label: "Analizatorlar", hint: "Qurilmalar va xatolar jurnali", icon: Microscope, run: () => go("/devices") },

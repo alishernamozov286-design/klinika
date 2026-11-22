@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Banknote,
+  BedDouble,
   Warehouse,
   BarChart3,
   CalendarClock,
@@ -48,6 +49,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
       { title: "Mening kabinetim", url: "/cabinet", icon: ClipboardPlus },
       { title: "Bemorlar", url: "/patients", icon: Users },
       { title: "Navbat", url: "/queue", icon: CalendarClock },
+      { title: "Statsionar", url: "/inpatient", icon: BedDouble },
       { title: "Kassa", url: "/cashier", icon: Banknote },
       { title: "Buyurtmalar", url: "/orders", icon: FlaskConical },
       { title: "Natijalar", url: "/results", icon: FileText },
