@@ -34,6 +34,7 @@ import { MoneyInput } from "@/components/inputs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdmissionDialog, AdmissionsTab, AdmitDialog } from "@/components/inpatient/admissions";
 import { InpatientHome } from "@/components/inpatient/home";
+import { ProceduresTab } from "@/components/inpatient/procedures";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -62,11 +63,12 @@ export default function Inpatient() {
   const [wardDialog, setWardDialog] = useState<{ open: boolean; ward: WardView | null }>({ open: false, ward: null });
   const [adding, setAdding] = useState<WardView | null>(null);
   const [bed, setBed] = useState<{ bed: BedView; ward: WardView } | null>(null);
-  type Tab = "home" | "patients" | "beds";
+  type Tab = "home" | "patients" | "procedures" | "beds";
+  const seesProcedures = can("procedures.perform", "procedures.prescribe", "records.read", "inpatient.observe");
   const [tab, setTab] = useState<Tab>(() => {
     const asked = new URLSearchParams(window.location.search).get("tab");
     // TZ §8.1.1: the inpatient module opens on its home page.
-    return asked === "patients" || asked === "beds" ? asked : "home";
+    return asked === "patients" || asked === "beds" || asked === "procedures" ? asked : "home";
   });
   const [admitting, setAdmitting] = useState<{ open: boolean; bedId: string | null }>({ open: false, bedId: null });
   const [stay, setStay] = useState<string | null>(null);
@@ -141,6 +143,11 @@ export default function Inpatient() {
           <TabsTrigger value="patients" data-testid="tab-inpatient-patients">
             Bemorlar
           </TabsTrigger>
+          {seesProcedures && (
+            <TabsTrigger value="procedures" data-testid="tab-inpatient-procedures">
+              Muolajalar
+            </TabsTrigger>
+          )}
           <TabsTrigger value="beds" data-testid="tab-inpatient-beds">
             Palata va yotoqlar
           </TabsTrigger>
@@ -154,6 +161,11 @@ export default function Inpatient() {
         <TabsContent value="patients" className="mt-4">
           <AdmissionsTab onOpen={setStay} />
         </TabsContent>
+        {seesProcedures && (
+          <TabsContent value="procedures" className="mt-4">
+            <ProceduresTab />
+          </TabsContent>
+        )}
         <TabsContent value="beds" className="mt-4 space-y-6">
       <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         <StatCard index={0} label="Yotoqlar" value={counts.total} hint={`${wards.filter((w) => w.isActive).length} ta palatada`} icon={BedDouble} isLoading={isLoading} />

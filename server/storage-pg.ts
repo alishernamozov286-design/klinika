@@ -29,6 +29,8 @@ import {
   admissionBeds,
   caseHistoryVersions,
   admissionObservations,
+  inpatientOrders,
+  procedureTasks,
   consumptionNorms,
   labConsumptions,
   auditLog,
@@ -225,6 +227,8 @@ import {
   type CaseText,
   type Vitals,
 } from "@shared/case-history";
+import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem, type TaskStatus } from "@shared/procedures";
+import type { NewInpatientOrder } from "./storage-types";
 import { DISCOUNT_LINE_GONE, DISCOUNT_NOTHING, planDiscount, type DiscountMode } from "@shared/discount";
 import { DEVICE_ERROR_ALREADY_RESOLVED, DEVICE_HAS_LOG } from "@shared/lab-devices";
 import {
@@ -273,6 +277,10 @@ import type {
   AdmissionView,
   AdmissionObservation,
   CaseHistoryVersion,
+  InpatientOrder,
+  InpatientOrderView,
+  ProcedureTask,
+  ProcedureTaskView,
   AdmitInput,
   TransferInput,
   Bill,
@@ -404,6 +412,28 @@ import type { LockState } from "@shared/lockout";
  */
 const iso = <T extends string | null>(value: T): T =>
   (value ? (new Date(value).toISOString() as T) : value);
+
+const mapCaseVersion = (r: CaseHistoryVersion): CaseHistoryVersion => ({ ...r, savedAt: iso(r.savedAt) });
+const mapObservation = (r: AdmissionObservation): AdmissionObservation => ({
+  ...r,
+  observedAt: iso(r.observedAt),
+  createdAt: iso(r.createdAt),
+  voidedAt: iso(r.voidedAt),
+});
+const mapInpatientOrder = (r: typeof inpatientOrders.$inferSelect): InpatientOrder => ({
+  ...r,
+  kind: r.kind as InpatientOrder["kind"],
+  status: r.status as InpatientOrder["status"],
+  createdAt: iso(r.createdAt),
+  stoppedAt: iso(r.stoppedAt),
+});
+const mapTask = (r: typeof procedureTasks.$inferSelect): ProcedureTask => ({
+  ...r,
+  status: r.status as TaskStatus,
+  plannedAt: iso(r.plannedAt),
+  doneAt: iso(r.doneAt),
+  revertedAt: iso(r.revertedAt),
+});
 
 const mapUser = (row: typeof users.$inferSelect): User => ({
   ...row,
@@ -5435,6 +5465,14 @@ export class PgStorage implements IStorage {
       const now = new Date().toISOString();
       // A mistaken stay frees its bed as it was: nobody may have lain in it.
       await tx.update(admissionBeds).set({ toAt: now }).where(and(eq(admissionBeds.admissionId, id), isNull(admissionBeds.toAt)));
+      // B6.5: its orders stop and the doses still planned are called off.
+      if (await tableExists(tx, "inpatient_orders")) {
+        await tx
+          .update(inpatientOrders)
+          .set({ status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: `Yotqizish bekor qilindi: ${reason}` })
+          .where(and(eq(inpatientOrders.admissionId, id), eq(inpatientOrders.status, "active")));
+        await tx.update(procedureTasks).set({ status: "cancelled" }).where(and(eq(procedureTasks.admissionId, id), eq(procedureTasks.status, "planned")));
+      }
       await tx
         .update(admissions)
         .set({ status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id })
@@ -5447,7 +5485,8 @@ export class PgStorage implements IStorage {
   // ------------------------------------------------------------ B6.4 case history
 
   async listCaseHistory(admissionId: string): Promise<CaseHistoryVersion[]> {
-    return db.select().from(caseHistoryVersions).where(eq(caseHistoryVersions.admissionId, admissionId)).orderBy(desc(caseHistoryVersions.version));
+    const rows = await db.select().from(caseHistoryVersions).where(eq(caseHistoryVersions.admissionId, admissionId)).orderBy(desc(caseHistoryVersions.version));
+    return rows.map(mapCaseVersion);
   }
 
   /** The stay, held FOR SHARE so it cannot be closed while it is written to. */
@@ -5469,7 +5508,7 @@ export class PgStorage implements IStorage {
           .insert(caseHistoryVersions)
           .values({ admissionId, version: baseVersion + 1, ...text, savedAt: new Date().toISOString(), savedBy: actor.id, savedByName: actor.name })
           .returning();
-        return row;
+        return mapCaseVersion(row);
       });
     } catch (err) {
       const e = err as { code?: string; constraint?: string };
@@ -5479,16 +5518,17 @@ export class PgStorage implements IStorage {
   }
 
   async listObservations(admissionId: string): Promise<AdmissionObservation[]> {
-    return db
+    const rows = await db
       .select()
       .from(admissionObservations)
       .where(eq(admissionObservations.admissionId, admissionId))
       .orderBy(desc(admissionObservations.observedAt), desc(admissionObservations.createdAt));
+    return rows.map(mapObservation);
   }
 
   async getObservation(id: string): Promise<AdmissionObservation | undefined> {
     const [o] = await db.select().from(admissionObservations).where(eq(admissionObservations.id, id)).limit(1);
-    return o;
+    return o && mapObservation(o);
   }
 
   async addObservation(
@@ -5516,7 +5556,7 @@ export class PgStorage implements IStorage {
           createdAt: new Date().toISOString(),
         })
         .returning();
-      return row;
+      return mapObservation(row);
     });
   }
 
@@ -5532,8 +5572,149 @@ export class PgStorage implements IStorage {
         .set({ voidedAt: new Date().toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason })
         .where(eq(admissionObservations.id, id))
         .returning();
-      return row;
+      return mapObservation(row);
     });
+  }
+
+  // ------------------------------------------------------------ B6.5 orders and procedures
+
+  async listInpatientOrders(admissionId: string): Promise<InpatientOrderView[]> {
+    const [orders, tasks] = await Promise.all([
+      db.select().from(inpatientOrders).where(eq(inpatientOrders.admissionId, admissionId)).orderBy(desc(inpatientOrders.createdAt)),
+      db.select().from(procedureTasks).where(eq(procedureTasks.admissionId, admissionId)).orderBy(asc(procedureTasks.plannedAt)),
+    ]);
+    const mapped = tasks.map(mapTask);
+    return orders.map((o) => ({ ...mapInpatientOrder(o), tasks: mapped.filter((t) => t.orderId === o.id) }));
+  }
+
+  async getInpatientOrder(id: string): Promise<InpatientOrderView | undefined> {
+    const [o] = await db.select().from(inpatientOrders).where(eq(inpatientOrders.id, id)).limit(1);
+    if (!o) return undefined;
+    const tasks = await db.select().from(procedureTasks).where(eq(procedureTasks.orderId, id)).orderBy(asc(procedureTasks.plannedAt));
+    return { ...mapInpatientOrder(o), tasks: tasks.map(mapTask) };
+  }
+
+  async createInpatientOrder(admissionId: string, order: NewInpatientOrder, slots: string[], actor: Actor): Promise<InpatientOrderView | undefined> {
+    const id = await db.transaction(async (tx) => {
+      const [a] = await tx.select({ status: admissions.status }).from(admissions).where(eq(admissions.id, admissionId)).for("share");
+      if (!a) return undefined;
+      if (a.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+      const [row] = await tx
+        .insert(inpatientOrders)
+        .values({ admissionId, ...order, prescribedBy: actor.id, prescribedByName: actor.name, createdAt: new Date().toISOString() })
+        .returning({ id: inpatientOrders.id });
+      await tx.insert(procedureTasks).values(slots.map((plannedAt) => ({ orderId: row.id, admissionId, plannedAt })));
+      return row.id;
+    });
+    return id ? this.getInpatientOrder(id) : undefined;
+  }
+
+  async stopInpatientOrder(id: string, reason: string, actor: Actor): Promise<InpatientOrderView | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const [o] = await tx.select().from(inpatientOrders).where(eq(inpatientOrders.id, id)).for("update");
+      if (!o) return false;
+      if (o.status !== "active") throw new StorageConflict(ORDER_STOPPED);
+      const [a] = await tx.select({ status: admissions.status }).from(admissions).where(eq(admissions.id, o.admissionId)).for("share");
+      if (a?.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+      const now = new Date();
+      await tx.update(inpatientOrders).set({ status: "stopped", stoppedAt: now.toISOString(), stoppedBy: actor.id, stoppedByName: actor.name, stopReason: reason }).where(eq(inpatientOrders.id, id));
+      // Doses not yet due are called off; an overdue one stays for the nurse to mark.
+      await tx
+        .update(procedureTasks)
+        .set({ status: "cancelled" })
+        .where(and(eq(procedureTasks.orderId, id), eq(procedureTasks.status, "planned"), gte(procedureTasks.plannedAt, new Date(now.getTime() - DUE_WINDOW_MS).toISOString())));
+      return true;
+    });
+    return found ? this.getInpatientOrder(id) : undefined;
+  }
+
+  private async taskViews(where: SQL | undefined): Promise<ProcedureTaskView[]> {
+    const openBed = alias(admissionBeds, "open_bed");
+    const rows = await db
+      .select({
+        t: procedureTasks,
+        kind: inpatientOrders.kind,
+        name: inpatientOrders.name,
+        dose: inpatientOrders.dose,
+        route: inpatientOrders.route,
+        orderNote: inpatientOrders.note,
+        orderStatus: inpatientOrders.status,
+        prescribedByName: inpatientOrders.prescribedByName,
+        admissionNumber: admissions.number,
+        patientId: patients.id,
+        patientName: patients.fullName,
+        patientNumber: patients.patientNumber,
+        wardName: wards.name,
+        bedLabel: beds.label,
+      })
+      .from(procedureTasks)
+      .innerJoin(inpatientOrders, eq(inpatientOrders.id, procedureTasks.orderId))
+      .innerJoin(admissions, eq(admissions.id, procedureTasks.admissionId))
+      .innerJoin(patients, eq(patients.id, admissions.patientId))
+      .leftJoin(openBed, and(eq(openBed.admissionId, admissions.id), isNull(openBed.toAt)))
+      .leftJoin(beds, eq(beds.id, openBed.bedId))
+      .leftJoin(wards, eq(wards.id, openBed.wardId))
+      .where(where)
+      .orderBy(asc(procedureTasks.plannedAt));
+    return rows.map(({ t, ...r }) => ({
+      ...mapTask(t),
+      ...r,
+      kind: r.kind as ProcedureTaskView["kind"],
+      orderStatus: r.orderStatus as ProcedureTaskView["orderStatus"],
+    }));
+  }
+
+  async listProcedureTasks(query: { from: string; to: string; admissionId?: string }): Promise<ProcedureTaskView[]> {
+    return this.taskViews(
+      and(
+        gte(procedureTasks.plannedAt, query.from),
+        sql`${procedureTasks.plannedAt} < ${query.to}`,
+        eq(admissions.status, "active"),
+        query.admissionId ? eq(procedureTasks.admissionId, query.admissionId) : undefined,
+      ),
+    );
+  }
+
+  async getProcedureTask(id: string): Promise<ProcedureTaskView | undefined> {
+    return (await this.taskViews(eq(procedureTasks.id, id)))[0];
+  }
+
+  /** The task row locked, its stay held open. */
+  private async lockTask(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], id: string) {
+    const [t] = await tx.select().from(procedureTasks).where(eq(procedureTasks.id, id)).for("update");
+    if (!t) return undefined;
+    const [a] = await tx.select({ status: admissions.status }).from(admissions).where(eq(admissions.id, t.admissionId)).for("share");
+    if (a?.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+    return mapTask(t);
+  }
+
+  async markProcedureTask(id: string, mark: { status: "done" | "missed"; note: string | null }, actor: Actor): Promise<ProcedureTaskView | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const t = await this.lockTask(tx, id);
+      if (!t) return false;
+      const problem = markDoneProblem(t);
+      if (problem) throw new StorageConflict(problem);
+      await tx
+        .update(procedureTasks)
+        .set({ status: mark.status, doneAt: new Date().toISOString(), doneBy: actor.id, doneByName: actor.name, note: mark.note })
+        .where(eq(procedureTasks.id, id));
+      return true;
+    });
+    return found ? this.getProcedureTask(id) : undefined;
+  }
+
+  async revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const t = await this.lockTask(tx, id);
+      if (!t) return false;
+      if (t.status !== "done" && t.status !== "missed") throw new StorageConflict(TASK_NOT_MARKED);
+      await tx
+        .update(procedureTasks)
+        .set({ status: "planned", doneAt: null, doneBy: null, doneByName: null, note: null, revertedAt: new Date().toISOString(), revertedByName: actor.name, revertReason: reason })
+        .where(eq(procedureTasks.id, id));
+      return true;
+    });
+    return found ? this.getProcedureTask(id) : undefined;
   }
 
   async financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]> {

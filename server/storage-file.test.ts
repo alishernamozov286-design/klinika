@@ -563,6 +563,7 @@ describe("roles", () => {
       "inpatient.read",
       "inpatient.history",
       "inpatient.observe",
+      "procedures.prescribe",
     ]);
   });
 
@@ -2977,5 +2978,63 @@ describe("case history (B6.4)", () => {
     await expect(storage.addObservation(a.id, { observedAt: new Date().toISOString(), vitals: { ...none, pulse: 70 }, note: null, authorRole: null }, nurse)).rejects.toThrow(/yopilgan/);
     await expect(storage.voidObservation(o2.id, "kech", true, admin)).rejects.toThrow(/yopilgan/);
     expect(await storage.saveCaseHistory("missing", 0, text, dr)).toBeUndefined();
+  });
+});
+
+describe("procedures (B6.5)", () => {
+  it("an order writes its schedule; doses are marked, put back, called off with the order and the stay", async () => {
+    const admin = { id: "u-admin", name: "Admin" };
+    const nurse = { id: "u-nurse", name: "Hamshira Zuhra" };
+    const dept = await storage.createDepartment({ name: "Kardiologiya statsionari", kind: "statsionar", description: null, isActive: true }, admin);
+    const user = await storage.createUser({ username: "dr65", password: "parol123", fullName: "Rahimov Akmal", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: dept.id, specialty: "Kardiolog", consultationPrice: 100000, slotMinutes: 20, schedule: [], isActive: true }, admin);
+    const ward = (await storage.addBeds((await storage.createWard({ departmentId: dept.id, name: "401", floor: 4, gender: "mixed", dayPrice: 150000, note: null }, admin)).id, 1, admin))!;
+    const p = await storage.createPatient({ fullName: "Ergashev Nodir", phone: "+998908080808", gender: "erkak", age: 66, address: null });
+    const a = await storage.admitPatient({ patientId: p.id, bedId: ward.beds[0].id, doctorId: doctor.id, admittedAt: null, reason: null }, admin);
+    const dr = { id: user.id, name: "Rahimov Akmal" };
+    const h = 3_600_000;
+    const now = Date.now();
+    const slots = [now - 3 * h, now - 10 * 60_000, now + 5 * h, now + 29 * h].map((t) => new Date(t).toISOString());
+    const order = { kind: "medicine" as const, itemId: null, serviceId: null, name: "Enoksaparin", dose: "40 mg", route: "sc" as const, times: ["08:00", "20:00"], startOn: todayKey(), days: 2, note: null };
+
+    const o = (await storage.createInpatientOrder(a.id, order, slots, dr))!;
+    expect(o).toMatchObject({ status: "active", prescribedByName: "Rahimov Akmal", name: "Enoksaparin" });
+    expect(o.tasks.map((t) => t.status)).toEqual(["planned", "planned", "planned", "planned"]);
+    const [overdue, due, later, tomorrow] = o.tasks;
+
+    // The nurse's list: the day's doses with the patient and bed.
+    const listed = await storage.listProcedureTasks({ from: new Date(now - 24 * h).toISOString(), to: new Date(now + 6 * h).toISOString() });
+    expect(listed.map((t) => t.id)).toEqual([overdue.id, due.id, later.id]);
+    expect(listed[0]).toMatchObject({ patientName: "Ergashev Nodir", wardName: "401", bedLabel: "1", dose: "40 mg", admissionNumber: a.number });
+
+    // Marked: done now, or not done with its reason; not too early, not twice; a mistaken mark is put back.
+    expect(await storage.markProcedureTask(due.id, { status: "done", note: null }, nurse)).toMatchObject({ status: "done", doneByName: "Hamshira Zuhra" });
+    await expect(storage.markProcedureTask(due.id, { status: "done", note: null }, nurse)).rejects.toThrow(/allaqachon belgilangan/);
+    await expect(storage.markProcedureTask(later.id, { status: "done", note: null }, nurse)).rejects.toThrow(/vaqti hali kelmagan/);
+    expect(await storage.markProcedureTask(overdue.id, { status: "missed", note: "Bemor rad etdi" }, nurse)).toMatchObject({ status: "missed", note: "Bemor rad etdi" });
+    const back = (await storage.revertProcedureTask(overdue.id, "Boshqa bemorga belgilangan edi", nurse))!;
+    expect(back).toMatchObject({ status: "planned", doneAt: null, note: null, revertReason: "Boshqa bemorga belgilangan edi" });
+    await expect(storage.revertProcedureTask(later.id, "yo'q", nurse)).rejects.toThrow(/hali belgilanmagan/);
+
+    // Stopped early: doses not yet due are called off, the overdue one stays for the nurse.
+    const stopped = (await storage.stopInpatientOrder(o.id, "Qon ketish xavfi", dr))!;
+    expect(stopped).toMatchObject({ status: "stopped", stopReason: "Qon ketish xavfi", stoppedByName: "Rahimov Akmal" });
+    expect(stopped.tasks.map((t) => [t.id, t.status])).toEqual([
+      [overdue.id, "planned"],
+      [due.id, "done"],
+      [later.id, "cancelled"],
+      [tomorrow.id, "cancelled"],
+    ]);
+    await expect(storage.stopInpatientOrder(o.id, "yana", dr)).rejects.toThrow(/to'xtatilgan/);
+
+    // Cancelling the stay stops its orders and calls off what was still planned; nothing more is marked.
+    const o2 = (await storage.createInpatientOrder(a.id, { ...order, name: "Bisoprolol", dose: "5 mg", route: "oral" }, [new Date(now + 2 * h).toISOString()], dr))!;
+    await storage.cancelAdmission(a.id, "Boshqa bemor bilan adashtirildi", admin);
+    const after = await storage.listInpatientOrders(a.id);
+    expect(after.find((x) => x.id === o2.id)).toMatchObject({ status: "stopped", stopReason: "Yotqizish bekor qilindi: Boshqa bemor bilan adashtirildi" });
+    expect(after.flatMap((x) => x.tasks).some((t) => t.status === "planned")).toBe(false);
+    await expect(storage.markProcedureTask(overdue.id, { status: "done", note: null }, nurse)).rejects.toThrow(/yopilgan/);
+    await expect(storage.createInpatientOrder(a.id, order, slots, dr)).rejects.toThrow(/yopilgan/);
+    expect(await storage.listProcedureTasks({ from: new Date(now - 24 * h).toISOString(), to: new Date(now + 48 * h).toISOString() })).toEqual([]);
   });
 });

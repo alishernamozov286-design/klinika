@@ -154,6 +154,8 @@ import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type Departme
 import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
+import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem } from "@shared/procedures";
+import type { NewInpatientOrder } from "./storage-types";
 import {
   CASE_CLOSED,
   CASE_HISTORY_STALE,
@@ -214,6 +216,10 @@ import type {
   AdmissionView,
   AdmissionObservation,
   CaseHistoryVersion,
+  InpatientOrder,
+  InpatientOrderView,
+  ProcedureTask,
+  ProcedureTaskView,
   AdmitInput,
   TransferInput,
   InsertWardInput,
@@ -4520,9 +4526,134 @@ export class FileStorage implements IStorage {
     if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
     const now = new Date().toISOString();
     for (const p of this.db.admissionBeds) if (p.admissionId === id && !p.toAt) p.toAt = now;
+    // B6.5: its orders stop and the doses still planned are called off.
+    for (const o of this.db.inpatientOrders)
+      if (o.admissionId === id && o.status === "active") Object.assign(o, { status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: `Yotqizish bekor qilindi: ${reason}` });
+    for (const t of this.db.procedureTasks) if (t.admissionId === id && t.status === "planned") t.status = "cancelled";
     Object.assign(a, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
     await this.persist();
     return this.admissionViewOf(a);
+  }
+
+  // ------------------------------------------------------------ B6.5 orders and procedures
+
+  private orderView(o: InpatientOrder): InpatientOrderView {
+    return { ...o, tasks: this.db.procedureTasks.filter((t) => t.orderId === o.id).sort((x, y) => x.plannedAt.localeCompare(y.plannedAt)) };
+  }
+
+  async listInpatientOrders(admissionId: string): Promise<InpatientOrderView[]> {
+    return this.db.inpatientOrders
+      .filter((o) => o.admissionId === admissionId)
+      .sort((x, y) => y.createdAt.localeCompare(x.createdAt))
+      .map((o) => this.orderView(o));
+  }
+
+  async getInpatientOrder(id: string): Promise<InpatientOrderView | undefined> {
+    const o = this.db.inpatientOrders.find((x) => x.id === id);
+    return o && this.orderView(o);
+  }
+
+  async createInpatientOrder(admissionId: string, order: NewInpatientOrder, slots: string[], actor: Actor): Promise<InpatientOrderView | undefined> {
+    const a = this.db.admissions.find((x) => x.id === admissionId);
+    if (!a) return undefined;
+    if (a.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+    const o: InpatientOrder = {
+      id: randomUUID(),
+      admissionId,
+      ...order,
+      status: "active",
+      prescribedBy: actor.id,
+      prescribedByName: actor.name,
+      createdAt: new Date().toISOString(),
+      stoppedAt: null,
+      stoppedBy: null,
+      stoppedByName: null,
+      stopReason: null,
+    };
+    this.db.inpatientOrders.push(o);
+    for (const plannedAt of slots) {
+      this.db.procedureTasks.push({ id: randomUUID(), orderId: o.id, admissionId, plannedAt, status: "planned", doneAt: null, doneBy: null, doneByName: null, note: null, revertedAt: null, revertedByName: null, revertReason: null });
+    }
+    await this.persist();
+    return this.orderView(o);
+  }
+
+  async stopInpatientOrder(id: string, reason: string, actor: Actor): Promise<InpatientOrderView | undefined> {
+    const o = this.db.inpatientOrders.find((x) => x.id === id);
+    if (!o) return undefined;
+    if (o.status !== "active") throw new StorageConflict(ORDER_STOPPED);
+    if (this.db.admissions.find((x) => x.id === o.admissionId)?.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+    const now = new Date();
+    Object.assign(o, { status: "stopped", stoppedAt: now.toISOString(), stoppedBy: actor.id, stoppedByName: actor.name, stopReason: reason });
+    const from = now.getTime() - DUE_WINDOW_MS;
+    for (const t of this.db.procedureTasks) if (t.orderId === id && t.status === "planned" && Date.parse(t.plannedAt) >= from) t.status = "cancelled";
+    await this.persist();
+    return this.orderView(o);
+  }
+
+  private taskView(t: ProcedureTask): ProcedureTaskView | undefined {
+    const o = this.db.inpatientOrders.find((x) => x.id === t.orderId);
+    const a = this.db.admissions.find((x) => x.id === t.admissionId);
+    const p = a && this.db.patients.find((x) => x.id === a.patientId);
+    if (!o || !a || !p) return undefined;
+    const open = this.db.admissionBeds.find((x) => x.admissionId === a.id && !x.toAt);
+    return {
+      ...t,
+      kind: o.kind,
+      name: o.name,
+      dose: o.dose,
+      route: o.route,
+      orderNote: o.note,
+      orderStatus: o.status,
+      prescribedByName: o.prescribedByName,
+      admissionNumber: a.number,
+      patientId: p.id,
+      patientName: p.fullName,
+      patientNumber: p.patientNumber,
+      wardName: open ? (this.db.wards.find((w) => w.id === open.wardId)?.name ?? null) : null,
+      bedLabel: open ? (this.db.beds.find((b) => b.id === open.bedId)?.label ?? null) : null,
+    };
+  }
+
+  async listProcedureTasks(query: { from: string; to: string; admissionId?: string }): Promise<ProcedureTaskView[]> {
+    const from = Date.parse(query.from);
+    const to = Date.parse(query.to);
+    const active = new Set(this.db.admissions.filter((a) => a.status === "active").map((a) => a.id));
+    return this.db.procedureTasks
+      .filter((t) => active.has(t.admissionId) && (!query.admissionId || t.admissionId === query.admissionId) && Date.parse(t.plannedAt) >= from && Date.parse(t.plannedAt) < to)
+      .sort((x, y) => x.plannedAt.localeCompare(y.plannedAt))
+      .map((t) => this.taskView(t))
+      .filter((t): t is ProcedureTaskView => Boolean(t));
+  }
+
+  async getProcedureTask(id: string): Promise<ProcedureTaskView | undefined> {
+    const t = this.db.procedureTasks.find((x) => x.id === id);
+    return t && this.taskView(t);
+  }
+
+  private openTask(id: string): ProcedureTask | undefined {
+    const t = this.db.procedureTasks.find((x) => x.id === id);
+    if (t && this.db.admissions.find((a) => a.id === t.admissionId)?.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+    return t;
+  }
+
+  async markProcedureTask(id: string, mark: { status: "done" | "missed"; note: string | null }, actor: Actor): Promise<ProcedureTaskView | undefined> {
+    const t = this.openTask(id);
+    if (!t) return undefined;
+    const problem = markDoneProblem(t);
+    if (problem) throw new StorageConflict(problem);
+    Object.assign(t, { status: mark.status, doneAt: new Date().toISOString(), doneBy: actor.id, doneByName: actor.name, note: mark.note });
+    await this.persist();
+    return this.taskView(t);
+  }
+
+  async revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined> {
+    const t = this.openTask(id);
+    if (!t) return undefined;
+    if (t.status !== "done" && t.status !== "missed") throw new StorageConflict(TASK_NOT_MARKED);
+    Object.assign(t, { status: "planned", doneAt: null, doneBy: null, doneByName: null, note: null, revertedAt: new Date().toISOString(), revertedByName: actor.name, revertReason: reason });
+    await this.persist();
+    return this.taskView(t);
   }
 
   async financeServices(days: { from: string; to: string }): Promise<FinanceServiceRow[]> {

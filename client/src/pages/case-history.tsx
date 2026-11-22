@@ -42,6 +42,7 @@ import { TextPromptDialog } from "@/components/qc/qc-ui";
 import { ApiError, apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { OrdersSection } from "@/components/inpatient/procedures";
 import { cn } from "@/lib/utils";
 import { dayKey, formatDateTime, formatDay, formatTime } from "@/lib/format";
 
@@ -131,6 +132,7 @@ export default function CaseHistoryPage() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
         <div className="min-w-0 space-y-6">
           <CaseHistoryForm view={data} queryKey={key} />
+          <OrdersSection admissionId={a.id} active={a.status === "active"} />
           <Observations view={data} queryKey={key} />
         </div>
         <div className="min-w-0 space-y-6">

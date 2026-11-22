@@ -10,6 +10,9 @@ import type { RefundStatus } from "@shared/refund";
 import type { CashDayRow } from "@shared/cash-report";
 import type { DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
+import type { InpatientOrderView, ProcedureTaskView } from "@shared/schema";
+import type { AdminRoute } from "@shared/prescription";
+import type { OrderKind } from "@shared/procedures";
 import type { AdmissionObservation, AdmissionView, AdmitInput, Bed, BedView, CaseHistoryVersion, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
 import type { CaseText, Vitals } from "@shared/case-history";
 import type { AdmissionStatus, BedState } from "@shared/inpatient";
@@ -225,6 +228,20 @@ export function resolveFlag(
 }
 
 /** Who is performing the write — carried into payments, expenses and the log. */
+/** B6.5: an order as the route has checked it. */
+export type NewInpatientOrder = {
+  kind: OrderKind;
+  itemId: string | null;
+  serviceId: string | null;
+  name: string;
+  dose: string | null;
+  route: AdminRoute | null;
+  times: string[];
+  startOn: string;
+  days: number;
+  note: string | null;
+};
+
 export type Actor = {
   id: string | null;
   name: string;
@@ -987,6 +1004,22 @@ export interface IStorage {
   /** Strikes out a mistaken observation with a reason; `any` lets the reader strike out another's. */
   voidObservation(id: string, reason: string, any: boolean, actor: Actor): Promise<AdmissionObservation | undefined>;
   getObservation(id: string): Promise<AdmissionObservation | undefined>;
+
+  // ---- B6.5 orders and their schedule (TZ §8.1.4)
+  /** A stay's orders, newest first, each with its whole schedule. */
+  listInpatientOrders(admissionId: string): Promise<InpatientOrderView[]>;
+  getInpatientOrder(id: string): Promise<InpatientOrderView | undefined>;
+  /** Writes the order and its tasks (`slots`, ISO instants) at once; only for an active stay. */
+  createInpatientOrder(admissionId: string, order: NewInpatientOrder, slots: string[], actor: Actor): Promise<InpatientOrderView | undefined>;
+  /** Stops an order early; its tasks not yet due are called off (overdue ones stay for the nurse to mark). */
+  stopInpatientOrder(id: string, reason: string, actor: Actor): Promise<InpatientOrderView | undefined>;
+  /** The doses planned in [from, to) on active stays, for the nurse's list. */
+  listProcedureTasks(query: { from: string; to: string; admissionId?: string }): Promise<ProcedureTaskView[]>;
+  getProcedureTask(id: string): Promise<ProcedureTaskView | undefined>;
+  /** Marks a planned dose done (now) or missed (with a reason). */
+  markProcedureTask(id: string, mark: { status: "done" | "missed"; note: string | null }, actor: Actor): Promise<ProcedureTaskView | undefined>;
+  /** Puts a mistaken mark back to planned, with a reason. */
+  revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined>;
   /** A mistaken stay: closed with a reason, never deleted. */
   cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined>;
   /** B7.8: services rendered on local days `from`..`to` (YYYY-MM-DD, inclusive), by kind, name and doctor. */

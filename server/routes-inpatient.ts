@@ -9,6 +9,8 @@
  *   inpatient.read + (records.read | inpatient.history | inpatient.observe)   read the case history (B6.4)
  *   inpatient.history           write the case history (each save a new version)
  *   inpatient.observe           daily observations; strike out one's own (records.amend: anyone's)
+ *   procedures.prescribe        order medicines and procedures for a stay, stop an order (B6.5)
+ *   procedures.perform          mark a dose done / not done, put a mistaken mark back
  *
  * Rules: shared/inpatient.ts.
  */
@@ -19,7 +21,10 @@ import {
   bedStateSchema,
   dischargePlanSchema,
   insertWardSchema,
+  inpatientOrderSchema,
   observationSchema,
+  taskMarkSchema,
+  taskReasonSchema,
   saveCaseHistorySchema,
   transferSchema,
   updateBedSchema,
@@ -30,6 +35,9 @@ import {
 } from "@shared/schema";
 import { VITALS, VITAL_SPEC, caseChanges, caseTextOf, formatVital, normalizeCase, vitalsProblem, type Vitals } from "@shared/case-history";
 import { labResults } from "./routes-medical";
+import { ADMIN_ROUTE_LABELS } from "@shared/prescription";
+import { ORDER_NOTHING_AHEAD, TASK_STATUS_LABELS, addDays, normalizeTimes, orderProblem, planSlots, sortTasks } from "@shared/procedures";
+import type { InpatientOrderView, ProcedureTaskView } from "@shared/schema";
 import { ADMISSION_STATUSES, BED_STATE_LABELS, WARD_GENDER_LABELS, buildInpatientOverview, type AdmissionStatus } from "@shared/inpatient";
 import { hasPermission } from "./rbac";
 import { localDay, todayKey } from "./storage-types";
@@ -236,7 +244,11 @@ export function registerInpatientRoutes(app: Express) {
 
   /** Reading the clinical text: the board alone (registrar, cashier) is not enough. */
   const readsHistory = (req: Parameters<typeof hasPermission>[0]) =>
-    hasPermission(req, "records.read") || hasPermission(req, "inpatient.history") || hasPermission(req, "inpatient.observe");
+    hasPermission(req, "records.read") ||
+    hasPermission(req, "inpatient.history") ||
+    hasPermission(req, "inpatient.observe") ||
+    hasPermission(req, "procedures.prescribe") ||
+    hasPermission(req, "procedures.perform");
 
   /** TZ §8.1.3: the history, the daily observations, lab results and examinations of the stay — one read. */
   app.get(
@@ -375,6 +387,114 @@ export function registerInpatientRoutes(app: Express) {
         `Statsionar karta №${admission?.number ?? "?"}: kundalik kuzatuv (${o.authorName ?? "—"}, ${localDay(o.observedAt)}) bekor qilindi — ${reason}`,
       );
       res.json(o);
+    }),
+  );
+
+  // ------------------------------------------------------------ B6.5 orders and procedures
+
+  /** A local day and time as an instant — the server runs in the clinic's zone (as localDay does). */
+  const localAt = (day: string, time: string) => new Date(`${day}T${time}:00`);
+  const orderLabel = (o: Pick<InpatientOrderView, "name" | "dose" | "route" | "times" | "days">) =>
+    `${o.name}${o.dose ? ` ${o.dose}` : ""}${o.route ? `, ${ADMIN_ROUTE_LABELS[o.route as keyof typeof ADMIN_ROUTE_LABELS]?.toLowerCase() ?? o.route}` : ""} — ${o.times.join(", ")}, ${o.days} kun`;
+  const taskLabel = (t: ProcedureTaskView) =>
+    `Statsionar karta №${t.admissionNumber} (№${t.patientNumber} ${t.patientName}): ${t.name}${t.dose ? ` ${t.dose}` : ""}, ${localDay(t.plannedAt)} ${new Date(t.plannedAt).toTimeString().slice(0, 5)}`;
+
+  app.get(
+    "/api/admissions/:id/orders",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Tayinlovlarni ko'rish uchun ruxsatingiz yo'q" });
+      res.json(await storage.listInpatientOrders(req.params.id).catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  /** TZ §8.1.4: the doctor orders; the whole schedule is written at once. */
+  app.post(
+    "/api/admissions/:id/orders",
+    requirePermission("procedures.prescribe"),
+    handle(async (req, res) => {
+      const input = inpatientOrderSchema.parse(req.body);
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      let name = input.name;
+      // A catalogue line takes its name from the catalogue; the wrong catalogue for the kind is refused.
+      if (input.kind === "medicine") {
+        if (input.serviceId) return res.status(400).json({ message: "Dori xizmatlar katalogidan tanlanmaydi" });
+        if (input.itemId) {
+          const item = await storage.getInventoryItem(input.itemId);
+          if (!item || item.kind !== "medicine" || !item.isActive) return res.status(400).json({ message: "Dori ombor katalogida topilmadi yoki faol emas" });
+          name = item.name;
+        }
+      } else {
+        if (input.itemId) return res.status(400).json({ message: "Muolaja ombor katalogidan tanlanmaydi" });
+        if (input.serviceId) {
+          const service = await storage.getService(input.serviceId);
+          if (!service || service.kind !== "muolaja" || !service.isActive) return res.status(400).json({ message: "Muolaja xizmatlar katalogida topilmadi yoki faol emas" });
+          name = service.name;
+        }
+      }
+      const plan = { ...input, name, times: normalizeTimes(input.times) };
+      const problem = orderProblem(plan, todayKey(), localDay(admission.admittedAt));
+      if (problem) return res.status(400).json({ message: problem });
+      const slots = planSlots(plan, new Date(), localAt).map((d) => d.toISOString());
+      if (slots.length === 0) return res.status(400).json({ message: ORDER_NOTHING_AHEAD });
+      const o = await storage.createInpatientOrder(admission.id, plan, slots, actorOf(req));
+      if (!o) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      await audit(req, "create", "admission", admission.id, `Statsionar karta №${admission.number} (№${admission.patientNumber} ${admission.patientName}): tayinlov — ${orderLabel(o)}, ${o.tasks.length} ta muolaja`);
+      res.status(201).json(o);
+    }),
+  );
+
+  app.post(
+    "/api/inpatient-orders/:id/stop",
+    requirePermission("procedures.prescribe"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const o = await storage.stopInpatientOrder(req.params.id, reason, actorOf(req));
+      if (!o) return res.status(404).json({ message: "Tayinlov topilmadi" });
+      const admission = await storage.getAdmission(o.admissionId);
+      await audit(req, "update", "admission", o.admissionId, `Statsionar karta №${admission?.number ?? "?"}: tayinlov to'xtatildi — ${o.name}: ${reason}`);
+      res.json(o);
+    }),
+  );
+
+  /** The nurse's list: every dose of a local day on the stays in hospital, overdue first. */
+  app.get(
+    "/api/procedure-tasks",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Muolajalarni ko'rish uchun ruxsatingiz yo'q" });
+      const day = stringParam(req.query.day) ?? todayKey();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ message: "Kunni to'g'ri kiriting" });
+      const rows = await storage
+        .listProcedureTasks({ from: localAt(day, "00:00").toISOString(), to: localAt(addDays(day, 1), "00:00").toISOString(), admissionId: stringParam(req.query.admissionId) ?? undefined })
+        .catch((e) => emptyIfMissing(e, []));
+      res.json(sortTasks(rows));
+    }),
+  );
+
+  const markTask = (status: "done" | "missed") =>
+    handle(async (req, res) => {
+      const note = status === "done" ? taskMarkSchema.parse(req.body).note : taskReasonSchema.parse(req.body).reason;
+      const t = await storage.markProcedureTask(req.params.id, { status, note }, actorOf(req));
+      if (!t) return res.status(404).json({ message: "Muolaja topilmadi" });
+      await audit(req, "update", "admission", t.admissionId, `${taskLabel(t)} — ${TASK_STATUS_LABELS[status].toLowerCase()}${note ? `: ${note}` : ""}`);
+      res.json(t);
+    });
+  app.post("/api/procedure-tasks/:id/done", requirePermission("procedures.perform"), markTask("done"));
+  app.post("/api/procedure-tasks/:id/missed", requirePermission("procedures.perform"), markTask("missed"));
+
+  app.post(
+    "/api/procedure-tasks/:id/revert",
+    requirePermission("procedures.perform"),
+    handle(async (req, res) => {
+      const { reason } = taskReasonSchema.parse(req.body);
+      const before = await storage.getProcedureTask(req.params.id);
+      if (!before) return res.status(404).json({ message: "Muolaja topilmadi" });
+      const t = await storage.revertProcedureTask(before.id, reason, actorOf(req));
+      if (!t) return res.status(404).json({ message: "Muolaja topilmadi" });
+      await audit(req, "update", "admission", t.admissionId, `${taskLabel(t)} — "${TASK_STATUS_LABELS[before.status].toLowerCase()}" belgisi qaytarildi: ${reason}`);
+      res.json(t);
     }),
   );
 }

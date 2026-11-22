@@ -44,6 +44,7 @@ import type { RefundLine, RefundStatus } from "./refund";
 import { DISCOUNT_MODES, type DiscountLine, type DiscountMode } from "./discount";
 import { BED_STATES, MAX_BEDS_PER_WARD, WARD_GENDERS, type AdmissionStatus, type BedDisplay, type BedState, type WardGender } from "./inpatient";
 import { CASE_FIELD_MAX, VITALS, VITAL_SPEC, type Vital } from "./case-history";
+import { MAX_ORDER_DAYS, MAX_TIMES_PER_DAY, ORDER_KINDS, type OrderKind, type TaskStatus } from "./procedures";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
 /**
@@ -557,6 +558,69 @@ export const admissionObservations = pgTable(
     voidReason: text("void_reason"),
   },
   (t) => [index("IDX_admission_observations_admission").on(t.admissionId, t.observedAt)],
+);
+
+/**
+ * Tayinlov (B6.5, TZ §8.1.4): a doctor's order for a stay — a medicine (from
+ * the warehouse catalogue or by hand) or a procedure (the "muolaja" services),
+ * its dose and route, the times of day and the days. Its schedule is written
+ * at once into procedure_tasks. Never deleted: stopped early with a reason.
+ */
+export const inpatientOrders = pgTable(
+  "inpatient_orders",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    admissionId: varchar("admission_id").notNull(),
+    kind: text("kind").notNull(),
+    itemId: varchar("item_id"),
+    serviceId: varchar("service_id"),
+    name: text("name").notNull(),
+    dose: text("dose"),
+    route: text("route"),
+    /** Times of day, "HH:MM", in order. */
+    times: text("times").array().notNull(),
+    startOn: text("start_on").notNull(),
+    days: integer("days").notNull(),
+    note: text("note"),
+    status: text("status").notNull().default("active"),
+    prescribedBy: varchar("prescribed_by"),
+    prescribedByName: text("prescribed_by_name"),
+    createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+    stoppedAt: isoTimestamp("stopped_at"),
+    stoppedBy: varchar("stopped_by"),
+    stoppedByName: text("stopped_by_name"),
+    stopReason: text("stop_reason"),
+  },
+  (t) => [index("IDX_inpatient_orders_admission").on(t.admissionId)],
+);
+
+/**
+ * One dose or session of an order at its planned moment: planned → done (who,
+ * when) / missed (why) / cancelled (the order stopped). A mistaken mark is put
+ * back to planned with a reason, kept in the correction columns and the audit.
+ */
+export const procedureTasks = pgTable(
+  "procedure_tasks",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    orderId: varchar("order_id").notNull(),
+    admissionId: varchar("admission_id").notNull(),
+    plannedAt: isoTimestamp("planned_at").notNull(),
+    status: text("status").notNull().default("planned"),
+    doneAt: isoTimestamp("done_at"),
+    doneBy: varchar("done_by"),
+    doneByName: text("done_by_name"),
+    /** Done: an optional note; missed: the reason. */
+    note: text("note"),
+    revertedAt: isoTimestamp("reverted_at"),
+    revertedByName: text("reverted_by_name"),
+    revertReason: text("revert_reason"),
+  },
+  (t) => [
+    uniqueIndex("UQ_procedure_tasks_slot").on(t.orderId, t.plannedAt),
+    index("IDX_procedure_tasks_planned").on(t.plannedAt),
+    index("IDX_procedure_tasks_admission").on(t.admissionId),
+  ],
 );
 
 /**
@@ -1947,6 +2011,26 @@ export type AdmissionView = Admission & {
 };
 export type WardView = Ward & { departmentName: string; beds: BedView[] };
 export type CaseHistoryVersion = typeof caseHistoryVersions.$inferSelect;
+export type InpatientOrder = Omit<typeof inpatientOrders.$inferSelect, "kind" | "status"> & { kind: OrderKind; status: "active" | "stopped" };
+export type ProcedureTask = Omit<typeof procedureTasks.$inferSelect, "status"> & { status: TaskStatus };
+/** An order with its whole schedule (oldest dose first) — the case history page. */
+export type InpatientOrderView = InpatientOrder & { tasks: ProcedureTask[] };
+/** A dose as the nurse's list shows it: what, for whom, where. */
+export type ProcedureTaskView = ProcedureTask & {
+  kind: OrderKind;
+  name: string;
+  dose: string | null;
+  route: string | null;
+  orderNote: string | null;
+  orderStatus: "active" | "stopped";
+  prescribedByName: string | null;
+  admissionNumber: number;
+  patientId: string;
+  patientName: string;
+  patientNumber: number;
+  wardName: string | null;
+  bedLabel: string | null;
+};
 export type AdmissionObservation = typeof admissionObservations.$inferSelect;
 /** B6.4: everything the case history page shows, in one read. */
 export type CaseHistoryView = {
@@ -2801,6 +2885,23 @@ export const observationSchema = z.object({
     .transform((v) => v || null),
 });
 export type ObservationInput = z.infer<typeof observationSchema>;
+
+/** B6.5: a doctor's order for a stay. */
+export const inpatientOrderSchema = z.object({
+  kind: z.enum(ORDER_KINDS, { errorMap: () => ({ message: "Dori yoki muolajani tanlang" }) }),
+  itemId: z.string().min(1).nullish().transform((v) => v ?? null),
+  serviceId: z.string().min(1).nullish().transform((v) => v ?? null),
+  name: z.string().trim().max(200, "Juda uzun").default(""),
+  dose: z.string().trim().max(100, "Juda uzun").nullish().transform((v) => v || null),
+  route: z.enum(ADMIN_ROUTES).nullish().transform((v) => v ?? null),
+  times: z.array(z.string()).max(MAX_TIMES_PER_DAY, `Kuniga ko'pi bilan ${MAX_TIMES_PER_DAY} marta`),
+  startOn: z.string(),
+  days: z.coerce.number().int("Butun son bo'lsin").min(1, "Kamida 1 kun").max(MAX_ORDER_DAYS, `Ko'pi bilan ${MAX_ORDER_DAYS} kun`),
+  note: z.string().trim().max(500, "Juda uzun").nullish().transform((v) => v || null),
+});
+export type InpatientOrderInput = z.infer<typeof inpatientOrderSchema>;
+export const taskMarkSchema = z.object({ note: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null) });
+export const taskReasonSchema = z.object({ reason: z.string().trim().min(3, "Sababini yozing").max(300, "Juda uzun") });
 
 /** B7.2: a discount on a bill — whole (target null) or one service. */
 export const discountBillSchema = z

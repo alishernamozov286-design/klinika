@@ -290,6 +290,16 @@ export const PERMISSIONS = {
     label: "Kundalik kuzatuv",
     description: "Statsionar bemorning harorati, bosimi, pulsi va holati haqida yozuv; xatosini sabab bilan bekor qilish",
   },
+  "procedures.prescribe": {
+    group: "inpatient",
+    label: "Muolaja tayinlash",
+    description: "Statsionar bemorga dori va muolaja tayinlash (doza, vaqt, kunlar), tayinlovni sabab bilan to'xtatish (TZ §8.1.4)",
+  },
+  "procedures.perform": {
+    group: "inpatient",
+    label: "Muolajani bajarish",
+    description: "Jadvaldagi muolajani bajarildi yoki bajarilmadi (sababi bilan) deb belgilash, xato belgini qaytarish",
+  },
   "payments.discount": {
     group: "finance",
     label: "Chegirma berish",
@@ -509,6 +519,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "inpatient.read",
       "inpatient.history",
       "inpatient.observe",
+      "procedures.prescribe",
     ],
   },
   {
@@ -566,7 +577,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     key: "hamshira",
     name: "Statsionar hamshirasi",
     description: "Bemor parvarishi, muolajalar va namuna olish",
-    permissions: ["patients.read", "orders.read", "samples.manage", "inpatient.read", "beds.state", "admissions.manage", "inpatient.observe"],
+    permissions: ["patients.read", "orders.read", "samples.manage", "inpatient.read", "beds.state", "admissions.manage", "inpatient.observe", "procedures.perform"],
   },
   {
     key: "kassir",

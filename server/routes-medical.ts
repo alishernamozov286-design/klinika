@@ -249,7 +249,7 @@ export function registerMedicalRoutes(app: Express) {
    */
   app.get(
     "/api/prescription-catalog",
-    requirePermission("records.write", "records.amend"),
+    requirePermission("records.write", "records.amend", "procedures.prescribe"),
     handle(async (_req, res) => {
       const [items, services] = await Promise.all([
         storage.listInventoryItems().catch((e) => emptyIfMissing(e, [] as InventoryItemView[])),
