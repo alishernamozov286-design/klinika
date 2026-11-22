@@ -160,6 +160,7 @@ import {
   DEPARTMENT_HAS_WARDS,
   ADMISSION_DOCTOR,
   ADMISSION_IN_FUTURE,
+  DISCHARGE_PLAN_BEFORE_ADMISSION,
   ADMISSION_NOT_ACTIVE,
   ADMISSION_SAME_BED,
   BED_HAS_HISTORY,
@@ -4373,6 +4374,7 @@ export class FileStorage implements IStorage {
       doctorId: input.doctorId,
       admittedAt: admittedAt.toISOString(),
       reason: input.reason,
+      plannedDischargeOn: null,
       status: "active",
       cancelledAt: null,
       cancelledBy: null,
@@ -4408,6 +4410,16 @@ export class FileStorage implements IStorage {
     }
     this.db.admissionBeds.push({ id: randomUUID(), admissionId: id, bedId: input.bedId, wardId: ward.id, fromAt: now, toAt: null, note: input.note, movedBy: actor.id, movedByName: actor.name });
     Object.assign(a, { departmentId: ward.departmentId, updatedAt: now, updatedBy: actor.id });
+    await this.persist();
+    return this.admissionViewOf(a);
+  }
+
+  async planDischarge(id: string, date: string | null, actor: Actor): Promise<AdmissionView | undefined> {
+    const a = this.db.admissions.find((x) => x.id === id);
+    if (!a) return undefined;
+    if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+    if (date && date < localDay(a.admittedAt)) throw new Error(DISCHARGE_PLAN_BEFORE_ADMISSION);
+    Object.assign(a, { plannedDischargeOn: date, updatedAt: new Date().toISOString(), updatedBy: actor.id });
     await this.persist();
     return this.admissionViewOf(a);
   }

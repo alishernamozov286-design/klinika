@@ -112,3 +112,74 @@ export function bedFreeProblem(bed: { isActive: boolean; state: BedState } | und
 export function stayDay(admittedDay: string, today: string): number {
   return Math.max(1, Math.round((Date.parse(`${today}T12:00:00Z`) - Date.parse(`${admittedDay}T12:00:00Z`)) / 86_400_000) + 1);
 }
+
+// ---------------------------------------------------------------- B6.3 home page
+
+export const DISCHARGE_PLAN_BEFORE_ADMISSION = "Chiqarish sanasi yotqizilgan kundan oldin bo'lishi mumkin emas";
+
+/** Where a planned discharge stands against today. */
+export type DischargeDue = "overdue" | "today" | "tomorrow" | "later";
+export function dischargeDue(planned: string, today: string): DischargeDue {
+  const tomorrow = new Date(`${today}T12:00:00Z`);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const t = tomorrow.toISOString().slice(0, 10);
+  return planned < today ? "overdue" : planned === today ? "today" : planned === t ? "tomorrow" : "later";
+}
+export const DISCHARGE_DUE_LABELS: Record<DischargeDue, string> = { overdue: "Muddati o'tgan", today: "Bugun", tomorrow: "Ertaga", later: "Keyinroq" };
+
+type OverviewBed = { id: string; label: string; isActive: boolean; display: BedDisplay; stateNote: string | null; stateChangedAt: string | null };
+type OverviewWard = { id: string; name: string; departmentId: string; departmentName: string; isActive: boolean; beds: OverviewBed[] };
+type OverviewStay = { id: string; admittedAt: string; plannedDischargeOn: string | null; departmentId: string };
+
+export type InpatientOverview<S> = {
+  today: string;
+  counts: BedCounts;
+  occupancy: number | null;
+  /** Patients in hospital now. */
+  patients: number;
+  byDepartment: { id: string; name: string; counts: BedCounts; occupancy: number | null; patients: number }[];
+  /** Admitted today (the server's day), newest first. */
+  admittedToday: S[];
+  /** Planned to leave by tomorrow (overdue first). */
+  discharging: (S & { due: DischargeDue })[];
+  dischargedToday: number;
+  /** Beds not usable now: being cleaned or out of service. */
+  attention: { wardId: string; wardName: string; bedId: string; label: string; display: BedDisplay; note: string | null; since: string | null }[];
+};
+
+/** The home page's figures from the wards board and the active stays (TZ §8.1.1). */
+export function buildInpatientOverview<S extends OverviewStay>(wards: readonly OverviewWard[], active: readonly S[], dischargedToday: number, today: string, dayOf: (iso: string) => string): InpatientOverview<S> {
+  const live = wards.filter((w) => w.isActive);
+  const counts = countBeds(live.flatMap((w) => w.beds));
+  const depts = new Map<string, { id: string; name: string; beds: OverviewBed[] }>();
+  for (const w of live) {
+    const d = depts.get(w.departmentId) ?? { id: w.departmentId, name: w.departmentName, beds: [] };
+    d.beds.push(...w.beds);
+    depts.set(w.departmentId, d);
+  }
+  const order: Record<DischargeDue, number> = { overdue: 0, today: 1, tomorrow: 2, later: 3 };
+  return {
+    today,
+    counts,
+    occupancy: occupancy(counts),
+    patients: active.length,
+    byDepartment: [...depts.values()]
+      .map((d) => {
+        const c = countBeds(d.beds);
+        return { id: d.id, name: d.name, counts: c, occupancy: occupancy(c), patients: active.filter((a) => a.departmentId === d.id).length };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "uz")),
+    admittedToday: active.filter((a) => dayOf(a.admittedAt) === today).sort((a, b) => b.admittedAt.localeCompare(a.admittedAt)),
+    discharging: active
+      .filter((a) => a.plannedDischargeOn)
+      .map((a) => ({ ...a, due: dischargeDue(a.plannedDischargeOn!, today) }))
+      .filter((a) => a.due !== "later")
+      .sort((a, b) => order[a.due] - order[b.due] || a.plannedDischargeOn!.localeCompare(b.plannedDischargeOn!)),
+    dischargedToday,
+    attention: live.flatMap((w) =>
+      w.beds
+        .filter((b) => b.isActive && (b.display === "cleaning" || b.display === "maintenance"))
+        .map((b) => ({ wardId: w.id, wardName: w.name, bedId: b.id, label: b.label, display: b.display, note: b.stateNote, since: b.stateChangedAt })),
+    ),
+  };
+}

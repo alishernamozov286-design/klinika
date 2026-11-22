@@ -2902,6 +2902,12 @@ describe("admissions (B6.2)", () => {
     await expect(storage.admitPatient({ patientId: p2.id, bedId: bedA.id, doctorId: doctor.id, admittedAt: null, reason: null }, admin)).rejects.toThrow(/tozalanmoqda/);
     await expect(storage.deleteBed(bedA.id)).rejects.toThrow(/bemor yotgan/);
 
+    // B6.3: the doctor plans the discharge; never before the admission day.
+    const today = todayKey();
+    await expect(storage.planDischarge(a.id, "2000-01-01", admin)).rejects.toThrow(/oldin/);
+    expect((await storage.planDischarge(a.id, today, admin))!.plannedDischargeOn).toBe(today);
+    expect((await storage.planDischarge(a.id, null, admin))!.plannedDischargeOn).toBeNull();
+
     // A mistaken stay is cancelled with a reason; the patient may be admitted again.
     const c = (await storage.cancelAdmission(a.id, "Boshqa bemor bilan adashtirildi", admin))!;
     expect(c).toMatchObject({ status: "cancelled", cancelReason: "Boshqa bemor bilan adashtirildi", current: null });

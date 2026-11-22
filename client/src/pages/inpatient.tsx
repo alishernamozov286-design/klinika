@@ -33,6 +33,7 @@ import { EmptyState, PageHeader, StatCard } from "@/components/ui-kit";
 import { MoneyInput } from "@/components/inputs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdmissionDialog, AdmissionsTab, AdmitDialog } from "@/components/inpatient/admissions";
+import { InpatientHome } from "@/components/inpatient/home";
 import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -47,7 +48,7 @@ const DISPLAY_STYLE: Record<BedDisplay, { tile: string; icon: typeof BedSingle }
   maintenance: { tile: "border-rose-500/35 bg-rose-500/10 text-rose-800 dark:text-rose-300", icon: Wrench },
 };
 type Filter = "all" | BedDisplay;
-const refresh = () => invalidateApi("/api/wards", "/api/admissions");
+const refresh = () => invalidateApi("/api/wards", "/api/admissions", "/api/inpatient");
 
 export default function Inpatient() {
   const { can } = useAuth();
@@ -61,7 +62,12 @@ export default function Inpatient() {
   const [wardDialog, setWardDialog] = useState<{ open: boolean; ward: WardView | null }>({ open: false, ward: null });
   const [adding, setAdding] = useState<WardView | null>(null);
   const [bed, setBed] = useState<{ bed: BedView; ward: WardView } | null>(null);
-  const [tab, setTab] = useState<"patients" | "beds">(() => (new URLSearchParams(window.location.search).get("tab") === "beds" ? "beds" : "patients"));
+  type Tab = "home" | "patients" | "beds";
+  const [tab, setTab] = useState<Tab>(() => {
+    const asked = new URLSearchParams(window.location.search).get("tab");
+    // TZ §8.1.1: the inpatient module opens on its home page.
+    return asked === "patients" || asked === "beds" ? asked : "home";
+  });
   const [admitting, setAdmitting] = useState<{ open: boolean; bedId: string | null }>({ open: false, bedId: null });
   const [stay, setStay] = useState<string | null>(null);
   const { toast } = useToast();
@@ -126,6 +132,29 @@ export default function Inpatient() {
         }
       />
 
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+        <TabsList className="h-auto flex-wrap justify-start">
+          <TabsTrigger value="home" data-testid="tab-inpatient-home">
+            Bosh sahifa
+          </TabsTrigger>
+          <TabsTrigger value="patients" data-testid="tab-inpatient-patients">
+            Bemorlar
+          </TabsTrigger>
+          <TabsTrigger value="beds" data-testid="tab-inpatient-beds">
+            Palata va yotoqlar
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="home" className="mt-4">
+          <InpatientHome onOpenStay={setStay} onBed={(bedId, ward) => {
+            const b = ward.beds.find((x) => x.id === bedId);
+            if (b) setBed({ bed: b, ward });
+          }} onTab={setTab} />
+        </TabsContent>
+        <TabsContent value="patients" className="mt-4">
+          <AdmissionsTab onOpen={setStay} />
+        </TabsContent>
+        <TabsContent value="beds" className="mt-4 space-y-6">
       <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         <StatCard index={0} label="Yotoqlar" value={counts.total} hint={`${wards.filter((w) => w.isActive).length} ta palatada`} icon={BedDouble} isLoading={isLoading} />
         <StatCard index={1} label="Bo'sh" value={counts.free} hint="Bemor qabul qilishga tayyor" icon={CheckCircle2} tone="emerald" isLoading={isLoading} onClick={() => setFilter("ready")} />
@@ -141,20 +170,6 @@ export default function Inpatient() {
           onClick={() => setFilter(counts.maintenance ? "maintenance" : "cleaning")}
         />
       </div>
-
-      <Tabs value={tab} onValueChange={(v) => setTab(v as "patients" | "beds")}>
-        <TabsList>
-          <TabsTrigger value="patients" data-testid="tab-inpatient-patients">
-            Bemorlar
-          </TabsTrigger>
-          <TabsTrigger value="beds" data-testid="tab-inpatient-beds">
-            Palata va yotoqlar
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="patients" className="mt-4">
-          <AdmissionsTab onOpen={setStay} />
-        </TabsContent>
-        <TabsContent value="beds" className="mt-4 space-y-6">
       {!isLoading && inpatientDepts.length === 0 && wards.length === 0 ? (
         <div className="card-premium">
           <EmptyState

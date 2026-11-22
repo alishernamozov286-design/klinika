@@ -453,6 +453,8 @@ export const admissions = pgTable(
     doctorId: varchar("doctor_id").notNull(),
     admittedAt: isoTimestamp("admitted_at").notNull(),
     reason: text("reason"),
+    /** B6.3: the day the doctor plans to discharge (YYYY-MM-DD); the home page lists who leaves today and tomorrow. */
+    plannedDischargeOn: text("planned_discharge_on"),
     status: text("status").notNull().default("active"),
     cancelledAt: isoTimestamp("cancelled_at"),
     cancelledBy: varchar("cancelled_by"),
@@ -2678,6 +2680,13 @@ export const transferSchema = z.object({
     .transform((v) => v || null),
 });
 export type TransferInput = z.infer<typeof transferSchema>;
+/** B6.3: the planned discharge day, or null to clear it. */
+export const dischargePlanSchema = z.object({
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Sanani tanlang")
+    .nullable(),
+});
 
 /** B7.2: a discount on a bill — whole (target null) or one service. */
 export const discountBillSchema = z

@@ -59,3 +59,37 @@ describe("admissions (B6.2, TZ §8.1.2)", () => {
     expect(stayDay("2026-11-20", "2026-11-22")).toBe(3);
   });
 });
+
+describe("inpatient home page (B6.3, TZ §8.1.1)", () => {
+  it("discharge plans against today", async () => {
+    const { dischargeDue } = await import("./inpatient");
+    expect(["2026-11-21", "2026-11-22", "2026-11-23", "2026-11-25"].map((d) => dischargeDue(d, "2026-11-22"))).toEqual(["overdue", "today", "tomorrow", "later"]);
+  });
+
+  it("the five figures, by department, admitted today, leaving by tomorrow, beds to see to", async () => {
+    const { buildInpatientOverview } = await import("./inpatient");
+    const bed = (id: string, display: "ready" | "occupied" | "cleaning" | "maintenance", isActive = true) => ({ id, label: id, isActive, display, stateNote: display === "maintenance" ? "Singan" : null, stateChangedAt: null });
+    const wards = [
+      { id: "w1", name: "101", departmentId: "d1", departmentName: "Terapiya", isActive: true, beds: [bed("1", "occupied"), bed("2", "ready"), bed("3", "cleaning")] },
+      { id: "w2", name: "201", departmentId: "d2", departmentName: "Jarrohlik", isActive: true, beds: [bed("1", "occupied"), bed("2", "maintenance")] },
+      { id: "w3", name: "301", departmentId: "d2", departmentName: "Jarrohlik", isActive: false, beds: [bed("1", "ready")] },
+    ];
+    const stays = [
+      { id: "a1", admittedAt: "2026-11-22T08:00:00.000Z", plannedDischargeOn: "2026-11-23", departmentId: "d1" },
+      { id: "a2", admittedAt: "2026-11-18T08:00:00.000Z", plannedDischargeOn: "2026-11-21", departmentId: "d2" },
+      { id: "a3", admittedAt: "2026-11-20T08:00:00.000Z", plannedDischargeOn: null, departmentId: "d2" },
+    ];
+    const o = buildInpatientOverview(wards, stays, 2, "2026-11-22", (iso) => iso.slice(0, 10));
+    expect(o.counts).toEqual({ total: 5, free: 1, occupied: 2, cleaning: 1, maintenance: 1 });
+    expect(o.occupancy).toBe(50);
+    expect(o.patients).toBe(3);
+    expect(o.byDepartment.map((d) => [d.name, d.counts.total, d.occupancy, d.patients])).toEqual([
+      ["Jarrohlik", 2, 100, 2],
+      ["Terapiya", 3, 33, 1],
+    ]);
+    expect(o.admittedToday.map((a) => a.id)).toEqual(["a1"]);
+    expect(o.discharging.map((a) => [a.id, a.due])).toEqual([["a2", "overdue"], ["a1", "tomorrow"]]);
+    expect(o.attention.map((b) => [b.wardName, b.label, b.display])).toEqual([["101", "3", "cleaning"], ["201", "2", "maintenance"]]);
+    expect(o.dischargedToday).toBe(2);
+  });
+});

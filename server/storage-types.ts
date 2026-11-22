@@ -968,6 +968,8 @@ export interface IStorage {
   admitPatient(input: AdmitInput, actor: Actor): Promise<AdmissionView>;
   /** Closes the bed period and opens the next; the bed left is set to cleaning. */
   transferAdmission(id: string, input: TransferInput, actor: Actor): Promise<AdmissionView | undefined>;
+  /** B6.3: sets (or clears) the planned discharge day of an active stay. */
+  planDischarge(id: string, date: string | null, actor: Actor): Promise<AdmissionView | undefined>;
   /** A mistaken stay: closed with a reason, never deleted. */
   cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined>;
   /** B7.8: services rendered on local days `from`..`to` (YYYY-MM-DD, inclusive), by kind, name and doctor. */

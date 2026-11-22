@@ -5,12 +5,15 @@
  *   beds.manage                 wards (bed-day price), beds: add, rename, deactivate, delete
  *   beds.state | beds.manage    a bed's state: ready / cleaning / out of service
  *   admissions.manage           admit a patient, move to another bed, cancel a mistaken stay (B6.2)
+ *   admissions.manage | records.write   plan the discharge day (B6.3: the doctor decides it)
  *
  * Rules: shared/inpatient.ts.
  */
 import type { Express } from "express";
-import { addBedsSchema, admitSchema, bedStateSchema, insertWardSchema, transferSchema, updateBedSchema, updateWardSchema, voidPaymentSchema, type AdmissionView } from "@shared/schema";
-import { ADMISSION_STATUSES, BED_STATE_LABELS, WARD_GENDER_LABELS, type AdmissionStatus } from "@shared/inpatient";
+import { addBedsSchema, admitSchema, bedStateSchema, dischargePlanSchema, insertWardSchema, transferSchema, updateBedSchema, updateWardSchema, voidPaymentSchema, type AdmissionView } from "@shared/schema";
+import { ADMISSION_STATUSES, BED_STATE_LABELS, WARD_GENDER_LABELS, buildInpatientOverview, type AdmissionStatus } from "@shared/inpatient";
+import { hasPermission } from "./rbac";
+import { localDay, todayKey } from "./storage-types";
 import { requirePermission } from "./rbac";
 import { actorOf, audit, emptyIfMissing, handle, stringParam } from "./route-helpers";
 import { storage } from "./storage";
@@ -176,6 +179,36 @@ export function registerInpatientRoutes(app: Express) {
       const a = await storage.cancelAdmission(req.params.id, reason, actorOf(req));
       if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
       await audit(req, "void", "admission", a.id, `Statsionar karta №${a.number} (№${a.patientNumber} ${a.patientName}) bekor qilindi. Sabab: ${reason}`);
+      res.json(a);
+    }),
+  );
+
+  // ------------------------------------------------------------ B6.3 home page
+
+  /** TZ §8.1.1: patients, free and occupied beds, admitted today, leaving by tomorrow, beds to see to — one round. */
+  app.get(
+    "/api/inpatient/overview",
+    requirePermission("inpatient.read"),
+    handle(async (_req, res) => {
+      const today = todayKey();
+      const [wards, active, discharged] = await Promise.all([
+        storage.listWards().catch((e) => emptyIfMissing(e, [])),
+        storage.listAdmissions({ status: "active" }).catch((e) => emptyIfMissing(e, [])),
+        storage.listAdmissions({ status: "discharged", limit: 200 }).catch((e) => emptyIfMissing(e, [])),
+      ]);
+      const dischargedToday = discharged.filter((a) => a.dischargedAt && localDay(a.dischargedAt) === today).length;
+      res.json(buildInpatientOverview(wards, active, dischargedToday, today, localDay));
+    }),
+  );
+
+  app.post(
+    "/api/admissions/:id/discharge-plan",
+    requirePermission("admissions.manage", "records.write"),
+    handle(async (req, res) => {
+      const { date } = dischargePlanSchema.parse(req.body);
+      const a = await storage.planDischarge(req.params.id, date, { id: req.user?.id ?? null, name: req.user?.fullName ?? "Tizim" });
+      if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      await audit(req, "update", "admission", a.id, `Statsionar karta №${a.number} (№${a.patientNumber} ${a.patientName}): chiqarish ${date ? `rejasi ${date}` : "rejasi olib tashlandi"}`);
       res.json(a);
     }),
   );

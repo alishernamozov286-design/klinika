@@ -9,7 +9,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AlertTriangle, ArrowRightLeft, BedSingle, Loader2, LogIn, Stethoscope, UserRound, XCircle } from "lucide-react";
 import type { AdmissionView, DoctorWithDetails, Patient, WardView } from "@shared/schema";
-import { ADMISSION_STATUS_LABELS, WARD_GENDER_LABELS, stayDay, type AdmissionStatus } from "@shared/inpatient";
+import { ADMISSION_STATUS_LABELS, DISCHARGE_DUE_LABELS, WARD_GENDER_LABELS, dischargeDue, stayDay, type AdmissionStatus } from "@shared/inpatient";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { dayKey, formatDate, formatDateTime, money } from "@/lib/format";
 
-export const refreshInpatient = () => invalidateApi("/api/wards", "/api/admissions", "/api/patients");
+export const refreshInpatient = () => invalidateApi("/api/wards", "/api/admissions", "/api/patients", "/api/inpatient");
 
 const STATUS_TONE: Record<AdmissionStatus, string> = {
   active: "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-300",
@@ -232,6 +232,18 @@ export function AdmissionDialog({ admissionId, onClose }: { admissionId: string 
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const manage = can("admissions.manage") && a?.status === "active";
+  const plans = (can("admissions.manage") || can("records.write")) && a?.status === "active";
+  const [plan, setPlan] = useState<string | null>(null);
+  useEffect(() => setPlan(null), [admissionId]);
+  const savePlan = useMutation({
+    mutationFn: async (date: string | null) => (await (await apiRequest("POST", `/api/admissions/${admissionId}/discharge-plan`, { date })).json()) as AdmissionView,
+    onSuccess: (x) => {
+      refreshInpatient();
+      setPlan(null);
+      toast({ title: x.plannedDischargeOn ? `Chiqarish rejasi: ${formatDate(x.plannedDischargeOn)}` : "Chiqarish rejasi olib tashlandi" });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
   useEffect(() => {
     setMoving(false);
     setBedId("");
@@ -315,6 +327,26 @@ export function AdmissionDialog({ admissionId, onClose }: { admissionId: string 
                   <dd>{a.reason}</dd>
                 </div>
               )}
+              <div className="col-span-2">
+                <dt className="text-xs text-muted-foreground">Chiqarish rejasi</dt>
+                <dd>
+                  {plans ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <Input type="date" value={plan ?? a.plannedDischargeOn ?? ""} min={dayKey(new Date(a.admittedAt))} onChange={(e) => setPlan(e.target.value)} className="h-9 w-40" data-testid="input-discharge-plan" />
+                      <Button size="sm" variant="outline" disabled={!plan || plan === a.plannedDischargeOn || savePlan.isPending} onClick={() => savePlan.mutate(plan)} data-testid="button-save-discharge-plan">
+                        Saqlash
+                      </Button>
+                      {a.plannedDischargeOn && (
+                        <Button size="sm" variant="ghost" onClick={() => savePlan.mutate(null)} data-testid="button-clear-discharge-plan">
+                          Olib tashlash
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="font-medium">{a.plannedDischargeOn ? formatDate(a.plannedDischargeOn) : "—"}</span>
+                  )}
+                </dd>
+              </div>
             </dl>
             <div>
               <p className="mb-1.5 text-xs font-semibold text-muted-foreground">Yotoqlar</p>
@@ -449,6 +481,11 @@ export function AdmissionsTab({ onOpen }: { onOpen: (id: string) => void }) {
                     <TableCell className="hidden text-right sm:table-cell">
                       <p className="tabular">{formatDate(a.admittedAt)}</p>
                       <p className="text-xs text-muted-foreground">{stayDay(dayKey(new Date(a.admittedAt)), today)}-kun</p>
+                      {a.plannedDischargeOn && (
+                        <p className="text-xs font-medium text-amber-700 dark:text-amber-300" data-testid={`row-plan-${a.number}`}>
+                          Chiqarish: {DISCHARGE_DUE_LABELS[dischargeDue(a.plannedDischargeOn, today)].toLowerCase()} ({formatDate(a.plannedDischargeOn)})
+                        </p>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

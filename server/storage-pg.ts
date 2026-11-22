@@ -190,6 +190,7 @@ import {
   DEPARTMENT_HAS_WARDS,
   ADMISSION_DOCTOR,
   ADMISSION_IN_FUTURE,
+  DISCHARGE_PLAN_BEFORE_ADMISSION,
   ADMISSION_NOT_ACTIVE,
   ADMISSION_SAME_BED,
   BED_HAS_HISTORY,
@@ -336,6 +337,7 @@ import {
   type CreateRoleArgs,
   type SeedResult,
   todayKey,
+  localDay,
   type Actor,
   StorageConflict,
   type AppointmentQuery,
@@ -5395,6 +5397,18 @@ export class PgStorage implements IStorage {
       })
       .catch((e) => this.openPeriodConflict(e));
     return found ? this.getAdmission(id) : undefined;
+  }
+
+  async planDischarge(id: string, date: string | null, actor: Actor): Promise<AdmissionView | undefined> {
+    const [a] = await db.select().from(admissions).where(eq(admissions.id, id)).limit(1);
+    if (!a) return undefined;
+    if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+    if (date && date < localDay(iso(a.admittedAt) ?? a.admittedAt)) throw new Error(DISCHARGE_PLAN_BEFORE_ADMISSION);
+    await db
+      .update(admissions)
+      .set({ plannedDischargeOn: date, updatedAt: new Date().toISOString(), updatedBy: actor.id })
+      .where(and(eq(admissions.id, id), eq(admissions.status, "active")));
+    return this.getAdmission(id);
   }
 
   async cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined> {
