@@ -121,7 +121,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-23. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 66,5 → ≈88%**.
+> Holat 2026-11-23. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 67 → ≈88%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -539,11 +539,20 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Testlar: `shared/patient-flow.test.ts` (2: bir kunda bir marta, turlar, statsionar kunlari, xato va eski yotish sanalmaydi, davr bo'yicha bir marta, bugungacha), `storage-file.test.ts` (1: faoliyat manbasi — bekor qilingan buyurtma sanalmaydi), brauzerda admin va kassir yo'li (18 tekshiruv: bugun ikki bemor bir martadan, bekor qilingan buyurtma tahlillari kirmaydi, yotish har kuni, yangi kartalar, davr jami, bir yildan uzun davr 400, tab, ko'rsatkichlar, grafiklar va o'qishlar, turlar, eksport, jadval ko'rinishi, kassirga 403, telefonda to'rt tab sig'adi).
 - [~] **R.3** PDF va Excel eksport: bor. Har yangi hisobotga qo‘shiladi.
 
-### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 22%
+### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 28%
 
 - [ ] **B8.1** Real vaqt xabarlari (`§2`, `§11`): WebSocket; navbat, yangi natija, yangi yo‘llanma darhol ko‘rinadi.
 - [ ] **B8.2** Fayl ombori (`§2`, D-3): UZI rasmlari, skanlar, PDF arxiv.
-- [~] **B8.3** Avtomatik zaxira (`§12`, `§14`): `/api/backup` va `db:restore` bor. **Qoldi:** jadval bo‘yicha avtomatik backup va **tiklash sinovi** (qabul mezoni 16.10).
+- [x] **B8.3** Avtomatik zaxira (`§12`, `§14`): jadval bo‘yicha avtomatik backup va **tiklash sinovi** (qabul mezoni 16.10).
+  - **Topilma:** avvalgi `/api/backup` to'liq zaxira emas edi — 59 jadvaldan faqat 5 tasi (bemorlar, buyurtmalar, tahlillar, xodimlar, xarajatlar); qabullar, tibbiy yozuvlar, to'lovlar, hisobvaraqlar, ombor, statsionar, audit kirmasdi. Endi u "Asosiy ma'lumotlar eksporti (JSON)" deb ochiq nomlangan, eski tiklash `db:restore-json`.
+  - **To'liq zaxira** (`server/backup-core.ts`, `npm run db:backup`): `public` sxemaning **har bir jadvali** — tuzilmasi katalogdan (ustunlar turi, NOT NULL, default, identity; primary/unique/check/foreign key; indekslar) va yozuvlari, har jadval uchun bazaning o'zi hisoblagan soni va nazorat yig'indisi (md5) — bitta `REPEATABLE READ READ ONLY` tranzaksiyada (bir lahza). Fayl faqat o'zi bilan bo'sh bazani qayta qura oladi (migratsiyalarga tayanmaydi). `session` jadvali faqat tuzilma (yozuvlari kirish ma'lumoti). Fayl gzip va **AES-256-GCM** bilan shifrlangan (kalit `BACKUP_PASSPHRASE` dan scrypt bilan; parol, soxtalashtirish va begona fayl aniqlanadi) — unda parol xeshlari, 2FA sirlari va barcha tibbiy ma'lumot bor, repozitoriy esa ochiq.
+  - **Tiklash sinovi** (`--check`, `npm run db:restore -- <fayl>`): yozilgan **fayldan** (diskdan, parol bilan) vaqtinchalik sxemaga bitta tranzaksiyada qayta quriladi — jadvallar, kalitlar va cheklovlar, yozuvlar, so'ng foreign key'lar va indekslar (har biri tekshiriladi), identity ketma-ketliklari — har jadval soni va nazorat yig'indisi fayldagi bilan solishtiriladi, hammasi ROLLBACK. **Haqiqiy tiklash:** `RESTORE_DATABASE_URL=… npm run db:restore -- <fayl> --into-empty --yes` — faqat **bo'sh** bazaga (yangi Neon branch/loyiha), hech qachon ma'lumotli bazaga yozmaydi (jonli baza ko'rsatilsa yozishdan oldin rad etadi); alohida o'zgaruvchi — `DATABASE_URL` xatosi bilan jonli bazaga tushib bo'lmaydi.
+  - **Haqiqiy Neon'da sinaldi:** 59 jadval, 15 291 yozuv, shifrlangan 324 KB; tiklash sinovi **o'tdi** (ma'lumotli 58 jadvalning har biri soni va nazorat yig'indisi mos, ≈2 daqiqa), bazada hech narsa o'zgarmadi; noto'g'ri parol tushunarli rad; jonli bazaga `--into-empty` rad etildi. Sinov fayli o'chirildi.
+  - **Jadval:** `.github/workflows/backup.yml` — har kecha 02:30 (Toshkent) va qo'lda: zaxira, tiklash sinovi, natijani `backup_runs` ga yozish, shifrlangan faylni GitHub artefakti sifatida 30 kun saqlash (Neon'dan alohida joy). Yiqilsa — ish xato bilan tugaydi, GitHub egaga xat yuboradi. **Kerakli sirlar (foydalanuvchi qo'shadi):** `DATABASE_URL`, `BACKUP_PASSPHRASE` (≥12 belgi; GitHub'dan tashqarida ham saqlansin — usiz zaxirani ochib bo'lmaydi).
+  - **Holat:** `backup_runs` jadvali (`npm run db:backup-runs`, `db:upgrade` ichida; `CK_backup_runs_failed`), `GET /api/backup/runs` (`backup.download`; `shared/backup.ts` `backupHealth`: zaxira joyida / 36 soatdan eskirgan / oxirgisi yiqilgan / hali yo'q — "yaxshi" = zaxira olingan **va** tiklash sinovi o'tgan). Sozlamalar → Xavfsizlik → **"Zaxira nusxa"**: holat, oxirgi muvaffaqiyatli zaxira (qachon, jadval, yozuv), so'nggi 10 ta ish (holat, hajm, qayerda), tiklash buyrug'i, parol eslatmasi, qisman eksport alohida va "bu zaxira emas" deb.
+  - Neon'da ROLLBACK qilingan tranzaksiyada `backup_runs` sinaldi (migratsiya ikki marta, skriptning aynan o'sha yozuvi, xatosiz "failed" rad, ilovaning o'qishi; 6 tekshiruv).
+  - Testlar: `server/backup-core.test.ts` (4: shifrlash/ochish, nom faylda ko'rinmaydi, noto'g'ri parol/buzilgan/begona fayl/zaif parol, yangiroq format, ustun DDL), `shared/backup.test.ts` (2: yaxshi ish, holatlar), brauzerda panel (7 tekshiruv).
+  - **Eslatma:** Neon'ning o'z vaqt bo'yicha tiklashi (PITR) ham bor — bu zaxira undan mustaqil, boshqa provayderda.
 - [ ] **B8.4** Monitoring va xatolar jurnali (`§14`): server xatolari, modul bo‘yicha javob vaqti.
 - [~] **B8.5** Moslashuvchan interfeys (`§14`): yangi sahifalar (rollar, xarajatlar, sozlamalar) telefon o'lchamida tekshirildi. **Qoldi:** eski sahifalarni (bemorlar, buyurtmalar, natijalar) planshet/telefonda to'liq tekshirish.
 - [ ] **B8.6** Modullararo end-to-end test: TZ `§2` dagi ikkala sxema bo‘yicha to‘liq yo‘l.
@@ -579,7 +588,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 | 16.7 | Barcha xizmatlar kassa bilan bog‘langan | B2.6, B7.1, B6.6 | ✅ (ko'rik, UZI, muolaja, laboratoriya, statsionar yotoq-kun va muolajalari — bitta hisobvaraqda; dori narxi B6.6b bilan) |
 | 16.8 | Xodimlar vakolatlari to‘g‘ri ishlaydi | B1.4, B8.7 | 🟡 |
 | 16.9 | Audit barcha muhim o‘zgarishlarni qayd etadi | B1.6 | 🟡 |
-| 16.10 | Zaxiradan tiklash sinovdan o‘tgan | B8.3 | 🟡 |
+| 16.10 | Zaxiradan tiklash sinovdan o‘tgan | B8.3 | ✅ (B8.3: kechalik shifrlangan to'liq zaxira va fayldan tiklash sinovi — har jadval soni va nazorat yig'indisi; haqiqiy Neon'da sinaldi) |
 
 ---
 
@@ -605,6 +614,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-23 · B8.3 · Avtomatik zaxira: har kecha barcha 59 jadvalning shifrlangan to'liq zaxirasi (GitHub Actions), fayldan tiklash sinovi har jadval soni va nazorat yig'indisi bilan, faqat bo'sh bazaga haqiqiy tiklash, Sozlamalarda holat. Topildi: eski "zaxira" faqat 5 jadvalni olardi. 16.10 yopildi.
 - 2026-11-23 · B8.7 · Xavfsizlik sinovi: Telegram webhook kalitsiz yoqilmaydi (soxta kontakt bilan natijalarni o'g'irlash yopildi), baza xatolari mijozga sizmaydi, loglarda bemor ma'lumoti yo'q, ishlab chiqarishda standart sirlar va admin paroli yo'q, xavfsizlik sarlavhalari, npm audit 23→7; takrorlanadigan `npm run security:smoke`.
 - 2026-11-23 · R.2 · Bemorlar oqimi: butun klinika bo'yicha kunlik bemorlar (har biri kuniga bir marta; qabul, laboratoriya, statsionar), yangi bemorlar, kunlik buyurilgan va tasdiqlangan tahlillar. R.2 yopildi.
 - 2026-11-23 · R.2 · Statsionar bandligi hisoboti (yarim tun usuli, kunlik grafik, bo'lim va palatalar, o'rtacha yotish kuni, PDF/Excel) va eng ko'p buyuriladigan tahlillar reytingi (soni bo'yicha, to'liq, ulushi bilan). Yo'l-yo'lakay: orqa sanali yotishda bandlik 100% dan oshardi.

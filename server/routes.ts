@@ -133,6 +133,7 @@ import { REFUNDS_BY_REQUEST } from "@shared/refund";
 import { consumeForOrder } from "./reagent-consumption";
 import { SEEDED_ADMIN_PASSWORD } from "./storage-types";
 import { apiErrorResponse } from "./api-errors";
+import { backupHealth } from "@shared/backup";
 import { describeConsumption } from "@shared/consumption";
 
 export async function registerRoutes(app: Express): Promise<void> {
@@ -1630,6 +1631,21 @@ export async function registerRoutes(app: Express): Promise<void> {
    * foot-gun no amount of confirmation dialog makes safe. Restore runs from the
    * CLI instead: `npm run db:restore -- <file> --yes`.
    */
+  /** B8.3: the automatic backups' record and health, for Sozlamalar → Zaxira. */
+  app.get(
+    "/api/backup/runs",
+    requirePermission("backup.download"),
+    handle(async (_req, res) => {
+      const runs = await storage.listBackupRuns(20).catch((e) => emptyIfMissing(e, []));
+      res.json({ runs, ...backupHealth(runs), postgres: usingPostgres });
+    }),
+  );
+
+  /**
+   * A partial JSON export (patients, orders, tests, staff, expenses) — kept for
+   * spreadsheets and quick checks. It is NOT the backup: that is the nightly
+   * encrypted dump of every table (npm run db:backup, B8.3).
+   */
   app.get(
     "/api/backup",
     requirePermission("backup.download"),
@@ -1646,7 +1662,7 @@ export async function registerRoutes(app: Express): Promise<void> {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="medlab-backup-${stamp()}.json"`);
       res.setHeader("Cache-Control", "no-store");
-      await audit(req, "export", "backup", null, "To'liq zaxira nusxa yuklandi");
+      await audit(req, "export", "backup", null, "Asosiy ma'lumotlar eksporti (JSON) yuklandi");
       res.send(
         JSON.stringify(
           {

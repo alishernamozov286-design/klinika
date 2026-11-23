@@ -168,6 +168,7 @@ import {
 } from "@shared/epicrisis";
 import { stayCharge, type StayCharge } from "@shared/stay-bill";
 import type { ActivityEvent } from "@shared/patient-flow";
+import type { BackupRunView } from "@shared/backup";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem } from "@shared/procedures";
 import type { NewInpatientOrder } from "./storage-types";
@@ -4605,6 +4606,13 @@ export class FileStorage implements IStorage {
     Object.assign(a, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
     await this.persist();
     return this.admissionViewOf(a);
+  }
+
+  // ------------------------------------------------------------ B8.3 backups
+
+  /** The JSON store has no automatic backups (they are a Postgres deployment's); the panel says so. */
+  async listBackupRuns(_limit: number): Promise<BackupRunView[]> {
+    return [];
   }
 
   // ------------------------------------------------------------ R.2 patient flow

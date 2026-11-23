@@ -242,6 +242,7 @@ import {
 } from "@shared/epicrisis";
 import { stayCharge, type StayCharge } from "@shared/stay-bill";
 import type { ActivityEvent } from "@shared/patient-flow";
+import type { BackupRunView } from "@shared/backup";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem, type TaskStatus } from "@shared/procedures";
 import type { NewInpatientOrder } from "./storage-types";
@@ -5723,6 +5724,28 @@ export class PgStorage implements IStorage {
         .returning();
       return mapObservation(row);
     });
+  }
+
+  // ------------------------------------------------------------ B8.3 backups
+
+  async listBackupRuns(limit: number): Promise<BackupRunView[]> {
+    const res = await db.execute(sql`
+      SELECT id, started_at, finished_at, status, location, file_name, size_bytes, tables, rows, restore_checked, restore_ok, error
+        FROM backup_runs ORDER BY started_at DESC LIMIT ${limit}`);
+    return (res.rows as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id),
+      startedAt: iso(String(r.started_at)),
+      finishedAt: r.finished_at ? iso(String(r.finished_at)) : null,
+      status: r.status as BackupRunView["status"],
+      location: r.location === null ? null : String(r.location),
+      fileName: r.file_name === null ? null : String(r.file_name),
+      sizeBytes: r.size_bytes === null ? null : Number(r.size_bytes),
+      tables: r.tables === null ? null : Number(r.tables),
+      rows: r.rows === null ? null : Number(r.rows),
+      restoreChecked: Boolean(r.restore_checked),
+      restoreOk: r.restore_ok === null ? null : Boolean(r.restore_ok),
+      error: r.error === null ? null : String(r.error),
+    }));
   }
 
   // ------------------------------------------------------------ R.2 patient flow

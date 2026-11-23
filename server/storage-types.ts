@@ -17,6 +17,7 @@ import type { OrderKind } from "@shared/procedures";
 import type { StayCharge } from "@shared/stay-bill";
 import type { EpicrisisText } from "@shared/epicrisis";
 import type { ActivityEvent } from "@shared/patient-flow";
+import type { BackupRunView } from "@shared/backup";
 import type { EpicrisisVersion } from "@shared/schema";
 import type { AdmissionObservation, AdmissionView, AdmitInput, Bed, BedView, CaseHistoryVersion, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
 import type { CaseText, Vitals } from "@shared/case-history";
@@ -1046,6 +1047,10 @@ export interface IStorage {
   markProcedureTask(id: string, mark: { status: "done" | "missed"; note: string | null }, actor: Actor): Promise<ProcedureTaskView | undefined>;
   /** Puts a mistaken mark back to planned, with a reason. */
   revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined>;
+  // ---- B8.3 backups
+  /** The latest automatic backup runs, newest first (empty where none are recorded, e.g. the file store). */
+  listBackupRuns(limit: number): Promise<BackupRunView[]>;
+
   // ---- R.2 patient flow
   /**
    * Local days `from`..`to` (inclusive): who was served how (attended

@@ -18,3 +18,6 @@ vite.config.ts.*
 # api/ directory to discover serverless functions, so the file must be present
 # in the upload — the build step then regenerates it.
 # api/
+# B8.3: encrypted database backups — never committed (the repository is public)
+backups/
+*.mlbk

@@ -1,0 +1,61 @@
+# B8.3 — nightly backup of the clinic's database, with a restore check.
+#
+# Every night at 02:30 Tashkent time (21:30 UTC) and on demand (Actions → "Database backup" → Run workflow):
+#   1. dumps every table (structure + rows) in one read-only transaction,
+#   2. encrypts it with BACKUP_PASSPHRASE (AES-256-GCM) — the repository is public,
+#      so the stored file must be useless without the passphrase,
+#   3. restores it from the file into a throwaway schema (rolled back) and checks
+#      every table's row count and checksum,
+#   4. records the outcome in backup_runs (Sozlamalar → Zaxira shows it),
+#   5. keeps the encrypted file as a workflow artifact for 30 days — off Neon.
+#
+# Repository secrets required (Settings → Secrets and variables → Actions):
+#   DATABASE_URL       the production database (Neon connection string)
+#   BACKUP_PASSPHRASE  at least 12 characters; store it outside GitHub too —
+#                      without it no backup can be opened.
+# A failed run fails the job, and GitHub emails the repository owner.
+
+name: Database backup
+
+on:
+  schedule:
+    - cron: "30 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Tashkent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Backup, restore check, record
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: npm run db:backup -- --check --record --out backups
+
+      - name: Keep the encrypted file (30 days)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: medlab-backup-${{ github.run_number }}
+          path: backups/*.mlbk
+          retention-days: 30
+          if-no-files-found: warn

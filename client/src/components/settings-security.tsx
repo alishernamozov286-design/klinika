@@ -26,6 +26,8 @@ import {
   type SecuritySettings,
 } from "@shared/schema";
 import { describeUserAgent } from "@shared/user-agent";
+import { cn } from "@/lib/utils";
+import { BACKUP_HEALTH_LABELS, BACKUP_STALE_HOURS, type BackupHealth, type BackupRunView } from "@shared/backup";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -315,29 +317,89 @@ export function PasswordPanel() {
   );
 }
 
-/** Download-only. Restoring runs from the CLI — see scripts/restore-backup.mjs. */
+/**
+ * B8.3 Zaxira: the nightly encrypted backup of every table and its restore
+ * check (GitHub Actions → backup_runs), the health at a glance, and the
+ * partial JSON export. Restoring runs from the CLI, never from a button.
+ */
 export function BackupPanel() {
   const { can } = useAuth();
+  const { data } = useQuery<{ runs: BackupRunView[]; health: BackupHealth; lastGood: BackupRunView | null; hoursSince: number | null; postgres: boolean }>({
+    queryKey: ["/api/backup/runs"],
+    enabled: can("backup.download"),
+    refetchOnMount: "always",
+  });
   if (!can("backup.download")) return null;
+  const tone: Record<BackupHealth, string> = {
+    ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300",
+    stale: "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+    failed: "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300",
+    none: "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+  };
+  const kb = (n: number | null) => (n === null ? "—" : n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
 
   return (
-    <SectionCard
-      icon={ShieldCheck}
-      title="Zaxira nusxa"
-      description="Bemorlar, buyurtmalar, natijalar va xarajatlar — bitta JSON faylda"
-    >
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="outline" asChild data-testid="link-backup">
-          <a href="/api/backup">
-            <Download className="mr-2 h-4 w-4" />
-            Zaxirani yuklab olish
-          </a>
-        </Button>
-        <p className="text-xs text-muted-foreground">
-          Tiklash brauzerdan emas, terminaldan bajariladi:{" "}
-          <code className="rounded bg-muted px-1.5 py-0.5">npm run db:restore -- fayl.json --yes</code>
-          {" — "}butun bazani almashtiradigan tugma tasodifiy bosishga juda yaqin turadi.
-        </p>
+    <SectionCard icon={ShieldCheck} title="Zaxira nusxa" description="Har kecha barcha jadvallarning shifrlangan zaxirasi va undan tiklash sinovi">
+      <div className="space-y-4" data-testid="backup-panel">
+        {data && (
+          <div className={cn("rounded-lg border p-3 text-sm", tone[data.health])} data-testid="backup-health">
+            <p className="font-semibold">{BACKUP_HEALTH_LABELS[data.health]}</p>
+            <p className="mt-0.5 text-xs">
+              {data.lastGood
+                ? `Oxirgi muvaffaqiyatli zaxira: ${formatDateTime(data.lastGood.startedAt)} (${data.hoursSince} soat oldin) — ${data.lastGood.tables} jadval, ${data.lastGood.rows} yozuv, tiklash sinovi o'tgan.`
+                : data.postgres
+                  ? "Kechalik zaxira GitHub Actions'da ishga tushirilgach bu yerda ko'rinadi (DATABASE_URL va BACKUP_PASSPHRASE sirlari kerak)."
+                  : "Mahalliy JSON rejimi: avtomatik zaxira Postgres (Neon) bilan ishlaydi."}
+              {data.health === "stale" && ` ${BACKUP_STALE_HOURS} soatdan ko'p yangi zaxira yo'q — GitHub Actions'ni tekshiring.`}
+            </p>
+          </div>
+        )}
+        {data && data.runs.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full text-sm" data-testid="backup-runs">
+              <thead className="bg-muted/50 text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left">Vaqt</th>
+                  <th className="px-3 py-2 text-left">Holat</th>
+                  <th className="hidden px-3 py-2 text-right sm:table-cell">Hajmi</th>
+                  <th className="hidden px-3 py-2 text-right sm:table-cell">Jadval / yozuv</th>
+                  <th className="hidden px-3 py-2 text-left md:table-cell">Qayerda</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.runs.slice(0, 10).map((r) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="whitespace-nowrap px-3 py-2 tabular">{formatDateTime(r.startedAt)}</td>
+                    <td className="px-3 py-2">
+                      {r.status === "ok" ? (r.restoreOk ? "Zaxira + tiklash sinovi o'tdi" : r.restoreChecked ? "Tiklash sinovi yiqildi" : "Zaxira (sinovsiz)") : <span className="text-rose-700 dark:text-rose-300">Xato: {r.error}</span>}
+                    </td>
+                    <td className="hidden px-3 py-2 text-right tabular sm:table-cell">{kb(r.sizeBytes)}</td>
+                    <td className="hidden px-3 py-2 text-right tabular sm:table-cell">
+                      {r.tables ?? "—"} / {r.rows ?? "—"}
+                    </td>
+                    <td className="hidden px-3 py-2 text-xs text-muted-foreground md:table-cell">{r.location ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="space-y-1.5 rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">
+          <p>
+            <span className="font-medium text-foreground">Tiklash</span> brauzerdan emas, terminaldan va faqat bo'sh bazaga:{" "}
+            <code className="rounded bg-muted px-1.5 py-0.5">npm run db:restore -- fayl.mlbk --into-empty --yes</code> (sinov uchun parametrsiz — hech narsa o'zgarmaydi).
+          </p>
+          <p>Zaxira fayli shifrlangan; uni ochish uchun BACKUP_PASSPHRASE kerak — uni xavfsiz joyda saqlang.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 border-t pt-3">
+          <Button variant="outline" size="sm" asChild data-testid="link-backup">
+            <a href="/api/backup">
+              <Download className="mr-2 h-4 w-4" />
+              Asosiy ma'lumotlar eksporti (JSON)
+            </a>
+          </Button>
+          <p className="text-xs text-muted-foreground">Bemorlar, buyurtmalar, tahlillar, xodimlar, xarajatlar — jadvallarda ko'rish uchun. Bu zaxira emas.</p>
+        </div>
       </div>
     </SectionCard>
   );
