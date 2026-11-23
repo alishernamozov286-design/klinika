@@ -135,7 +135,7 @@ export const MOVEMENT_KIND_LABELS: Record<MovementKind, string> = {
   writeoff: "Hisobdan chiqarildi",
   issue_cancel: "Chiqim bekor qilindi",
   count: "Inventarizatsiya tuzatishi",
-  consumption: "Laboratoriya sarfi",
+  consumption: "Sarf (laboratoriya, statsionar)",
   consumption_cancel: "Sarf bekor qilindi",
 };
 

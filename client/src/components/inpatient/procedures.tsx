@@ -38,7 +38,8 @@ import { apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { dayKey, formatDateTime, formatDay, formatDayLong, formatTime } from "@/lib/format";
+import { dayKey, formatDateTime, formatDay, formatDayLong, formatTime, money } from "@/lib/format";
+import { fmtQty } from "@shared/inventory";
 
 const STATE_TONE: Record<TaskState, string> = {
   overdue: "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300",
@@ -79,7 +80,16 @@ function useTaskActions() {
       setPrompt(null);
       setError(null);
       refreshProcedures();
-      toast({ title: v.kind === "done" ? `Bajarildi: ${t.name}` : v.kind === "missed" ? `Bajarilmadi deb belgilandi: ${t.name}` : "Belgi qaytarildi" });
+      invalidateApi("/api/inventory");
+      const short = t.stock ? Math.max(0, t.stock.quantity - t.stock.posted) : 0;
+      if (v.kind === "done" && short > 1e-6) {
+        toast({ title: `Bajarildi: ${t.name}`, description: `Omborda yetmadi — kamomad ${fmtQty(short)} ${t.stock!.unit} omborchiga yozildi`, variant: "destructive" });
+        return;
+      }
+      toast({
+        title: v.kind === "done" ? `Bajarildi: ${t.name}` : v.kind === "missed" ? `Bajarilmadi deb belgilandi: ${t.name}` : "Belgi qaytarildi",
+        description: v.kind === "done" && t.stock ? `Ombordan ${fmtQty(t.stock.posted)} ${t.stock.unit} chiqdi` : v.kind === "revert" ? "Dori omborga qaytarildi (bo'lsa)" : undefined,
+      });
     },
     onError: (e: Error, v) => (v.kind === "done" ? toast({ title: "Belgilanmadi", description: e.message, variant: "destructive" }) : setError(e.message)),
   });
@@ -116,6 +126,20 @@ function useTaskActions() {
     pendingId: act.isPending ? act.variables?.id : null,
     dialog,
   };
+}
+
+/** B6.6b: what a medicine dose took from the warehouse — or what it could not. */
+function StockNote({ stock, taskId }: { stock: NonNullable<ProcedureTaskView["stock"]>; taskId: string }) {
+  const short = Math.max(0, stock.quantity - stock.posted);
+  return short > 1e-6 ? (
+    <p className="text-xs font-medium text-amber-700 dark:text-amber-400" data-testid={`task-stock-${taskId}`}>
+      Omborda yetmadi: {fmtQty(stock.posted)} {stock.unit} chiqdi, kamomad {fmtQty(short)} {stock.unit} — omborchiga
+    </p>
+  ) : (
+    <p className="text-xs text-muted-foreground" data-testid={`task-stock-${taskId}`}>
+      Ombordan: {fmtQty(stock.posted)} {stock.unit} ({stock.itemName})
+    </p>
+  );
 }
 
 /** The doses of a day — for everyone in hospital, or one stay. */
@@ -161,6 +185,7 @@ export function TaskList({ tasks, showPatient, now = new Date() }: { tasks: Proc
                     </p>
                   )}
                   {t.status === "planned" && t.revertReason && <p className="text-xs text-amber-700 dark:text-amber-400">Belgi qaytarilgan: {t.revertReason}</p>}
+                  {t.stock && <StockNote stock={t.stock} taskId={t.id} />}
                 </div>
               </div>
               {performs && (
@@ -433,7 +458,8 @@ function OrderDialog({ admissionId, onClose }: { admissionId: string; onClose: (
   const { data: catalog } = useQuery<PrescriptionCatalog>({ queryKey: ["/api/prescription-catalog"] });
   const [kind, setKind] = useState<OrderKind>("medicine");
   const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
+  const [picked, setPicked] = useState<{ id: string; name: string; unit?: string; salePrice?: number | null } | null>(null);
+  const [issueQty, setIssueQty] = useState("1");
   const [dose, setDose] = useState("");
   const [route, setRoute] = useState<AdminRoute | null>(null);
   const [times, setTimes] = useState<string[]>(["08:00", "20:00"]);
@@ -444,9 +470,15 @@ function OrderDialog({ admissionId, onClose }: { admissionId: string; onClose: (
   const [error, setError] = useState<string | null>(null);
 
   const name = picked?.name ?? query.trim();
+  const stocked = kind === "medicine" && Boolean(picked);
+  const qty = Number(issueQty.replace(",", "."));
+  const dosePrice = stocked && picked?.salePrice != null && qty > 0 ? Math.round(picked.salePrice * qty) : null;
   const options = useMemo(() => {
     const q = query.trim().toLocaleLowerCase("uz");
-    const list = kind === "medicine" ? (catalog?.medicines ?? []).map((m) => ({ id: m.id, name: m.name, hint: m.inStock ? "omborda bor" : "omborda yo'q" })) : (catalog?.procedures ?? []).map((s) => ({ id: s.id, name: s.name, hint: "xizmat" }));
+    const list =
+      kind === "medicine"
+        ? (catalog?.medicines ?? []).map((m) => ({ id: m.id, name: m.name, hint: m.inStock ? "omborda bor" : "omborda yo'q", unit: m.unit, salePrice: m.salePrice }))
+        : (catalog?.procedures ?? []).map((s) => ({ id: s.id, name: s.name, hint: money(s.price), unit: undefined, salePrice: undefined }));
     return (q ? list.filter((x) => x.name.toLocaleLowerCase("uz").includes(q)) : list).slice(0, 8);
   }, [catalog, kind, query]);
   const plan = { kind, name, dose: dose.trim() || null, route, times: normalizeTimes(times), startOn, days: Number(days) };
@@ -462,6 +494,8 @@ function OrderDialog({ admissionId, onClose }: { admissionId: string; onClose: (
           ...plan,
           itemId: kind === "medicine" ? (picked?.id ?? null) : null,
           serviceId: kind === "procedure" ? (picked?.id ?? null) : null,
+          // B6.6b: a stocked medicine says how much of it one dose takes from the shelf.
+          issueQty: stocked ? Number(issueQty.replace(",", ".")) : null,
           note: note.trim() || null,
         })
       ).json()) as InpatientOrderView,
@@ -473,7 +507,10 @@ function OrderDialog({ admissionId, onClose }: { admissionId: string; onClose: (
     onError: (e: Error) => setError(e.message),
   });
   const submit = () => {
-    const problem = orderProblem(plan, today, "0000-00-00") ?? (slots.length === 0 ? "Tanlangan kunlarda vaqtlar o'tib ketgan" : null);
+    const problem =
+      orderProblem(plan, today, "0000-00-00") ??
+      (stocked && !(qty > 0) ? "Bir dozaga ombordan qancha ketishini kiriting" : null) ??
+      (slots.length === 0 ? "Tanlangan kunlarda vaqtlar o'tib ketgan" : null);
     if (problem) return setError(problem);
     setError(null);
     save.mutate();
@@ -528,7 +565,7 @@ function OrderDialog({ admissionId, onClose }: { admissionId: string; onClose: (
                   <ul className="max-h-44 overflow-y-auto rounded-md border" data-testid="order-options">
                     {options.map((x) => (
                       <li key={x.id}>
-                        <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-muted/60" onClick={() => setPicked({ id: x.id, name: x.name })}>
+                        <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-muted/60" onClick={() => setPicked({ id: x.id, name: x.name, unit: x.unit, salePrice: x.salePrice })}>
                           <span>{x.name}</span>
                           <span className="text-xs text-muted-foreground">{x.hint}</span>
                         </button>
@@ -562,6 +599,18 @@ function OrderDialog({ admissionId, onClose }: { admissionId: string; onClose: (
               </Select>
             </div>
           </div>
+          {stocked && (
+            <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2" data-testid="order-stock">
+              <div className="space-y-1.5">
+                <Label htmlFor="order-issue">Bir dozaga ombordan{picked?.unit ? `, ${picked.unit}` : ""}</Label>
+                <Input id="order-issue" inputMode="decimal" value={issueQty} onChange={(e) => setIssueQty(e.target.value)} data-testid="input-order-issue" />
+              </div>
+              <p className="self-end text-xs text-muted-foreground">
+                Hamshira bajarganda ombordan muddati yaqin partiyadan chiqadi; yetmasa omborchiga kamomad bo'lib tushadi.
+                {dosePrice !== null ? ` Bir doza hisobga: ${money(dosePrice)}.` : " Sotuv narxi belgilanmagan — hisobga kirmaydi."}
+              </p>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Vaqtlari</Label>
             <div className="flex flex-wrap gap-1.5">

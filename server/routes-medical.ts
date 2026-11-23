@@ -258,7 +258,7 @@ export function registerMedicalRoutes(app: Express) {
       const catalog: PrescriptionCatalog = {
         medicines: items
           .filter((i) => i.kind === "medicine" && i.isActive)
-          .map((i) => ({ id: i.id, name: i.name, unit: i.unit, manufacturer: i.manufacturer, inStock: i.onHand > 0 })),
+          .map((i) => ({ id: i.id, name: i.name, unit: i.unit, manufacturer: i.manufacturer, inStock: i.onHand > 0, salePrice: i.salePrice ?? null })),
         procedures: services.filter((x) => x.kind === "muolaja").map((x) => ({ id: x.id, name: x.name, price: x.price })),
       };
       res.json(catalog);

@@ -109,6 +109,7 @@ import {
   MAX_CONSUME_BATCH,
   NORM_ALREADY_RETIRED,
   NORM_CONSUMPTION_FINAL,
+  INPATIENT_CONSUMPTION_FINAL,
   NORM_DRAFT_EXISTS,
   NORM_NOT_DRAFT,
   movementValue,
@@ -3804,7 +3805,7 @@ export class FileStorage implements IStorage {
           issueId: null,
           countId: null,
           consumptionId: e.c.id,
-          note: null,
+          note: e.c.kind === "inpatient" ? e.c.note : null,
           createdAt: now,
           createdBy: actor.id,
           createdByName: actor.name,
@@ -3836,6 +3837,7 @@ export class FileStorage implements IStorage {
           normId: n.id,
           quantity: n.quantity,
           posted: 0,
+          procedureTaskId: null,
           reason: null,
           note: null,
           createdAt: now,
@@ -3868,6 +3870,7 @@ export class FileStorage implements IStorage {
       normId: null,
       quantity: input.quantity,
       posted: 0,
+      procedureTaskId: null,
       reason: input.reason,
       note: input.note ?? null,
       createdAt: new Date().toISOString(),
@@ -3905,9 +3908,17 @@ export class FileStorage implements IStorage {
   async cancelConsumption(id: string, reason: string, actor: Actor): Promise<LabConsumptionView | undefined> {
     const c = this.db.labConsumptions.find((x) => x.id === id);
     if (!c) return undefined;
+    if (c.kind === "inpatient") throw new StorageConflict(INPATIENT_CONSUMPTION_FINAL);
     if (c.kind !== "extra") throw new StorageConflict(NORM_CONSUMPTION_FINAL);
+    this.returnConsumption(c, reason, actor);
+    await this.persist();
+    return this.consumptionView(c);
+  }
+
+  /** Puts what a consumption took back on its batches and marks it cancelled (refused once counted since). */
+  private returnConsumption(c: LabConsumption, reason: string, actor: Actor): void {
     if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
-    const out = this.db.stockMovements.filter((m) => m.consumptionId === id && m.kind === "consumption");
+    const out = this.db.stockMovements.filter((m) => m.consumptionId === c.id && m.kind === "consumption");
     if (this.countedSince(out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
     const now = new Date().toISOString();
     for (const m of out) {
@@ -3922,7 +3933,7 @@ export class FileStorage implements IStorage {
         receiptId: null,
         issueId: null,
         countId: null,
-        consumptionId: id,
+        consumptionId: c.id,
         note: reason,
         createdAt: now,
         createdBy: actor.id,
@@ -3930,8 +3941,6 @@ export class FileStorage implements IStorage {
       });
     }
     Object.assign(c, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
-    await this.persist();
-    return this.consumptionView(c);
   }
 
   // ------------------------------------------------------- reports (B5.7)
@@ -4642,8 +4651,11 @@ export class FileStorage implements IStorage {
     const p = a && this.db.patients.find((x) => x.id === a.patientId);
     if (!o || !a || !p) return undefined;
     const open = this.db.admissionBeds.find((x) => x.admissionId === a.id && !x.toAt);
+    const given = this.db.labConsumptions.find((c) => c.procedureTaskId === t.id && c.kind === "inpatient" && !c.cancelledAt);
+    const item = given && this.db.inventoryItems.find((i) => i.id === given.itemId);
     return {
       ...t,
+      stock: given ? { quantity: given.quantity, posted: given.posted, unit: item?.unit ?? "", itemName: item?.name ?? "" } : null,
       kind: o.kind,
       name: o.name,
       dose: o.dose,
@@ -4688,14 +4700,50 @@ export class FileStorage implements IStorage {
     const problem = markDoneProblem(t);
     if (problem) throw new StorageConflict(problem);
     Object.assign(t, { status: mark.status, doneAt: new Date().toISOString(), doneBy: actor.id, doneByName: actor.name, note: mark.note });
+    if (mark.status === "done") this.issueDose(t, actor);
     await this.persist();
     return this.taskView(t);
+  }
+
+  /** B6.6b: a stocked medicine's dose, given, leaves the warehouse (FEFO; the rest a shortage), as on Postgres. */
+  private issueDose(t: ProcedureTask, actor: Actor): void {
+    const o = this.db.inpatientOrders.find((x) => x.id === t.orderId);
+    if (!o || o.kind !== "medicine" || !o.itemId || !o.issueQty) return;
+    const a = this.db.admissions.find((x) => x.id === t.admissionId);
+    const c: LabConsumption = {
+      id: randomUUID(),
+      kind: "inpatient",
+      orderId: null,
+      orderTestId: null,
+      testId: null,
+      itemId: o.itemId,
+      normId: null,
+      quantity: o.issueQty,
+      posted: 0,
+      procedureTaskId: t.id,
+      reason: null,
+      note: `Statsionar karta №${a?.number ?? "?"}: ${o.name}${o.dose ? ` ${o.dose}` : ""}`,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+      createdByName: actor.name,
+      settledAt: null,
+      settledByName: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancelledByName: null,
+      cancelReason: null,
+    };
+    this.db.labConsumptions.push(c);
+    this.postConsumptions([{ c, need: c.quantity }], todayKey(), actor);
   }
 
   async revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined> {
     const t = this.openTask(id);
     if (!t) return undefined;
     if (t.status !== "done" && t.status !== "missed") throw new StorageConflict(TASK_NOT_MARKED);
+    // B6.6b: a medicine dose put back returns what it took to the shelf.
+    const given = this.db.labConsumptions.find((c) => c.procedureTaskId === t.id && c.kind === "inpatient" && !c.cancelledAt);
+    if (given) this.returnConsumption(given, `Muolaja belgisi qaytarildi: ${reason}`, actor);
     Object.assign(t, { status: "planned", doneAt: null, doneBy: null, doneByName: null, note: null, revertedAt: new Date().toISOString(), revertedByName: actor.name, revertReason: reason });
     await this.persist();
     return this.taskView(t);

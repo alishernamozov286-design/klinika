@@ -3098,3 +3098,69 @@ describe("stay billing (B6.6)", () => {
   });
 });
 
+describe("medicine stock (B6.6b)", () => {
+  it("a given dose leaves the shelf FEFO, a shortage stays for the storekeeper, a mark put back returns it; the dose bills at the sale price", async () => {
+    const admin = { id: "u-admin", name: "Admin" };
+    const nurse = { id: "u-nurse", name: "Hamshira" };
+    const dept = await storage.createDepartment({ name: "Infeksiya", kind: "statsionar", description: null, isActive: true }, admin);
+    const user = await storage.createUser({ username: "dr66b", password: "parol123", fullName: "Saidov Komil", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: dept.id, specialty: "Infeksionist", consultationPrice: 100000, slotMinutes: 20, schedule: [], isActive: true }, admin);
+    const ward = (await storage.addBeds((await storage.createWard({ departmentId: dept.id, name: "601", floor: 6, gender: "mixed", dayPrice: 100000, note: null }, admin)).id, 1, admin))!;
+    const p = await storage.createPatient({ fullName: "Mirzayev Olim", phone: "+998901010101", gender: "erkak", age: 52, address: null });
+    const a = await storage.admitPatient({ patientId: p.id, bedId: ward.beds[0].id, doctorId: doctor.id, admittedAt: null, reason: null }, admin);
+    const drug = await storage.createInventoryItem({ name: "Seftriakson 1 g", kind: "medicine", code: null, manufacturer: null, unit: "flakon", minStock: 0, salePrice: 12000, isActive: true, notes: null }, ACTOR);
+    await storage.createReceipt(
+      {
+        supplier: "Farm",
+        documentNumber: "F-1",
+        receivedOn: todayKey(),
+        notes: null,
+        lines: [
+          { itemId: drug.id, lotNumber: "LATE", expiresOn: "2028-01-01", quantity: 1, purchasePrice: 9000 },
+          { itemId: drug.id, lotNumber: "SOON", expiresOn: "2027-01-01", quantity: 1, purchasePrice: 8000 },
+        ],
+      },
+      ACTOR,
+    );
+    const onHand = async () => (await storage.listInventoryItems()).find((i) => i.id === drug.id)!.onHand;
+    expect(await onHand()).toBe(2);
+
+    const dr = { id: user.id, name: "Saidov Komil" };
+    const at = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    const o = (await storage.createInpatientOrder(
+      a.id,
+      { kind: "medicine", itemId: drug.id, serviceId: null, name: drug.name, dose: "1 g", route: "iv", times: ["08:00"], startOn: todayKey(), days: 1, note: null, unitPrice: 12000, issueQty: 1 },
+      [at(30), at(20), at(10)],
+      dr,
+    ))!;
+    const [d1, d2, d3] = o.tasks;
+
+    // First dose: the batch nearest its expiry goes first.
+    const t1 = (await storage.markProcedureTask(d1.id, { status: "done", note: null }, nurse))!;
+    expect(t1.stock).toMatchObject({ quantity: 1, posted: 1, unit: "flakon" });
+    const moves = (await storage.listConsumptions()).filter((c) => c.kind === "inpatient");
+    expect(moves).toHaveLength(1);
+    expect(moves[0]).toMatchObject({ itemId: drug.id, procedureTaskId: d1.id, note: `Statsionar karta №${a.number}: Seftriakson 1 g 1 g` });
+    expect(await onHand()).toBe(1);
+
+    // Second takes the last; the third finds the shelf empty — given anyway, the shortage recorded.
+    await storage.markProcedureTask(d2.id, { status: "done", note: null }, nurse);
+    const t3 = (await storage.markProcedureTask(d3.id, { status: "done", note: null }, nurse))!;
+    expect(t3.stock).toMatchObject({ quantity: 1, posted: 0 });
+    expect(await onHand()).toBe(0);
+    expect((await storage.listConsumptions({ shortOnly: true })).map((c) => c.procedureTaskId)).toEqual([d3.id]);
+    // Not cancelled from the warehouse journal — only by putting the mark back.
+    await expect(storage.cancelConsumption(moves[0].id, "xato", ACTOR)).rejects.toThrow(/belgisini qaytarish/);
+
+    // A mistaken mark put back returns the dose to the shelf; given again — a new consumption.
+    const back = (await storage.revertProcedureTask(d2.id, "Boshqa bemorga yozilgan", nurse))!;
+    expect(back.stock).toBeNull();
+    expect(await onHand()).toBe(1);
+    const again = (await storage.markProcedureTask(d2.id, { status: "done", note: null }, nurse))!;
+    expect(again.stock).toMatchObject({ posted: 1 });
+    expect((await storage.listConsumptions()).filter((c) => c.procedureTaskId === d2.id).map((c) => Boolean(c.cancelledAt)).sort()).toEqual([false, true]);
+
+    // Missed doses take nothing; the stay bills the three given at the sale price.
+    expect((await storage.getStayCharge(a.id))!.charge.procedures).toEqual([{ orderId: o.id, name: "Seftriakson 1 g", done: 3, unitPrice: 12000, amount: 36000 }]);
+  });
+});

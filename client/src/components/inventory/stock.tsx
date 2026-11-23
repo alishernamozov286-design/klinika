@@ -78,7 +78,7 @@ export function StockAlertsBanner({ alerts, onOpen, className }: { alerts: Stock
   if (alerts.consumptionShort > 0)
     parts.push({
       key: "consumption",
-      text: `${alerts.consumptionShort} ta laboratoriya sarfi qoldiqdan chiqmadi — kirimni tekshiring`,
+      text: `${alerts.consumptionShort} ta sarf (laboratoriya, statsionar) qoldiqdan chiqmadi — kirimni tekshiring`,
       tone: "text-amber-800 dark:text-amber-300",
     });
   if (parts.length === 0) return null;
@@ -403,7 +403,7 @@ export function StockHomePanel({ onOpen }: { onOpen: (w: StockAlertTarget) => vo
               className="text-left text-sm font-medium text-amber-800 underline-offset-2 hover:underline dark:text-amber-300 sm:col-span-3"
               data-testid="stock-home-consumption"
             >
-              {alerts.consumptionShort} ta laboratoriya sarfi qoldiqdan chiqmadi — kirimni tekshiring
+              {alerts.consumptionShort} ta sarf (laboratoriya, statsionar) qoldiqdan chiqmadi — kirimni tekshiring
             </button>
           )}
         </div>

@@ -246,6 +246,8 @@ export type NewInpatientOrder = {
   note: string | null;
   /** B6.6: the catalogue price of one dose, frozen; null — not billed. */
   unitPrice: number | null;
+  /** B6.6b: units of the stocked medicine one dose takes; null — nothing leaves the shelf. */
+  issueQty: number | null;
 };
 
 export type Actor = {

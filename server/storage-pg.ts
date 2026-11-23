@@ -168,6 +168,7 @@ import {
   MAX_CONSUME_BATCH,
   NORM_ALREADY_RETIRED,
   NORM_CONSUMPTION_FINAL,
+  INPATIENT_CONSUMPTION_FINAL,
   NORM_DRAFT_EXISTS,
   NORM_NOT_DRAFT,
   planConsumptions,
@@ -4708,7 +4709,7 @@ export class PgStorage implements IStorage {
    */
   private async postConsumptions(
     tx: typeof db,
-    entries: { id: string; itemId: string; need: number; posted: number }[],
+    entries: { id: string; itemId: string; need: number; posted: number; note?: string | null }[],
     batches: (typeof inventoryBatches.$inferSelect)[],
     today: string,
     actor: Actor,
@@ -4723,6 +4724,7 @@ export class PgStorage implements IStorage {
         kind: "consumption",
         quantity: -m.quantity,
         consumptionId: m.consumptionId,
+        note: entries.find((e) => e.id === m.consumptionId)?.note ?? null,
         createdBy: actor.id,
         createdByName: actor.name,
       })),
@@ -4849,43 +4851,54 @@ export class PgStorage implements IStorage {
       const exec = tx as unknown as typeof db;
       const [c] = await tx.select().from(labConsumptions).where(eq(labConsumptions.id, id)).for("update");
       if (!c) return undefined;
+      if (c.kind === "inpatient") throw new StorageConflict(INPATIENT_CONSUMPTION_FINAL);
       if (c.kind !== "extra") throw new StorageConflict(NORM_CONSUMPTION_FINAL);
-      if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
-      const out = await tx.select().from(stockMovements).where(and(eq(stockMovements.consumptionId, id), eq(stockMovements.kind, "consumption")));
-      if (await this.countedSince(exec, out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
-      if (out.length) {
-        const batches = await tx
-          .select()
-          .from(inventoryBatches)
-          .where(inArray(inventoryBatches.id, Array.from(new Set(out.map((m) => m.batchId)))))
-          .orderBy(asc(inventoryBatches.id))
-          .for("update");
-        const byId = new Map(batches.map((b) => [b.id, b]));
-        for (const m of out) {
-          const b = byId.get(m.batchId);
-          if (!b) continue;
-          b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
-          await tx.update(inventoryBatches).set({ remaining: b.remaining }).where(eq(inventoryBatches.id, b.id));
-        }
-        await tx.insert(stockMovements).values(
-          out.map((m) => ({
-            itemId: m.itemId,
-            batchId: m.batchId,
-            kind: "consumption_cancel",
-            quantity: -m.quantity,
-            consumptionId: id,
-            note: reason,
-            createdBy: actor.id,
-            createdByName: actor.name,
-          })),
-        );
-      }
-      await tx
-        .update(labConsumptions)
-        .set({ cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
-        .where(eq(labConsumptions.id, id));
+      await this.returnConsumption(exec, c, reason, actor);
       return (await this.consumptionsByIds(exec, [id]))[0];
     });
+  }
+
+  /**
+   * Puts what a consumption took back on its batches (the caller holds the row
+   * FOR UPDATE) and marks it cancelled. Refused once the batches were counted
+   * since — the count already settled them.
+   */
+  private async returnConsumption(tx: typeof db, c: typeof labConsumptions.$inferSelect, reason: string, actor: Actor): Promise<void> {
+    if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
+    const id = c.id;
+    const out = await tx.select().from(stockMovements).where(and(eq(stockMovements.consumptionId, id), eq(stockMovements.kind, "consumption")));
+    if (await this.countedSince(tx, out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+    if (out.length) {
+      const batches = await tx
+        .select()
+        .from(inventoryBatches)
+        .where(inArray(inventoryBatches.id, Array.from(new Set(out.map((m) => m.batchId)))))
+        .orderBy(asc(inventoryBatches.id))
+        .for("update");
+      const byId = new Map(batches.map((b) => [b.id, b]));
+      for (const m of out) {
+        const b = byId.get(m.batchId);
+        if (!b) continue;
+        b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+        await tx.update(inventoryBatches).set({ remaining: b.remaining }).where(eq(inventoryBatches.id, b.id));
+      }
+      await tx.insert(stockMovements).values(
+        out.map((m) => ({
+          itemId: m.itemId,
+          batchId: m.batchId,
+          kind: "consumption_cancel",
+          quantity: -m.quantity,
+          consumptionId: id,
+          note: reason,
+          createdBy: actor.id,
+          createdByName: actor.name,
+        })),
+      );
+    }
+    await tx
+      .update(labConsumptions)
+      .set({ cancelledAt: new Date().toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason })
+      .where(eq(labConsumptions.id, id));
   }
 
   // ------------------------------------------------------- reports (B5.7)
@@ -5742,6 +5755,7 @@ export class PgStorage implements IStorage {
 
   private async taskViews(where: SQL | undefined): Promise<ProcedureTaskView[]> {
     const openBed = alias(admissionBeds, "open_bed");
+    const dose = alias(labConsumptions, "dose");
     const rows = await db
       .select({
         t: procedureTasks,
@@ -5758,6 +5772,10 @@ export class PgStorage implements IStorage {
         patientNumber: patients.patientNumber,
         wardName: wards.name,
         bedLabel: beds.label,
+        stockQty: dose.quantity,
+        stockPosted: dose.posted,
+        stockUnit: inventoryItems.unit,
+        stockItem: inventoryItems.name,
       })
       .from(procedureTasks)
       .innerJoin(inpatientOrders, eq(inpatientOrders.id, procedureTasks.orderId))
@@ -5766,11 +5784,14 @@ export class PgStorage implements IStorage {
       .leftJoin(openBed, and(eq(openBed.admissionId, admissions.id), isNull(openBed.toAt)))
       .leftJoin(beds, eq(beds.id, openBed.bedId))
       .leftJoin(wards, eq(wards.id, openBed.wardId))
+      .leftJoin(dose, and(eq(dose.procedureTaskId, procedureTasks.id), eq(dose.kind, "inpatient"), isNull(dose.cancelledAt)))
+      .leftJoin(inventoryItems, eq(inventoryItems.id, dose.itemId))
       .where(where)
       .orderBy(asc(procedureTasks.plannedAt));
-    return rows.map(({ t, ...r }) => ({
+    return rows.map(({ t, stockQty, stockPosted, stockUnit, stockItem, ...r }) => ({
       ...mapTask(t),
       ...r,
+      stock: stockQty === null ? null : { quantity: stockQty, posted: stockPosted ?? 0, unit: stockUnit ?? "", itemName: stockItem ?? "" },
       kind: r.kind as ProcedureTaskView["kind"],
       orderStatus: r.orderStatus as ProcedureTaskView["orderStatus"],
     }));
@@ -5810,9 +5831,28 @@ export class PgStorage implements IStorage {
         .update(procedureTasks)
         .set({ status: mark.status, doneAt: new Date().toISOString(), doneBy: actor.id, doneByName: actor.name, note: mark.note })
         .where(eq(procedureTasks.id, id));
+      if (mark.status === "done") await this.issueDose(tx as unknown as typeof db, t, actor);
       return true;
     });
     return found ? this.getProcedureTask(id) : undefined;
+  }
+
+  /**
+   * B6.6b: a stocked medicine's dose, given, leaves the warehouse — FEFO from
+   * usable batches; what the shelf cannot cover stays a shortage for the
+   * storekeeper (B5.6). The dose is never held back by the warehouse.
+   */
+  private async issueDose(tx: typeof db, t: ProcedureTask, actor: Actor): Promise<void> {
+    const [o] = await tx.select().from(inpatientOrders).where(eq(inpatientOrders.id, t.orderId)).limit(1);
+    if (!o || o.kind !== "medicine" || !o.itemId || !o.issueQty) return;
+    const [a] = await tx.select({ number: admissions.number }).from(admissions).where(eq(admissions.id, t.admissionId)).limit(1);
+    const note = `Statsionar karta №${a?.number ?? "?"}: ${o.name}${o.dose ? ` ${o.dose}` : ""}`;
+    const batches = await this.lockLiveBatches(tx, [o.itemId]);
+    const [c] = await tx
+      .insert(labConsumptions)
+      .values({ kind: "inpatient", procedureTaskId: t.id, itemId: o.itemId, quantity: o.issueQty, posted: 0, note, createdBy: actor.id, createdByName: actor.name })
+      .returning();
+    await this.postConsumptions(tx, [{ id: c.id, itemId: c.itemId, need: c.quantity, posted: 0, note }], batches, todayKey(), actor);
   }
 
   async revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined> {
@@ -5820,6 +5860,13 @@ export class PgStorage implements IStorage {
       const t = await this.lockTask(tx, id);
       if (!t) return false;
       if (t.status !== "done" && t.status !== "missed") throw new StorageConflict(TASK_NOT_MARKED);
+      // B6.6b: a medicine dose put back returns what it took to the shelf.
+      const [given] = await tx
+        .select()
+        .from(labConsumptions)
+        .where(and(eq(labConsumptions.procedureTaskId, id), eq(labConsumptions.kind, "inpatient"), isNull(labConsumptions.cancelledAt)))
+        .for("update");
+      if (given) await this.returnConsumption(tx as unknown as typeof db, given, `Muolaja belgisi qaytarildi: ${reason}`, actor);
       await tx
         .update(procedureTasks)
         .set({ status: "planned", doneAt: null, doneBy: null, doneByName: null, note: null, revertedAt: new Date().toISOString(), revertedByName: actor.name, revertReason: reason })

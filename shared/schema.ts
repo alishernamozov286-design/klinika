@@ -588,8 +588,10 @@ export const inpatientOrders = pgTable(
     startOn: text("start_on").notNull(),
     days: integer("days").notNull(),
     note: text("note"),
-    /** B6.6: the catalogue price of one dose when ordered (procedures from the service list); null — not billed. */
+    /** B6.6: the catalogue price of one dose when ordered (procedures from the service list; a stocked medicine: its sale price × issueQty); null — not billed. */
     unitPrice: money("unit_price"),
+    /** B6.6b: how much of the warehouse item one dose takes (1 flakon, 2 tabletka); null — nothing leaves the shelf. */
+    issueQty: doublePrecision("issue_qty"),
     status: text("status").notNull().default("active"),
     prescribedBy: varchar("prescribed_by"),
     prescribedByName: text("prescribed_by_name"),
@@ -1866,6 +1868,8 @@ export const labConsumptions = pgTable(
     normId: varchar("norm_id"),
     quantity: doublePrecision("quantity").notNull(),
     posted: doublePrecision("posted").notNull().default(0),
+    /** B6.6b: the medicine dose given on the ward (kind "inpatient"). */
+    procedureTaskId: varchar("procedure_task_id"),
     /** Extra use only. */
     reason: text("reason"),
     note: text("note"),
@@ -1882,6 +1886,7 @@ export const labConsumptions = pgTable(
   },
   (t) => [
     uniqueIndex("UQ_lab_consumptions_norm").on(t.orderTestId, t.itemId).where(sql`kind = 'norm'`),
+    uniqueIndex("UQ_lab_consumptions_dose").on(t.procedureTaskId).where(sql`kind = 'inpatient' AND cancelled_at IS NULL`),
     index("IDX_lab_consumptions_created").on(t.createdAt),
   ],
 );
@@ -2029,6 +2034,8 @@ export type ProcedureTask = Omit<typeof procedureTasks.$inferSelect, "status"> &
 export type InpatientOrderView = InpatientOrder & { tasks: ProcedureTask[] };
 /** A dose as the nurse's list shows it: what, for whom, where. */
 export type ProcedureTaskView = ProcedureTask & {
+  /** B6.6b: what a medicine dose took from the warehouse (the live consumption), when it did. */
+  stock: { quantity: number; posted: number; unit: string; itemName: string } | null;
   kind: OrderKind;
   name: string;
   dose: string | null;
@@ -2909,6 +2916,13 @@ export const inpatientOrderSchema = z.object({
   dose: z.string().trim().max(100, "Juda uzun").nullish().transform((v) => v || null),
   route: z.enum(ADMIN_ROUTES).nullish().transform((v) => v ?? null),
   times: z.array(z.string()).max(MAX_TIMES_PER_DAY, `Kuniga ko'pi bilan ${MAX_TIMES_PER_DAY} marta`),
+  /** B6.6b: units of the stocked medicine one dose takes. */
+  issueQty: z.coerce
+    .number({ invalid_type_error: "Miqdorni kiriting" })
+    .positive("Miqdor musbat bo'lsin")
+    .max(1000, "Juda katta")
+    .nullish()
+    .transform((v) => v ?? null),
   startOn: z.string(),
   days: z.coerce.number().int("Butun son bo'lsin").min(1, "Kamida 1 kun").max(MAX_ORDER_DAYS, `Ko'pi bilan ${MAX_ORDER_DAYS} kun`),
   note: z.string().trim().max(500, "Juda uzun").nullish().transform((v) => v || null),
@@ -3270,7 +3284,7 @@ export const prescriptionLineSchema = z.object({
 export type PrescriptionLine = z.infer<typeof prescriptionLineSchema>;
 /** What the treatment form chooses from (B3.6): only the facts a doctor needs. */
 export type PrescriptionCatalog = {
-  medicines: { id: string; name: string; unit: string; manufacturer: string | null; inStock: boolean }[];
+  medicines: { id: string; name: string; unit: string; manufacturer: string | null; inStock: boolean; salePrice: number | null }[];
   procedures: { id: string; name: string; price: number }[];
 };
 

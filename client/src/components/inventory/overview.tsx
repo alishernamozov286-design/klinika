@@ -126,7 +126,7 @@ function AttentionCard({ overview, alerts, onOpen }: { overview: InventoryOvervi
     rows.push({ key: "expired", icon: AlertTriangle, n: alerts.expired.batches, label: "partiyaning muddati o'tgan — hisobdan chiqaring", tone: alerts.expired.batches ? "rose" : "muted", to: { tab: "stock", window: "expired" } });
     rows.push({ key: "soon", icon: CalendarClock, n: alerts.soon.batches, label: "partiya 30 kun ichida tugaydi", tone: alerts.soon.batches ? "amber" : "muted", to: { tab: "stock", window: "soon" } });
     rows.push({ key: "low", icon: PackageMinus, n: alerts.lowStock.length, label: "mahsulot kam qolgan", tone: alerts.lowStock.length ? "amber" : "muted", to: { tab: "stock-low" } });
-    rows.push({ key: "short", icon: Beaker, n: alerts.consumptionShort, label: "laboratoriya sarfi qoldiqdan chiqmagan", tone: alerts.consumptionShort ? "amber" : "muted", to: { tab: "consumption" } });
+    rows.push({ key: "short", icon: Beaker, n: alerts.consumptionShort, label: "sarf (laboratoriya, statsionar) qoldiqdan chiqmagan", tone: alerts.consumptionShort ? "amber" : "muted", to: { tab: "consumption" } });
   }
   if (a) {
     rows.push({ key: "norms", icon: Scale, n: a.pendingNorms, label: "sarf normasi tasdiqlash kutmoqda", tone: a.pendingNorms ? "sky" : "muted", to: { tab: "consumption" } });

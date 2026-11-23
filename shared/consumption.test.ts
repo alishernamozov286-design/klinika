@@ -71,7 +71,7 @@ describe("reagent consumption (B5.6, TZ §7.3)", () => {
       e({ itemId: "tube", itemName: "Probirka", unit: "dona", testId: null, testName: null, orderTestId: null, kind: "extra", quantity: 2, posted: 2, value: 1800 }),
     ]);
     expect(r).toMatchObject({ value: 1800 * 2 + 9000 + 1800, performed: 3, extraEntries: 2, shortEntries: 1 });
-    expect(r.byItem[0]).toEqual({ itemId: "glu", itemName: "Glyukoza reagenti", unit: "to'plam", norm: 0.03, extra: 0.05, total: 0.08, short: 0.01, value: 12600 });
+    expect(r.byItem[0]).toEqual({ itemId: "glu", itemName: "Glyukoza reagenti", unit: "to'plam", norm: 0.03, extra: 0.05, inpatient: 0, total: 0.08, short: 0.01, value: 12600 });
     expect(r.byTest).toEqual([{ testId: "t-glu", testName: "Glyukoza", performed: 3, value: 12600 }]);
   });
 

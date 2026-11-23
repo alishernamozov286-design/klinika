@@ -29,12 +29,19 @@ export const NORM_STATUS_LABELS: Record<NormStatus, string> = {
   retired: "Bekor qilingan",
 };
 
-export const CONSUMPTION_KINDS = ["norm", "extra"] as const;
+/**
+ * B6.6b: "inpatient" — a medicine dose a nurse gave on the ward (procedure_task_id).
+ * Posted the same way: FEFO, a shortage stays for the storekeeper to settle. It is
+ * not cancelled here but by putting the dose's mark back (it returns to the shelf).
+ */
+export const CONSUMPTION_KINDS = ["norm", "extra", "inpatient"] as const;
 export type ConsumptionKind = (typeof CONSUMPTION_KINDS)[number];
 export const CONSUMPTION_KIND_LABELS: Record<ConsumptionKind, string> = {
   norm: "Norma bo'yicha",
   extra: "Qo'shimcha sarf",
+  inpatient: "Statsionar (dori)",
 };
+export const INPATIENT_CONSUMPTION_FINAL = "Statsionar dori sarfi muolaja belgisini qaytarish bilan bekor bo'ladi (kasallik tarixi yoki hamshira ro'yxati)";
 
 /** Why more was used than the norm: the "real ishlatilgan miqdor" of TZ §7.3. */
 export const EXTRA_REASONS = ["repeat", "calibration", "qc", "spoiled", "other"] as const;
@@ -129,7 +136,7 @@ type ReportEntry = {
   cancelledAt: string | null;
 };
 
-export type ConsumptionItemRow = { itemId: string; itemName: string; unit: string; norm: number; extra: number; total: number; short: number; value: number };
+export type ConsumptionItemRow = { itemId: string; itemName: string; unit: string; norm: number; extra: number; inpatient: number; total: number; short: number; value: number };
 export type ConsumptionTestRow = { testId: string; testName: string; performed: number; value: number };
 export type ConsumptionReport = {
   /** At purchase prices of the batches the stock was taken from, so'm. */
@@ -137,6 +144,8 @@ export type ConsumptionReport = {
   /** Distinct result lines that consumed by norm. */
   performed: number;
   extraEntries: number;
+  /** B6.6b: medicine doses given on the ward. */
+  inpatientEntries: number;
   shortEntries: number;
   byItem: ConsumptionItemRow[];
   byTest: ConsumptionTestRow[];
@@ -147,14 +156,16 @@ export function summarizeConsumption(entries: ReportEntry[]): ConsumptionReport 
   const items = new Map<string, ConsumptionItemRow>();
   const tests = new Map<string, ConsumptionTestRow & { lines: Set<string> }>();
   const performed = new Set<string>();
-  const out: ConsumptionReport = { value: 0, performed: 0, extraEntries: 0, shortEntries: 0, byItem: [], byTest: [] };
+  const out: ConsumptionReport = { value: 0, performed: 0, extraEntries: 0, inpatientEntries: 0, shortEntries: 0, byItem: [], byTest: [] };
   for (const e of entries) {
     if (e.cancelledAt) continue;
     out.value += e.value;
     if (shortOf(e) > 0) out.shortEntries += 1;
     if (e.kind === "extra") out.extraEntries += 1;
-    const it = items.get(e.itemId) ?? { itemId: e.itemId, itemName: e.itemName, unit: e.unit, norm: 0, extra: 0, total: 0, short: 0, value: 0 };
+    if (e.kind === "inpatient") out.inpatientEntries += 1;
+    const it = items.get(e.itemId) ?? { itemId: e.itemId, itemName: e.itemName, unit: e.unit, norm: 0, extra: 0, inpatient: 0, total: 0, short: 0, value: 0 };
     if (e.kind === "norm") it.norm += e.quantity;
+    else if (e.kind === "inpatient") it.inpatient += e.quantity;
     else it.extra += e.quantity;
     it.total += e.quantity;
     it.short += shortOf(e);
@@ -173,7 +184,7 @@ export function summarizeConsumption(entries: ReportEntry[]): ConsumptionReport 
   const tidy = (n: number) => Number(n.toFixed(6));
   out.performed = performed.size;
   out.byItem = Array.from(items.values())
-    .map((r) => ({ ...r, norm: tidy(r.norm), extra: tidy(r.extra), total: tidy(r.total), short: tidy(r.short) }))
+    .map((r) => ({ ...r, norm: tidy(r.norm), extra: tidy(r.extra), inpatient: tidy(r.inpatient), total: tidy(r.total), short: tidy(r.short) }))
     .sort((a, b) => b.value - a.value || a.itemName.localeCompare(b.itemName));
   out.byTest = Array.from(tests.values())
     .map(({ lines, ...t }) => ({ ...t, performed: lines.size }))

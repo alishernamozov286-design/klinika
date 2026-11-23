@@ -429,9 +429,14 @@ export function registerInpatientRoutes(app: Express) {
           const item = await storage.getInventoryItem(input.itemId);
           if (!item || item.kind !== "medicine" || !item.isActive) return res.status(400).json({ message: "Dori ombor katalogida topilmadi yoki faol emas" });
           name = item.name;
+          // B6.6b: a stocked medicine says how much of it one dose takes; it bills at the sale price.
+          if (!input.issueQty) return res.status(400).json({ message: `Bir dozaga ombordan qancha ketishini kiriting (${item.unit})` });
+          unitPrice = item.salePrice !== null && item.salePrice !== undefined ? Math.round(item.salePrice * input.issueQty) : null;
+        } else if (input.issueQty) {
+          return res.status(400).json({ message: "Ombordan miqdor faqat katalogdagi dori uchun" });
         }
       } else {
-        if (input.itemId) return res.status(400).json({ message: "Muolaja ombor katalogidan tanlanmaydi" });
+        if (input.itemId || input.issueQty) return res.status(400).json({ message: "Muolaja ombor katalogidan tanlanmaydi" });
         if (input.serviceId) {
           const service = await storage.getService(input.serviceId);
           if (!service || service.kind !== "muolaja" || !service.isActive) return res.status(400).json({ message: "Muolaja xizmatlar katalogida topilmadi yoki faol emas" });
@@ -484,7 +489,10 @@ export function registerInpatientRoutes(app: Express) {
       const note = status === "done" ? taskMarkSchema.parse(req.body).note : taskReasonSchema.parse(req.body).reason;
       const t = await storage.markProcedureTask(req.params.id, { status, note }, actorOf(req));
       if (!t) return res.status(404).json({ message: "Muolaja topilmadi" });
-      await audit(req, "update", "admission", t.admissionId, `${taskLabel(t)} — ${TASK_STATUS_LABELS[status].toLowerCase()}${note ? `: ${note}` : ""}`);
+      // B6.6b: what the dose took from the warehouse, and any shortage left for the storekeeper.
+      const short = t.stock ? Math.max(0, t.stock.quantity - t.stock.posted) : 0;
+      const stock = t.stock ? `; ombordan ${t.stock.posted} ${t.stock.unit}${short > 1e-6 ? ` (kamomad ${Number(short.toFixed(3))} ${t.stock.unit})` : ""}` : "";
+      await audit(req, "update", "admission", t.admissionId, `${taskLabel(t)} — ${TASK_STATUS_LABELS[status].toLowerCase()}${note ? `: ${note}` : ""}${stock}`);
       res.json(t);
     });
   app.post("/api/procedure-tasks/:id/done", requirePermission("procedures.perform"), markTask("done"));

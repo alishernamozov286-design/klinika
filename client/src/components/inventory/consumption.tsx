@@ -199,7 +199,7 @@ function ShortageBanner({ entries, quiet }: { entries: LabConsumptionView[]; qui
       <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
       <div className="min-w-0 flex-1">
         <p className="font-medium text-amber-900 dark:text-amber-200">
-          {entries.length} ta sarf qoldiqdan to'liq chiqmadi: omborda yaroqli partiya yetmagan. Natijalar to'xtatilmagan.
+          {entries.length} ta sarf qoldiqdan to'liq chiqmadi: omborda yaroqli partiya yetmagan. Tahlil natijalari va muolajalar to'xtatilmagan.
         </p>
         <p className="mt-0.5 text-amber-800/90 dark:text-amber-300/90">
           {Array.from(byItem.values())
@@ -313,16 +313,26 @@ function JournalView({
                           variant="outline"
                           className={cn(
                             "mb-1 font-medium",
-                            e.kind === "norm" ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300" : "border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+                            e.kind === "norm"
+                              ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                              : e.kind === "inpatient"
+                                ? "border-teal-500/25 bg-teal-500/10 text-teal-700 dark:text-teal-300"
+                                : "border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-300",
                           )}
                         >
                           {e.kind === "extra" && e.reason ? EXTRA_REASON_LABELS[e.reason] : CONSUMPTION_KIND_LABELS[e.kind]}
                         </Badge>
-                        <p className="text-sm">
-                          {e.orderNumber ? <span className="mr-1 font-mono text-xs text-muted-foreground">#{e.orderNumber}</span> : null}
-                          {e.testName ?? "—"}
-                        </p>
-                        {e.note && <p className="text-xs italic text-muted-foreground">{e.note}</p>}
+                        {e.kind === "inpatient" ? (
+                          <p className="text-sm">{e.note ?? "Statsionar"}</p>
+                        ) : (
+                          <>
+                            <p className="text-sm">
+                              {e.orderNumber ? <span className="mr-1 font-mono text-xs text-muted-foreground">#{e.orderNumber}</span> : null}
+                              {e.testName ?? "—"}
+                            </p>
+                            {e.note && <p className="text-xs italic text-muted-foreground">{e.note}</p>}
+                          </>
+                        )}
                         {e.cancelledAt && <p className="text-xs text-rose-700 dark:text-rose-300">Bekor qilingan: {e.cancelReason}</p>}
                         <p className="text-xs text-muted-foreground md:hidden">{formatDateTime(e.createdAt)}</p>
                       </TableCell>
@@ -884,6 +894,7 @@ const ITEM_COLUMNS: ExportColumn<ConsumptionReport["byItem"][number]>[] = [
   { header: "Birlik", value: (r) => r.unit, width: 9 },
   { header: "Norma bo'yicha", value: (r) => r.norm, type: "number", width: 14 },
   { header: "Qo'shimcha", value: (r) => r.extra, type: "number", width: 12 },
+  { header: "Statsionar", value: (r) => r.inpatient, type: "number", width: 12 },
   { header: "Jami", value: (r) => r.total, type: "number", width: 10 },
   { header: "Yetishmadi", value: (r) => r.short, type: "number", width: 11 },
   { header: "Qiymati", value: (r) => r.value, type: "money", width: 14, total: true },
@@ -930,6 +941,7 @@ function ReportView({ journal, isLoading, canExport }: { journal: Journal | unde
                 <TableHead>Mahsulot</TableHead>
                 <TableHead className="hidden text-right sm:table-cell">Norma bo'yicha</TableHead>
                 <TableHead className="hidden text-right sm:table-cell">Qo'shimcha</TableHead>
+                <TableHead className="hidden text-right sm:table-cell">Statsionar</TableHead>
                 <TableHead className="text-right">Jami</TableHead>
                 <TableHead className="text-right">Qiymat</TableHead>
               </TableRow>
@@ -947,6 +959,7 @@ function ReportView({ journal, isLoading, canExport }: { journal: Journal | unde
                   </TableCell>
                   <TableCell className="hidden text-right tabular sm:table-cell">{fmtQty(x.norm)}</TableCell>
                   <TableCell className="hidden text-right tabular sm:table-cell">{x.extra > 0 ? fmtQty(x.extra) : "—"}</TableCell>
+                  <TableCell className="hidden text-right tabular sm:table-cell">{x.inpatient > 0 ? fmtQty(x.inpatient) : "—"}</TableCell>
                   <TableCell className="text-right">
                     <span className="font-semibold tabular">{fmtQty(x.total)}</span> <span className="text-xs text-muted-foreground">{x.unit}</span>
                   </TableCell>
