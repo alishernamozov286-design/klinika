@@ -15,6 +15,7 @@ import type { AdminRoute } from "@shared/prescription";
 import type { OrderKind } from "@shared/procedures";
 import type { StayCharge } from "@shared/stay-bill";
 import type { EpicrisisText } from "@shared/epicrisis";
+import type { ActivityEvent } from "@shared/patient-flow";
 import type { EpicrisisVersion } from "@shared/schema";
 import type { AdmissionObservation, AdmissionView, AdmitInput, Bed, BedView, CaseHistoryVersion, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
 import type { CaseText, Vitals } from "@shared/case-history";
@@ -1031,6 +1032,14 @@ export interface IStorage {
   markProcedureTask(id: string, mark: { status: "done" | "missed"; note: string | null }, actor: Actor): Promise<ProcedureTaskView | undefined>;
   /** Puts a mistaken mark back to planned, with a reason. */
   revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined>;
+  // ---- R.2 patient flow
+  /**
+   * Local days `from`..`to` (inclusive): who was served how (attended
+   * appointments, lab orders not cancelled — one row per day, patient and
+   * kind), cards registered per day, lab tests ordered and verified per day.
+   */
+  listActivity(from: string, to: string): Promise<{ events: ActivityEvent[]; newPatients: { day: string; count: number }[]; tests: { day: string; ordered: number; verified: number }[] }>;
+
   // ---- B6.7 discharge and epicrisis (TZ §8.1.5)
   /** Every version of a stay's epicrisis, newest first. */
   listEpicrisis(admissionId: string): Promise<EpicrisisVersion[]>;

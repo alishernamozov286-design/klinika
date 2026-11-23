@@ -241,6 +241,7 @@ import {
   type EpicrisisText,
 } from "@shared/epicrisis";
 import { stayCharge, type StayCharge } from "@shared/stay-bill";
+import type { ActivityEvent } from "@shared/patient-flow";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem, type TaskStatus } from "@shared/procedures";
 import type { NewInpatientOrder } from "./storage-types";
@@ -5722,6 +5723,53 @@ export class PgStorage implements IStorage {
         .returning();
       return mapObservation(row);
     });
+  }
+
+  // ------------------------------------------------------------ R.2 patient flow
+
+  async listActivity(from: string, to: string): Promise<{ events: ActivityEvent[]; newPatients: { day: string; count: number }[]; tests: { day: string; ordered: number; verified: number }[] }> {
+    const localDate = (col: SQL) => sql`(${col} AT TIME ZONE ${LOCAL_TZ})::date`;
+    const [events, fresh, ordered, verified] = await Promise.all([
+      db.execute(sql`
+        SELECT DISTINCT to_char(${localDate(sql`o.created_at`)}, 'YYYY-MM-DD') AS day, o.patient_id, 'lab' AS kind
+          FROM orders o
+         WHERE o.status <> 'cancelled' AND ${localDate(sql`o.created_at`)} BETWEEN ${from}::date AND ${to}::date
+        UNION
+        SELECT DISTINCT a.date, a.patient_id, 'visit'
+          FROM appointments a
+         WHERE a.status IN ('arrived', 'in_progress', 'completed') AND a.date >= ${from} AND a.date <= ${to}`),
+      db.execute(sql`
+        SELECT to_char(${localDate(sql`p.created_at`)}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+          FROM patients p
+         WHERE ${localDate(sql`p.created_at`)} BETWEEN ${from}::date AND ${to}::date
+         GROUP BY 1`),
+      db.execute(sql`
+        SELECT to_char(${localDate(sql`o.created_at`)}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+          FROM order_tests ot JOIN orders o ON o.id = ot.order_id
+         WHERE o.status <> 'cancelled' AND ${localDate(sql`o.created_at`)} BETWEEN ${from}::date AND ${to}::date
+         GROUP BY 1`),
+      db.execute(sql`
+        SELECT to_char(${localDate(sql`ot.verified_at`)}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+          FROM order_tests ot JOIN orders o ON o.id = ot.order_id
+         WHERE o.status <> 'cancelled' AND ot.verified_at IS NOT NULL AND ${localDate(sql`ot.verified_at`)} BETWEEN ${from}::date AND ${to}::date
+         GROUP BY 1`),
+    ]);
+    const tests = new Map<string, { day: string; ordered: number; verified: number }>();
+    const put = (rows: Record<string, unknown>[], key: "ordered" | "verified") => {
+      for (const r of rows) {
+        const day = String(r.day);
+        const t = tests.get(day) ?? { day, ordered: 0, verified: 0 };
+        t[key] = Number(r.n);
+        tests.set(day, t);
+      }
+    };
+    put(ordered.rows as Record<string, unknown>[], "ordered");
+    put(verified.rows as Record<string, unknown>[], "verified");
+    return {
+      events: (events.rows as Record<string, unknown>[]).map((r) => ({ day: String(r.day), patientId: String(r.patient_id), kind: r.kind as ActivityEvent["kind"] })),
+      newPatients: (fresh.rows as Record<string, unknown>[]).map((r) => ({ day: String(r.day), count: Number(r.n) })),
+      tests: [...tests.values()],
+    };
   }
 
   // ------------------------------------------------------------ B6.7 discharge and epicrisis

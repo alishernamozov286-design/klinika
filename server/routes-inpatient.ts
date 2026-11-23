@@ -45,6 +45,7 @@ import {
 import { VITALS, VITAL_SPEC, caseChanges, caseTextOf, formatVital, normalizeCase, vitalsProblem, type Vitals } from "@shared/case-history";
 import { labResults } from "./routes-medical";
 import { buildInpatientReport } from "@shared/inpatient-report";
+import { buildPatientFlowReport } from "@shared/patient-flow";
 import { ADMIN_ROUTE_LABELS } from "@shared/prescription";
 import { buildEpicrisisDraft, epicrisisChanges, epicrisisTextOf, normalizeEpicrisis } from "@shared/epicrisis";
 import { patientAge } from "@shared/patient-identity";
@@ -770,6 +771,38 @@ export function registerInpatientRoutes(app: Express) {
           today,
           now: Date.now(),
           dayOf: localDay,
+        }),
+      );
+    }),
+  );
+
+  /** R.2 "kunlik bemorlar soni", "laboratoriya tahlillari soni": people served per day (each once), by kind; lab tests ordered and verified. */
+  app.get(
+    "/api/reports/patient-flow",
+    requirePermission("reports.view"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const to = stringParam(req.query.to) ?? today;
+      const from = stringParam(req.query.from) ?? addDays(to, -29);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ message: "Davrni to'g'ri tanlang" });
+      if (addDays(from, 366) < to) return res.status(400).json({ message: "Davr ko'pi bilan bir yil" });
+      const startOfDay = (day: string) => new Date(`${day}T00:00:00`).getTime();
+      const endOfDay = (day: string) => new Date(`${day}T23:59:59.999`).getTime();
+      const [activity, stays] = await Promise.all([
+        storage.listActivity(from, to),
+        storage
+          .listAdmissions({ inHospitalBetween: { from: new Date(startOfDay(from)).toISOString(), to: new Date(endOfDay(to)).toISOString() }, limit: 20000 })
+          .catch((e) => emptyIfMissing(e, [])),
+      ]);
+      res.json(
+        buildPatientFlowReport({
+          from,
+          to,
+          today,
+          ...activity,
+          stays: stays.map((a) => ({ patientId: a.patientId, status: a.status, admittedAt: a.admittedAt, dischargedAt: a.dischargedAt })),
+          startOfDay,
+          endOfDay,
         }),
       );
     }),

@@ -167,6 +167,7 @@ import {
   type EpicrisisText,
 } from "@shared/epicrisis";
 import { stayCharge, type StayCharge } from "@shared/stay-bill";
+import type { ActivityEvent } from "@shared/patient-flow";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem } from "@shared/procedures";
 import type { NewInpatientOrder } from "./storage-types";
@@ -4604,6 +4605,42 @@ export class FileStorage implements IStorage {
     Object.assign(a, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
     await this.persist();
     return this.admissionViewOf(a);
+  }
+
+  // ------------------------------------------------------------ R.2 patient flow
+
+  async listActivity(from: string, to: string): Promise<{ events: ActivityEvent[]; newPatients: { day: string; count: number }[]; tests: { day: string; ordered: number; verified: number }[] }> {
+    const within = (d: string) => d >= from && d <= to;
+    const seen = new Set<string>();
+    const events: ActivityEvent[] = [];
+    const add = (day: string, patientId: string, kind: ActivityEvent["kind"]) => {
+      const k = `${day}|${patientId}|${kind}`;
+      if (seen.has(k)) return;
+      seen.add(k);
+      events.push({ day, patientId, kind });
+    };
+    const live = this.db.orders.filter((o) => o.status !== "cancelled");
+    for (const o of live) if (within(localDay(o.createdAt))) add(localDay(o.createdAt), o.patientId, "lab");
+    for (const a of this.db.appointments) if (["arrived", "in_progress", "completed"].includes(a.status) && within(a.date)) add(a.date, a.patientId, "visit");
+    const fresh = new Map<string, number>();
+    for (const p of this.db.patients) {
+      const d = localDay(p.createdAt);
+      if (within(d)) fresh.set(d, (fresh.get(d) ?? 0) + 1);
+    }
+    const tests = new Map<string, { day: string; ordered: number; verified: number }>();
+    const bump = (day: string, key: "ordered" | "verified") => {
+      const t = tests.get(day) ?? { day, ordered: 0, verified: 0 };
+      t[key]++;
+      tests.set(day, t);
+    };
+    const liveIds = new Map(live.map((o) => [o.id, o]));
+    for (const ot of this.db.orderTests) {
+      const o = liveIds.get(ot.orderId);
+      if (!o) continue;
+      if (within(localDay(o.createdAt))) bump(localDay(o.createdAt), "ordered");
+      if (ot.verifiedAt && within(localDay(ot.verifiedAt))) bump(localDay(ot.verifiedAt), "verified");
+    }
+    return { events, newPatients: [...fresh.entries()].map(([day, count]) => ({ day, count })), tests: [...tests.values()] };
   }
 
   // ------------------------------------------------------------ B6.7 discharge and epicrisis

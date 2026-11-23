@@ -3243,3 +3243,22 @@ describe("occupancy report source (R.2)", () => {
   });
 });
 
+describe("patient flow source (R.2)", () => {
+  it("lists who was served how per day, new cards, and tests ordered and verified", async () => {
+    const today = todayKey();
+    const before = await storage.listActivity(today, today);
+    const p = await storage.createPatient({ fullName: "Oqim Bemor", phone: "+998904040404", gender: "ayol", age: 33, address: null });
+    const order = await storage.createOrder({ patientId: p.id, testIds: ["3", "4"], discount: 0, paidAmount: 0 });
+    const cancelled = await storage.createOrder({ patientId: p.id, testIds: ["3"], discount: 0, paidAmount: 0 });
+    await storage.updateOrder(cancelled.id, { status: "cancelled" });
+    const after = await storage.listActivity(today, today);
+    expect(after.events.filter((e) => e.patientId === p.id)).toEqual([{ day: today, patientId: p.id, kind: "lab" }]);
+    const fresh = (x: typeof after) => x.newPatients.find((n) => n.day === today)?.count ?? 0;
+    expect(fresh(after)).toBe(fresh(before) + 1);
+    const ordered = (x: typeof after) => x.tests.find((t) => t.day === today)?.ordered ?? 0;
+    // The cancelled order's test does not count; the live order's two do.
+    expect(ordered(after)).toBe(ordered(before) + order.items.length);
+    expect(await storage.listActivity("2000-01-01", "2000-01-02")).toEqual({ events: [], newPatients: [], tests: [] });
+  });
+});
+

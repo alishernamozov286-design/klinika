@@ -33,6 +33,7 @@ import { EmptyState, MeterBar, PageHeader, SectionCard, StatCard } from "@/compo
 import { ExportButtons } from "@/components/export-buttons";
 import { FinanceReportView } from "@/components/reports/finance";
 import { InpatientReportView } from "@/components/reports/inpatient";
+import { PatientFlowView } from "@/components/reports/patient-flow";
 import type { ExportDoc, ExportSection } from "@/lib/export-types";
 import { dayKey, daysAgo, formatDate, money, moneyShort } from "@/lib/format";
 
@@ -88,18 +89,21 @@ function ChartTooltip({
 
 /** The page: the accountant's finance report first (B7.8), the lab report beside it. */
 export default function Reports() {
-  type View = "finance" | "lab" | "inpatient";
+  type View = "finance" | "patients" | "lab" | "inpatient";
   const [view, setView] = useState<View>(() => {
     const asked = new URLSearchParams(window.location.search).get("view");
-    return asked === "lab" || asked === "inpatient" ? asked : "finance";
+    return asked === "lab" || asked === "inpatient" || asked === "patients" ? asked : "finance";
   });
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Analitika" title="Hisobotlar" description="Moliyaviy hisobot (barcha xizmatlar, kassa, xarajatlar), laboratoriya ko'rsatkichlari va statsionar bandligi" />
+      <PageHeader eyebrow="Analitika" title="Hisobotlar" description="Moliyaviy hisobot, kunlik bemorlar va tahlillar, laboratoriya ko'rsatkichlari va statsionar bandligi" />
       <Tabs value={view} onValueChange={(v) => setView(v as View)}>
-        <TabsList>
+        <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="finance" data-testid="tab-report-finance">
             Moliyaviy hisobot
+          </TabsTrigger>
+          <TabsTrigger value="patients" data-testid="tab-report-patients">
+            Bemorlar
           </TabsTrigger>
           <TabsTrigger value="lab" data-testid="tab-report-lab">
             Laboratoriya
@@ -109,7 +113,7 @@ export default function Reports() {
           </TabsTrigger>
         </TabsList>
       </Tabs>
-      {view === "finance" ? <FinanceReportView /> : view === "lab" ? <LabReport /> : <InpatientReportView />}
+      {view === "finance" ? <FinanceReportView /> : view === "patients" ? <PatientFlowView /> : view === "lab" ? <LabReport /> : <InpatientReportView />}
     </div>
   );
 }
