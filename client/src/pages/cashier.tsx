@@ -259,7 +259,7 @@ function BillsDesk({ initialFilter = "all", initialPeriod = "today" }: { initial
                     </TableCell>
                     <TableCell className="hidden whitespace-nowrap tabular md:table-cell">{formatDate(b.visitDate)}</TableCell>
                     <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
-                      {[b.appointments ? `${b.appointments} ta qabul` : "", b.orders ? `${b.orders} ta lab buyurtma` : ""].filter(Boolean).join(" · ") || "—"}
+                      {[b.stays ? "statsionar" : "", b.appointments ? `${b.appointments} ta qabul` : "", b.orders ? `${b.orders} ta lab buyurtma` : ""].filter(Boolean).join(" · ") || "—"}
                     </TableCell>
                     <TableCell className="hidden text-right sm:table-cell">
                       <Money value={b.totals.amount} />

@@ -3038,3 +3038,63 @@ describe("procedures (B6.5)", () => {
     expect(await storage.listProcedureTasks({ from: new Date(now - 24 * h).toISOString(), to: new Date(now + 48 * h).toISOString() })).toEqual([]);
   });
 });
+
+describe("stay billing (B6.6)", () => {
+  it("the stay is one line on its admission day's bill: bed-days, procedures, paid, discounted; lab orders join it", async () => {
+    const admin = { id: "u-admin", name: "Admin" };
+    const nurse = { id: "u-nurse", name: "Hamshira" };
+    const dept = await storage.createDepartment({ name: "Pulmonologiya", kind: "statsionar", description: null, isActive: true }, admin);
+    const user = await storage.createUser({ username: "dr66", password: "parol123", fullName: "Yusupov Anvar", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: dept.id, specialty: "Pulmonolog", consultationPrice: 100000, slotMinutes: 20, schedule: [], isActive: true }, admin);
+    const ward = (await storage.addBeds((await storage.createWard({ departmentId: dept.id, name: "501", floor: 5, gender: "mixed", dayPrice: 150000, note: null }, admin)).id, 1, admin))!;
+    const p = await storage.createPatient({ fullName: "Qodirov Sardor", phone: "+998909090909", gender: "erkak", age: 47, address: null });
+    const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000 - 3_600_000).toISOString();
+    const a = await storage.admitPatient({ patientId: p.id, bedId: ward.beds[0].id, doctorId: doctor.id, admittedAt: twoDaysAgo, reason: null }, admin);
+    expect(a.visitId).toBeTruthy();
+    expect(a.stays[0].dayPrice).toBe(150000);
+    // A later price change does not reprice the stay.
+    await storage.updateWard(ward.id, { dayPrice: 999000 }, admin);
+
+    const dr = { id: user.id, name: "Yusupov Anvar" };
+    const o = (await storage.createInpatientOrder(
+      a.id,
+      { kind: "procedure", itemId: null, serviceId: null, name: "Ingalyatsiya", dose: null, route: null, times: ["08:00"], startOn: todayKey(), days: 1, note: null, unitPrice: 30000 },
+      [new Date(Date.now() - 600_000).toISOString()],
+      dr,
+    ))!;
+    await storage.markProcedureTask(o.tasks[0].id, { status: "done", note: null }, nurse);
+
+    const charge = (await storage.getStayCharge(a.id))!;
+    expect(charge.charge.bedDays.map((b) => [b.days, b.dayPrice])).toEqual([[2, 150000]]);
+    expect([charge.charge.procedureAmount, charge.charge.amount, charge.paid]).toEqual([30000, 330000, 0]);
+
+    let bill = (await storage.getBill(a.visitId!))!;
+    expect(bill.lines.map((l) => [l.source, l.title, l.detail, l.amount])).toEqual([["stay", `Statsionar karta №${a.number}`, "2 yotoq-kun · 1 muolaja", 330000]]);
+
+    // Paid on the bill: the share lands on the stay; a discount on the stay line lowers it.
+    const paid = (await storage.payBill(a.visitId!, { amount: 100000, method: "naqd", note: null }, ACTOR))!;
+    expect(paid.bill.receipts[0].shares).toEqual([{ source: "stay", sourceId: a.id, title: `Statsionar karta №${a.number}`, amount: 100000 }]);
+    await storage.discountBill(a.visitId!, { mode: "amount", value: 30000, target: { source: "stay", sourceId: a.id }, reason: "Imtiyozli toifa" }, admin);
+    bill = (await storage.getBill(a.visitId!))!;
+    expect(bill.lines[0]).toMatchObject({ amount: 300000, discount: 30000, paid: 100000 });
+    expect(bill.totals.due).toBe(200000);
+
+    // A lab order from the case history joins the same bill.
+    const lab = await storage.createOrder({ patientId: p.id, testIds: ["3"], discount: 0, paidAmount: 0, createdBy: user.id, visitId: a.visitId, admissionId: a.id });
+    expect(lab).toMatchObject({ visitId: a.visitId, admissionId: a.id });
+    bill = (await storage.getBill(a.visitId!))!;
+    expect(bill.lines.map((l) => l.source).sort()).toEqual(["order", "stay"]);
+    const listed = (await storage.listBills({ patientId: p.id })).find((b) => b.visitId === a.visitId)!;
+    expect([listed.stays, listed.orders]).toEqual([1, 1]);
+    expect((await storage.listDebtors()).find((d) => d.patientId === p.id)?.due).toBe(bill.totals.due);
+    const card = (await storage.getPatientCard(p.id))!;
+    expect(card.payments.some((x) => x.admissionId === a.id && x.amount === 100000)).toBe(true);
+
+    // A mistaken stay owes nothing; what was paid on it shows as credit to refund.
+    await storage.cancelAdmission(a.id, "Xato yotqizildi", admin);
+    bill = (await storage.getBill(a.visitId!))!;
+    expect(bill.lines.find((l) => l.source === "stay")).toMatchObject({ amount: 0, paid: 100000, cancelled: true });
+    expect(bill.totals.credit).toBe(100000);
+  });
+});
+

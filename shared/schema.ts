@@ -38,7 +38,7 @@ import {
   type WriteoffReason,
 } from "./inventory";
 import { ADMIN_ROUTES, MAX_PRESCRIPTION_LINES, PRESCRIPTION_KINDS, type TreatmentEntry } from "./prescription";
-import type { BillLine, BillSource, BillTotals } from "./invoice";
+import { BILL_SOURCES, type BillLine, type BillSource, type BillTotals } from "./invoice";
 import type { ShiftEntry, ShiftTotals } from "./cash-shift";
 import type { RefundLine, RefundStatus } from "./refund";
 import { DISCOUNT_MODES, type DiscountLine, type DiscountMode } from "./discount";
@@ -457,6 +457,10 @@ export const admissions = pgTable(
     reason: text("reason"),
     /** B6.3: the day the doctor plans to discharge (YYYY-MM-DD); the home page lists who leaves today and tomorrow. */
     plannedDischargeOn: text("planned_discharge_on"),
+    /** B6.6: the visit (patient + admission day) whose bill carries the stay line and the lab orders placed from the card. */
+    visitId: varchar("visit_id"),
+    /** B6.6: discount taken off the stay line (B7.2 rules), so'm. */
+    discount: money("discount").notNull().default(0),
     status: text("status").notNull().default("active"),
     cancelledAt: isoTimestamp("cancelled_at"),
     cancelledBy: varchar("cancelled_by"),
@@ -492,6 +496,8 @@ export const admissionBeds = pgTable(
     wardId: varchar("ward_id").notNull(),
     fromAt: isoTimestamp("from_at").notNull(),
     toAt: isoTimestamp("to_at"),
+    /** B6.6: the ward's bed-day price when the period opened — a later price change does not reprice it. */
+    dayPrice: money("day_price"),
     note: text("note"),
     movedBy: varchar("moved_by"),
     movedByName: text("moved_by_name"),
@@ -582,6 +588,8 @@ export const inpatientOrders = pgTable(
     startOn: text("start_on").notNull(),
     days: integer("days").notNull(),
     note: text("note"),
+    /** B6.6: the catalogue price of one dose when ordered (procedures from the service list); null — not billed. */
+    unitPrice: money("unit_price"),
     status: text("status").notNull().default("active"),
     prescribedBy: varchar("prescribed_by"),
     prescribedByName: text("prescribed_by_name"),
@@ -1031,6 +1039,8 @@ export const orders = pgTable("orders", {
   visitId: varchar("visit_id"),
   /** The doctor's lab referral this order fulfils (B3.5); null for desk orders. UQ_orders_referral (migration). */
   referralId: varchar("referral_id"),
+  /** B6.6: the inpatient stay it was ordered for (from the case history); its visit is the stay's. */
+  admissionId: varchar("admission_id"),
   totalAmount: money("total_amount").notNull(),
   discount: money("discount").notNull().default(0),
   paidAmount: money("paid_amount").notNull().default(0),
@@ -1191,6 +1201,8 @@ export const payments = pgTable("payments", {
   shiftId: varchar("shift_id"),
   /** B7.4: the approved refund this negative row pays out (one row per line it returns money on). */
   refundId: varchar("refund_id"),
+  /** B6.6: the inpatient stay it pays (the bill's "stay" line). Exactly one of order / appointment / admission is set. */
+  admissionId: varchar("admission_id"),
   /** Negative for a refund, so the history reads as a ledger. */
   amount: money("amount").notNull(),
   method: text("method").notNull().default("naqd"),
@@ -2473,6 +2485,8 @@ export type BillSummary = {
   invoiceNumber: number | null;
   appointments: number;
   orders: number;
+  /** B6.6: inpatient stays on the bill. */
+  stays: number;
   totals: BillTotals;
 };
 
@@ -2900,6 +2914,11 @@ export const inpatientOrderSchema = z.object({
   note: z.string().trim().max(500, "Juda uzun").nullish().transform((v) => v || null),
 });
 export type InpatientOrderInput = z.infer<typeof inpatientOrderSchema>;
+/** B6.6: lab tests ordered from a stay's case history. */
+export const stayLabOrderSchema = z.object({
+  testIds: z.array(z.string().min(1)).min(1, "Kamida bitta tahlilni tanlang").max(60, "Juda ko'p tahlil"),
+  note: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null),
+});
 export const taskMarkSchema = z.object({ note: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null) });
 export const taskReasonSchema = z.object({ reason: z.string().trim().min(3, "Sababini yozing").max(300, "Juda uzun") });
 
@@ -2908,7 +2927,7 @@ export const discountBillSchema = z
   .object({
     mode: z.enum(DISCOUNT_MODES, { errorMap: () => ({ message: "Chegirma turini tanlang" }) }),
     value: z.coerce.number({ invalid_type_error: "Qiymatni kiriting" }).int("Butun son bo'lsin").positive("Qiymat musbat bo'lishi kerak").max(1_000_000_000, "Juda katta"),
-    target: z.object({ source: z.enum(["appointment", "order"]), sourceId: z.string().min(1) }).nullish().transform((v) => v ?? null),
+    target: z.object({ source: z.enum(BILL_SOURCES), sourceId: z.string().min(1) }).nullish().transform((v) => v ?? null),
     reason: z.string().trim().min(5, "Chegirma sababini yozing (kamida 5 belgi)").max(300, "Juda uzun"),
   })
   .refine((d) => d.mode !== "percent" || d.value <= 100, { message: "Foiz 100 dan oshmasin", path: ["value"] });

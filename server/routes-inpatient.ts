@@ -11,6 +11,8 @@
  *   inpatient.observe           daily observations; strike out one's own (records.amend: anyone's)
  *   procedures.prescribe        order medicines and procedures for a stay, stop an order (B6.5)
  *   procedures.perform          mark a dose done / not done, put a mistaken mark back
+ *   procedures.prescribe        order lab tests from the case history (B6.6; the order joins the stay's bill)
+ *   inpatient.read + (payments.create | finance.view)   the stay's charge: bed-days, procedures, paid, owed
  *
  * Rules: shared/inpatient.ts.
  */
@@ -23,6 +25,7 @@ import {
   insertWardSchema,
   inpatientOrderSchema,
   observationSchema,
+  stayLabOrderSchema,
   taskMarkSchema,
   taskReasonSchema,
   saveCaseHistorySchema,
@@ -417,6 +420,8 @@ export function registerInpatientRoutes(app: Express) {
       const admission = await storage.getAdmission(req.params.id);
       if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
       let name = input.name;
+      // B6.6: a procedure from the service list bills at its price as ordered; anything written by hand is not billed.
+      let unitPrice: number | null = null;
       // A catalogue line takes its name from the catalogue; the wrong catalogue for the kind is refused.
       if (input.kind === "medicine") {
         if (input.serviceId) return res.status(400).json({ message: "Dori xizmatlar katalogidan tanlanmaydi" });
@@ -431,9 +436,10 @@ export function registerInpatientRoutes(app: Express) {
           const service = await storage.getService(input.serviceId);
           if (!service || service.kind !== "muolaja" || !service.isActive) return res.status(400).json({ message: "Muolaja xizmatlar katalogida topilmadi yoki faol emas" });
           name = service.name;
+          unitPrice = service.price;
         }
       }
-      const plan = { ...input, name, times: normalizeTimes(input.times) };
+      const plan = { ...input, name, unitPrice, times: normalizeTimes(input.times) };
       const problem = orderProblem(plan, todayKey(), localDay(admission.admittedAt));
       if (problem) return res.status(400).json({ message: problem });
       const slots = planSlots(plan, new Date(), localAt).map((d) => d.toISOString());
@@ -495,6 +501,52 @@ export function registerInpatientRoutes(app: Express) {
       if (!t) return res.status(404).json({ message: "Muolaja topilmadi" });
       await audit(req, "update", "admission", t.admissionId, `${taskLabel(t)} — "${TASK_STATUS_LABELS[before.status].toLowerCase()}" belgisi qaytarildi: ${reason}`);
       res.json(t);
+    }),
+  );
+
+  // ------------------------------------------------------------ B6.6 the stay and the cash desk
+
+  /** What the stay has run up: bed-days per ward, procedures done, what was paid and what is owed. Money needs a money permission. */
+  app.get(
+    "/api/admissions/:id/charge",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!hasPermission(req, "payments.create") && !hasPermission(req, "finance.view")) return res.status(403).json({ message: "Statsionar hisobini ko'rish uchun ruxsatingiz yo'q" });
+      const found = await storage.getStayCharge(req.params.id);
+      if (!found) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      res.json({ ...found, due: Math.max(0, found.charge.amount - found.paid), credit: Math.max(0, found.paid - found.charge.amount) });
+    }),
+  );
+
+  /** TZ §8.2: "Laboratoriya natijalari shu kartaga biriktiriladi" — the doctor orders lab tests from the case history. */
+  app.post(
+    "/api/admissions/:id/lab-orders",
+    requirePermission("procedures.prescribe"),
+    handle(async (req, res) => {
+      const { testIds, note } = stayLabOrderSchema.parse(req.body);
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      if (admission.status !== "active") return res.status(409).json({ message: "Statsionar karta yopilgan — buyurtma berib bo'lmaydi" });
+      if (!admission.visitId) return res.status(409).json({ message: "Statsionar kartaning hisobvarag'i yo'q — avval npm run db:stay-billing" });
+      const order = await storage.createOrder({
+        patientId: admission.patientId,
+        testIds,
+        discount: 0,
+        paidAmount: 0,
+        notes: [`Statsionar karta №${admission.number}`, note].filter(Boolean).join(" — "),
+        referrer: req.user?.fullName ?? null,
+        createdBy: req.user?.id ?? null,
+        visitId: admission.visitId,
+        admissionId: admission.id,
+      });
+      await audit(
+        req,
+        "create",
+        "order",
+        order.id,
+        `Statsionar karta №${admission.number} (№${admission.patientNumber} ${admission.patientName}): laboratoriya buyurtmasi #${order.orderNumber} — ${order.items.map((i) => i.testName).join(", ")}`,
+      );
+      res.status(201).json(order);
     }),
   );
 }

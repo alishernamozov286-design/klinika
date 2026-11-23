@@ -13,11 +13,15 @@
  */
 import type { PriceListKind } from "./schema";
 import { SERVICE_KIND_LABELS } from "./schema";
+
+/** A line of the report: a price-list kind, or B6.6 inpatient stays. */
+export type FinanceKind = PriceListKind | "statsionar";
+export const FINANCE_KIND_LABELS: Record<FinanceKind, string> = { ...SERVICE_KIND_LABELS, statsionar: "Statsionar" };
 import type { CashDay } from "./cash-report";
 
 /** One group of services rendered, as the storages total it. */
 export type FinanceServiceRow = {
-  kind: PriceListKind;
+  kind: FinanceKind;
   /** "Terapevt ko'rigi", "Qorin bo'shlig'i UZI", "Laboratoriya tahlillari". */
   name: string;
   doctorName: string | null;
@@ -43,15 +47,15 @@ function add(t: FinanceFigures, r: FinanceServiceRow) {
 }
 
 /** The order the report shows service kinds in. */
-export const FINANCE_KINDS: readonly PriceListKind[] = ["konsultatsiya", "uzi", "muolaja", "boshqa", "laboratoriya"];
+export const FINANCE_KINDS: readonly FinanceKind[] = ["konsultatsiya", "uzi", "muolaja", "boshqa", "laboratoriya", "statsionar"];
 
 export type FinanceReport = {
   range: { from: string; to: string };
   services: {
     total: FinanceFigures;
-    byKind: ({ kind: PriceListKind; label: string } & FinanceFigures)[];
+    byKind: ({ kind: FinanceKind; label: string } & FinanceFigures)[];
     /** Biggest earners first. */
-    byService: ({ kind: PriceListKind; name: string } & FinanceFigures)[];
+    byService: ({ kind: FinanceKind; name: string } & FinanceFigures)[];
     /** Appointments only — lab work is not a doctor's. Biggest first. */
     byDoctor: ({ doctorName: string } & FinanceFigures)[];
   };
@@ -75,8 +79,8 @@ export function buildFinanceReport(input: {
   debt: FinanceReport["debt"];
 }): FinanceReport {
   const total = blank();
-  const kinds = new Map<PriceListKind, FinanceFigures>();
-  const services = new Map<string, { kind: PriceListKind; name: string } & FinanceFigures>();
+  const kinds = new Map<FinanceKind, FinanceFigures>();
+  const services = new Map<string, { kind: FinanceKind; name: string } & FinanceFigures>();
   const doctors = new Map<string, { doctorName: string } & FinanceFigures>();
   for (const r of input.services) {
     add(total, r);
@@ -99,7 +103,7 @@ export function buildFinanceReport(input: {
     range: input.range,
     services: {
       total,
-      byKind: FINANCE_KINDS.filter((k) => kinds.has(k)).map((k) => ({ kind: k, label: SERVICE_KIND_LABELS[k], ...kinds.get(k)! })),
+      byKind: FINANCE_KINDS.filter((k) => kinds.has(k)).map((k) => ({ kind: k, label: FINANCE_KIND_LABELS[k], ...kinds.get(k)! })),
       byService: [...services.values()].sort((a, b) => b.net - a.net || b.count - a.count || a.name.localeCompare(b.name)),
       byDoctor: [...doctors.values()].sort((a, b) => b.net - a.net || b.count - a.count),
     },

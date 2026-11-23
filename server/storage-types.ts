@@ -13,6 +13,7 @@ import type { FinanceServiceRow } from "@shared/finance-report";
 import type { InpatientOrderView, ProcedureTaskView } from "@shared/schema";
 import type { AdminRoute } from "@shared/prescription";
 import type { OrderKind } from "@shared/procedures";
+import type { StayCharge } from "@shared/stay-bill";
 import type { AdmissionObservation, AdmissionView, AdmitInput, Bed, BedView, CaseHistoryVersion, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
 import type { CaseText, Vitals } from "@shared/case-history";
 import type { AdmissionStatus, BedState } from "@shared/inpatient";
@@ -199,6 +200,9 @@ export type CreateOrderArgs = {
   createdBy?: string | null;
   /** B7.5: the creator's open shift; required by the route when an opening payment is taken. */
   shiftId?: string | null;
+  /** B6.6: ordered from a stay's case history — the order joins the stay's visit (its bill). */
+  visitId?: string | null;
+  admissionId?: string | null;
 };
 
 export type ResultInput = {
@@ -240,6 +244,8 @@ export type NewInpatientOrder = {
   startOn: string;
   days: number;
   note: string | null;
+  /** B6.6: the catalogue price of one dose, frozen; null — not billed. */
+  unitPrice: number | null;
 };
 
 export type Actor = {
@@ -1020,6 +1026,8 @@ export interface IStorage {
   markProcedureTask(id: string, mark: { status: "done" | "missed"; note: string | null }, actor: Actor): Promise<ProcedureTaskView | undefined>;
   /** Puts a mistaken mark back to planned, with a reason. */
   revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined>;
+  /** B6.6: what a stay has run up (bed-days, procedures), what was paid on it, and the visit whose bill carries it. */
+  getStayCharge(admissionId: string): Promise<{ visitId: string | null; charge: StayCharge; paid: number } | undefined>;
   /** A mistaken stay: closed with a reason, never deleted. */
   cancelAdmission(id: string, reason: string, actor: Actor): Promise<AdmissionView | undefined>;
   /** B7.8: services rendered on local days `from`..`to` (YYYY-MM-DD, inclusive), by kind, name and doctor. */

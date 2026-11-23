@@ -12,9 +12,30 @@
  * `payments` row on its order or appointment, so the lab's own payment
  * logic, the order window and the reports keep working as they are.
  * A receipt is voided whole, with a reason — never edited, never deleted.
+ *
+ * B6.6: an inpatient stay is a third source ("stay") — one line on the bill of
+ * its admission day, its amount read from shared/stay-bill.ts.
  */
-export const BILL_SOURCES = ["appointment", "order"] as const;
+import { stayLineText, type StayCharge } from "./stay-bill";
+
+export const BILL_SOURCES = ["appointment", "order", "stay"] as const;
 export type BillSource = (typeof BILL_SOURCES)[number];
+
+/** Which line a `payments` row pays — the one of its three targets that is set. */
+export function paymentSource(p: { orderId: string | null; appointmentId: string | null; admissionId?: string | null }): { source: BillSource; sourceId: string } {
+  if (p.orderId) return { source: "order", sourceId: p.orderId };
+  if (p.appointmentId) return { source: "appointment", sourceId: p.appointmentId };
+  return { source: "stay", sourceId: p.admissionId! };
+}
+
+/** The `payments` columns for a share of a line (exactly one is set — CK_payments_target). */
+export function paymentTarget(source: BillSource, sourceId: string): { orderId: string | null; appointmentId: string | null; admissionId: string | null } {
+  return {
+    orderId: source === "order" ? sourceId : null,
+    appointmentId: source === "appointment" ? sourceId : null,
+    admissionId: source === "stay" ? sourceId : null,
+  };
+}
 
 /** Appointment statuses that are a service rendered (or under way) — billable. */
 export const BILLABLE_APPOINTMENT_STATUSES = ["arrived", "in_progress", "completed"] as const;
@@ -100,12 +121,14 @@ type AppointmentForBill = {
   specialty: string;
 };
 
+type StayForBill = { id: string; number: number; status: string; admittedAt: string; charge: StayCharge; paid: number };
+
 /**
  * The visit's lines. A service rendered is billed at its price; something
  * cancelled after money was taken stays on the bill at 0 so the money it
  * holds shows as credit to refund — never silently disappears.
  */
-export function buildBillLines(orders: readonly OrderForBill[], appointments: readonly AppointmentForBill[]): BillLine[] {
+export function buildBillLines(orders: readonly OrderForBill[], appointments: readonly AppointmentForBill[], stays: readonly StayForBill[] = []): BillLine[] {
   const billable = new Set<string>(BILLABLE_APPOINTMENT_STATUSES);
   const lines: BillLine[] = [];
   for (const a of appointments) {
@@ -135,6 +158,22 @@ export function buildBillLines(orders: readonly OrderForBill[], appointments: re
       amount: live ? o.totalAmount : 0,
       discount: live ? (o.discount ?? 0) : 0,
       paid: o.paidAmount,
+      cancelled: !live,
+    });
+  }
+  for (const s of stays) {
+    const live = s.status !== "cancelled";
+    if (!live && s.paid === 0) continue;
+    const text = stayLineText(s.number, s.charge);
+    lines.push({
+      source: "stay",
+      sourceId: s.id,
+      title: text.title,
+      detail: text.detail,
+      createdAt: s.admittedAt,
+      amount: s.charge.amount,
+      discount: live ? s.charge.discount : 0,
+      paid: s.paid,
       cancelled: !live,
     });
   }

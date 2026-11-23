@@ -43,6 +43,7 @@ import { ApiError, apiRequest, invalidateApi } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { OrdersSection } from "@/components/inpatient/procedures";
+import { StayChargeCard, StayLabOrderButton } from "@/components/inpatient/stay-billing";
 import { cn } from "@/lib/utils";
 import { dayKey, formatDateTime, formatDay, formatTime } from "@/lib/format";
 
@@ -136,7 +137,14 @@ export default function CaseHistoryPage() {
           <Observations view={data} queryKey={key} />
         </div>
         <div className="min-w-0 space-y-6">
-          <SectionCard icon={FlaskConical} title="Laboratoriya natijalari" description="Yotgan davrida berilgan buyurtmalar, tasdiqlangan natijalar" flush>
+          <StayChargeCard admissionId={a.id} />
+          <SectionCard
+            icon={FlaskConical}
+            title="Laboratoriya natijalari"
+            description="Yotgan davrida berilgan buyurtmalar, tasdiqlangan natijalar"
+            action={<StayLabOrderButton admissionId={a.id} active={a.status === "active"} />}
+            flush
+          >
             <div data-testid="case-lab">
               <LabResultsTable results={data.labResults} />
             </div>

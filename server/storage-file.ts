@@ -154,6 +154,8 @@ import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type Departme
 import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
+import { stayCharge, type StayCharge } from "@shared/stay-bill";
+import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem } from "@shared/procedures";
 import type { NewInpatientOrder } from "./storage-types";
 import {
@@ -1649,7 +1651,10 @@ export class FileStorage implements IStorage {
     const orderIds = new Set(items.map((o) => o.id));
     const apptIds = new Set(appointments.map((a) => a.id));
     // B7.1: the ledger holds lab orders and appointments alike.
-    const payments = this.db.payments.filter((p) => (p.orderId && orderIds.has(p.orderId)) || (p.appointmentId && apptIds.has(p.appointmentId)));
+    const stayIds = new Set(this.db.admissions.filter((a) => a.patientId === id).map((a) => a.id));
+    const payments = this.db.payments.filter(
+      (p) => (p.orderId && orderIds.has(p.orderId)) || (p.appointmentId && apptIds.has(p.appointmentId)) || (p.admissionId && stayIds.has(p.admissionId)),
+    );
     const visits = this.db.visits.filter((v) => v.patientId === id);
     return buildPatientCard(details, items, visits, payments, appointments);
   }
@@ -2030,8 +2035,9 @@ export class FileStorage implements IStorage {
       id: randomUUID(),
       orderNumber: this.db.counters.orderNumber,
       patientId: input.patientId,
-      visitId: this.ensureVisit(input.patientId, todayKey(), input.createdBy ?? null).id,
+      visitId: input.visitId ?? this.ensureVisit(input.patientId, todayKey(), input.createdBy ?? null).id,
       referralId,
+      admissionId: input.admissionId ?? null,
       totalAmount: total,
       discount,
       paidAmount: 0, // set by syncPaid below, from the opening payment
@@ -2080,6 +2086,7 @@ export class FileStorage implements IStorage {
         id: randomUUID(),
         orderId: order.id,
         appointmentId: null,
+        admissionId: null,
         invoicePaymentId: null,
         refundId: null,
         shiftId: this.shiftFor({ id: input.createdBy ?? null, shiftId: input.shiftId }),
@@ -2457,6 +2464,7 @@ export class FileStorage implements IStorage {
       id: randomUUID(),
       orderId,
       appointmentId: null,
+      admissionId: null,
       invoicePaymentId: null,
       refundId: null,
       shiftId,
@@ -3961,7 +3969,39 @@ export class FileStorage implements IStorage {
           paid: this.db.payments.filter((p) => p.appointmentId === a.id && !p.voidedAt).reduce((s, p) => s + p.amount, 0),
         };
       });
-    return buildBillLines(orders, appts);
+    return buildBillLines(orders, appts, this.stayBills((a) => a.visitId === visitId));
+  }
+
+  /** B6.6: stays as bill lines, their charge worked out by stayCharge. */
+  private stayBills(match: (a: Admission) => boolean) {
+    const now = new Date().toISOString();
+    return this.db.admissions.filter(match).map((a) => {
+      const charge = stayCharge({
+        status: a.status,
+        periods: this.db.admissionBeds
+          .filter((p) => p.admissionId === a.id)
+          .map((p) => ({
+            fromAt: p.fromAt,
+            toAt: p.toAt,
+            dayPrice: p.dayPrice ?? 0,
+            wardName: this.db.wards.find((w) => w.id === p.wardId)?.name ?? "—",
+            bedLabel: this.db.beds.find((b) => b.id === p.bedId)?.label ?? "—",
+          })),
+        orders: this.db.inpatientOrders
+          .filter((o) => o.admissionId === a.id)
+          .map((o) => ({ id: o.id, name: o.name, unitPrice: o.unitPrice ?? null, done: this.db.procedureTasks.filter((t) => t.orderId === o.id && t.status === "done").length })),
+        discount: a.discount ?? 0,
+        now,
+        dayOf: localDay,
+      });
+      const paid = this.db.payments.filter((x) => x.admissionId === a.id && !x.voidedAt).reduce((s, x) => s + x.amount, 0);
+      return { id: a.id, number: a.number, status: a.status, admittedAt: a.admittedAt, visitId: a.visitId ?? null, charge, paid };
+    });
+  }
+
+  async getStayCharge(admissionId: string): Promise<{ visitId: string | null; charge: StayCharge; paid: number } | undefined> {
+    const [s] = this.stayBills((a) => a.id === admissionId);
+    return s && { visitId: s.visitId, charge: s.charge, paid: s.paid };
   }
 
   async getBill(visitId: string): Promise<Bill | undefined> {
@@ -3983,8 +4023,7 @@ export class FileStorage implements IStorage {
             shares: this.db.payments
               .filter((p) => p.invoicePaymentId === r.id)
               .map((p) => {
-                const source = p.orderId ? ("order" as const) : ("appointment" as const);
-                const sourceId = (p.orderId ?? p.appointmentId)!;
+                const { source, sourceId } = paymentSource(p);
                 return { source, sourceId, title: lines.find((l) => l.source === source && l.sourceId === sourceId)?.title ?? "—", amount: p.amount };
               }),
           }))
@@ -4054,8 +4093,7 @@ export class FileStorage implements IStorage {
     for (const s of shares) {
       this.db.payments.push({
         id: randomUUID(),
-        orderId: s.source === "order" ? s.sourceId : null,
-        appointmentId: s.source === "appointment" ? s.sourceId : null,
+        ...paymentTarget(s.source, s.sourceId),
         invoicePaymentId: receipt.id,
         refundId: null,
         shiftId,
@@ -4115,6 +4153,7 @@ export class FileStorage implements IStorage {
         invoiceNumber: this.db.invoices.find((i) => i.visitId === v.id)?.number ?? null,
         appointments: lines.filter((l) => l.source === "appointment" && !l.cancelled).length,
         orders: lines.filter((l) => l.source === "order" && !l.cancelled).length,
+        stays: lines.filter((l) => l.source === "stay" && !l.cancelled).length,
         totals: billTotals(lines),
       });
     }
@@ -4138,6 +4177,9 @@ export class FileStorage implements IStorage {
         o.discount += l.amount;
         o.totalAmount -= l.amount;
         this.touchOrder(o, actor);
+      } else if (l.source === "stay") {
+        const st = this.db.admissions.find((x) => x.id === l.sourceId)!;
+        Object.assign(st, { discount: (st.discount ?? 0) + l.amount, updatedAt: now, updatedBy: actor.id });
       } else {
         const a = this.db.appointments.find((x) => x.id === l.sourceId)!;
         a.discount = (a.discount ?? 0) + l.amount;
@@ -4340,7 +4382,7 @@ export class FileStorage implements IStorage {
       .sort((x, y) => x.fromAt.localeCompare(y.fromAt))
       .map((p) => {
         const ward = this.db.wards.find((w) => w.id === p.wardId);
-        return { ...p, wardName: ward?.name ?? "—", bedLabel: this.db.beds.find((b) => b.id === p.bedId)?.label ?? "—", dayPrice: ward?.dayPrice ?? 0 };
+        return { ...p, wardName: ward?.name ?? "—", bedLabel: this.db.beds.find((b) => b.id === p.bedId)?.label ?? "—", dayPrice: p.dayPrice ?? ward?.dayPrice ?? 0 };
       });
     const open = stays.find((s) => !s.toAt);
     return {
@@ -4395,6 +4437,9 @@ export class FileStorage implements IStorage {
       admittedAt: admittedAt.toISOString(),
       reason: input.reason,
       plannedDischargeOn: null,
+      // B6.6: the stay bills on the visit of its admission day.
+      visitId: this.ensureVisit(input.patientId, localDay(admittedAt.toISOString()), actor.id).id,
+      discount: 0,
       status: "active",
       cancelledAt: null,
       cancelledBy: null,
@@ -4410,7 +4455,7 @@ export class FileStorage implements IStorage {
       updatedBy: null,
     };
     this.db.admissions.push(a);
-    this.db.admissionBeds.push({ id: randomUUID(), admissionId: a.id, bedId: input.bedId, wardId: ward.id, fromAt: a.admittedAt, toAt: null, note: null, movedBy: actor.id, movedByName: actor.name });
+    this.db.admissionBeds.push({ id: randomUUID(), admissionId: a.id, bedId: input.bedId, wardId: ward.id, fromAt: a.admittedAt, toAt: null, dayPrice: ward.dayPrice, note: null, movedBy: actor.id, movedByName: actor.name });
     await this.persist();
     return this.admissionViewOf(a);
   }
@@ -4428,7 +4473,7 @@ export class FileStorage implements IStorage {
       const left = this.db.beds.find((b) => b.id === open.bedId);
       if (left) Object.assign(left, { state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name });
     }
-    this.db.admissionBeds.push({ id: randomUUID(), admissionId: id, bedId: input.bedId, wardId: ward.id, fromAt: now, toAt: null, note: input.note, movedBy: actor.id, movedByName: actor.name });
+    this.db.admissionBeds.push({ id: randomUUID(), admissionId: id, bedId: input.bedId, wardId: ward.id, fromAt: now, toAt: null, dayPrice: ward.dayPrice, note: input.note, movedBy: actor.id, movedByName: actor.name });
     Object.assign(a, { departmentId: ward.departmentId, updatedAt: now, updatedBy: actor.id });
     await this.persist();
     return this.admissionViewOf(a);
@@ -4690,6 +4735,11 @@ export class FileStorage implements IStorage {
       if (o.status === "cancelled" || day < days.from || day > days.to) continue;
       put({ kind: "laboratoriya", name: "Laboratoriya tahlillari", doctorName: null, count: 1, gross: o.totalAmount + o.discount, discount: o.discount, net: o.totalAmount, paid: o.paidAmount });
     }
+    // B6.6: stays admitted in the period, at what they have run up.
+    for (const s of this.stayBills((a) => a.status !== "cancelled" && localDay(a.admittedAt) >= days.from && localDay(a.admittedAt) <= days.to)) {
+      const discount = Math.min(s.charge.discount, s.charge.gross);
+      put({ kind: "statsionar", name: "Statsionar: yotoq-kun va muolajalar", doctorName: null, count: 1, gross: s.charge.gross, discount, net: s.charge.gross - discount, paid: s.paid });
+    }
     return [...acc.values()];
   }
 
@@ -4817,8 +4867,7 @@ export class FileStorage implements IStorage {
     for (const l of plan.lines) {
       this.db.payments.push({
         id: randomUUID(),
-        orderId: l.source === "order" ? l.sourceId : null,
-        appointmentId: l.source === "appointment" ? l.sourceId : null,
+        ...paymentTarget(l.source, l.sourceId),
         invoicePaymentId: null,
         refundId: r.id,
         shiftId,

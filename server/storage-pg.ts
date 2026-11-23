@@ -227,6 +227,8 @@ import {
   type CaseText,
   type Vitals,
 } from "@shared/case-history";
+import { stayCharge, type StayCharge } from "@shared/stay-bill";
+import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem, type TaskStatus } from "@shared/procedures";
 import type { NewInpatientOrder } from "./storage-types";
 import { DISCOUNT_LINE_GONE, DISCOUNT_NOTHING, planDiscount, type DiscountMode } from "@shared/discount";
@@ -493,30 +495,6 @@ const strip = (user: typeof users.$inferSelect): PublicUser => {
 };
 
 /**
- * Every bill line in SQL — the same rule as buildBillLines (shared/invoice.ts):
- * an order or an attended appointment owes its amount; cancelled ones owe
- * nothing but keep what was paid on them. One per row: visit_id, amount, paid,
- * live (still a service), appt (1 for an appointment). Shared by the desk's
- * bill list (B7.1) and the debtors (B7.3), so they can never disagree.
- */
-const BILL_LINES_SQL = sql`
-        SELECT o.visit_id,
-               CASE WHEN o.status = 'cancelled' THEN 0 ELSE o.total_amount END AS amount,
-               o.paid_amount AS paid,
-               (o.status <> 'cancelled')::int AS live,
-               0 AS appt
-          FROM orders o
-         WHERE o.visit_id IS NOT NULL
-        UNION ALL
-        SELECT a.visit_id,
-               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price - a.discount ELSE 0 END,
-               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
-               (a.status IN ('arrived', 'in_progress', 'completed'))::int,
-               1
-          FROM appointments a
-         WHERE a.visit_id IS NOT NULL`;
-
-/**
  * The clinic's local day in SQL. "Today" and day boundaries come from the
  * server's clock (TZ=Asia/Tashkent in deploys, `localDay()` / `todayKey()`),
  * so Postgres must cut days on the same zone — never its session's, which on
@@ -529,6 +507,56 @@ const SERVER_TZ = (() => {
   return /^[A-Za-z0-9_+\-/]+$/.test(zone) ? zone : "UTC";
 })();
 const LOCAL_TZ = sql.raw(`'${SERVER_TZ}'`);
+
+/**
+ * B6.6: what a stay has run up before discount — the same rule as stayCharge
+ * (shared/stay-bill.ts): each bed period's local days (the day of leaving not
+ * counted) at its frozen price, one day at the first ward when shorter than a
+ * day; plus the procedures done at their ordered price. `ad` is the admission.
+ */
+export const STAY_GROSS_SQL = sql`(
+          coalesce((SELECT CASE WHEN sum(x.d) = 0 THEN (array_agg(x.price ORDER BY x.from_at))[1] ELSE sum(x.d * x.price) END
+                      FROM (SELECT greatest(0, (coalesce(ab.to_at, now()) AT TIME ZONE ${LOCAL_TZ})::date - (ab.from_at AT TIME ZONE ${LOCAL_TZ})::date) AS d,
+                                   coalesce(ab.day_price, 0) AS price, ab.from_at
+                              FROM admission_beds ab WHERE ab.admission_id = ad.id) x), 0)
+        + coalesce((SELECT sum(o.unit_price) FROM procedure_tasks t JOIN inpatient_orders o ON o.id = t.order_id
+                     WHERE t.admission_id = ad.id AND t.status = 'done' AND o.unit_price IS NOT NULL), 0))`;
+
+/**
+ * Every bill line in SQL — the same rule as buildBillLines (shared/invoice.ts):
+ * an order or an attended appointment owes its amount; cancelled ones owe
+ * nothing but keep what was paid on them. One per row: visit_id, amount, paid,
+ * live (still a service), appt (1 for an appointment), stay (1 for a stay).
+ * Shared by the desk's bill list (B7.1) and the debtors (B7.3), so they can
+ * never disagree.
+ */
+export const BILL_LINES_SQL = sql`
+        SELECT o.visit_id,
+               CASE WHEN o.status = 'cancelled' THEN 0 ELSE o.total_amount END AS amount,
+               o.paid_amount AS paid,
+               (o.status <> 'cancelled')::int AS live,
+               0 AS appt,
+               0 AS stay
+          FROM orders o
+         WHERE o.visit_id IS NOT NULL
+        UNION ALL
+        SELECT a.visit_id,
+               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price - a.discount ELSE 0 END,
+               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
+               (a.status IN ('arrived', 'in_progress', 'completed'))::int,
+               1,
+               0
+          FROM appointments a
+         WHERE a.visit_id IS NOT NULL
+        UNION ALL
+        SELECT ad.visit_id,
+               CASE WHEN ad.status = 'cancelled' THEN 0 ELSE greatest(0, ${STAY_GROSS_SQL} - ad.discount) END,
+               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.admission_id = ad.id AND p.voided_at IS NULL), 0),
+               (ad.status <> 'cancelled')::int,
+               0,
+               1
+          FROM admissions ad
+         WHERE ad.visit_id IS NOT NULL`;
 
 /**
  * Date filters compare on the lab's local day. Postgres stores timestamptz, so
@@ -2139,7 +2167,8 @@ export class PgStorage implements IStorage {
         .from(payments)
         .leftJoin(orders, eq(orders.id, payments.orderId))
         .leftJoin(appointments, eq(appointments.id, payments.appointmentId))
-        .where(or(eq(orders.patientId, id), eq(appointments.patientId, id))),
+        .leftJoin(admissions, eq(admissions.id, payments.admissionId))
+        .where(or(eq(orders.patientId, id), eq(appointments.patientId, id), eq(admissions.patientId, id))),
       (await this.hasAppointmentsTable()) ? this.listAppointments({ patientId: id }) : Promise.resolve([]),
     ]);
     if (!details) return undefined;
@@ -2750,11 +2779,13 @@ export class PgStorage implements IStorage {
       // Today's visit for this patient, made on first use. ON CONFLICT with a
       // no-op update so the existing row's id comes back too, and two
       // registrars saving at once still end up on one visit.
-      const [visit] = await tx
-        .insert(visits)
-        .values({ patientId: input.patientId, visitDate: todayKey(), createdBy: input.createdBy ?? null })
-        .onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql`excluded.patient_id` } })
-        .returning({ id: visits.id });
+      const [visit] = input.visitId
+        ? [{ id: input.visitId }]
+        : await tx
+            .insert(visits)
+            .values({ patientId: input.patientId, visitDate: todayKey(), createdBy: input.createdBy ?? null })
+            .onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql`excluded.patient_id` } })
+            .returning({ id: visits.id });
 
       const [order] = await tx
         .insert(orders)
@@ -2768,6 +2799,7 @@ export class PgStorage implements IStorage {
           notes: input.notes ?? null,
           referrer: input.referrer ?? null,
           referralId,
+          admissionId: input.admissionId ?? null,
           createdBy: input.createdBy ?? null,
         })
         .returning({ id: orders.id, orderNumber: orders.orderNumber });
@@ -4896,6 +4928,7 @@ export class PgStorage implements IStorage {
       .leftJoin(doctors, eq(doctors.id, appointments.doctorId))
       .leftJoin(users, eq(users.id, doctors.userId))
       .where(eq(appointments.visitId, visitId));
+    const stayRows = await this.stayBills(exec, eq(admissions.visitId, visitId), lock);
     return buildBillLines(
       orderRows.map((o) => ({ ...o, createdAt: iso(o.createdAt) ?? o.createdAt, tests: Number(o.tests) })),
       apptRows.map((a) => ({
@@ -4905,7 +4938,66 @@ export class PgStorage implements IStorage {
         doctorName: a.doctorName ?? "—",
         specialty: a.specialty ?? "Shifokor",
       })),
+      stayRows,
     );
+  }
+
+  /**
+   * B6.6: stays as bill lines — the admission, its bed periods, the procedures
+   * done, what was paid on it — with the charge worked out by stayCharge.
+   */
+  private async stayBills(exec: typeof db, where: SQL, lock = false) {
+    const q = exec.select().from(admissions).where(where);
+    const rows = lock ? await q.for("update") : await q;
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.id);
+    const [periods, orderRows, done, paidRows] = await Promise.all([
+      exec
+        .select({ p: admissionBeds, wardName: wards.name, bedLabel: beds.label, wardPrice: wards.dayPrice })
+        .from(admissionBeds)
+        .innerJoin(beds, eq(beds.id, admissionBeds.bedId))
+        .innerJoin(wards, eq(wards.id, admissionBeds.wardId))
+        .where(inArray(admissionBeds.admissionId, ids)),
+      exec.select().from(inpatientOrders).where(inArray(inpatientOrders.admissionId, ids)),
+      exec
+        .select({ orderId: procedureTasks.orderId, n: sql<number>`count(*)::int` })
+        .from(procedureTasks)
+        .where(and(inArray(procedureTasks.admissionId, ids), eq(procedureTasks.status, "done")))
+        .groupBy(procedureTasks.orderId),
+      exec
+        .select({ admissionId: payments.admissionId, paid: sql<number>`coalesce(sum(${payments.amount}), 0)::int` })
+        .from(payments)
+        .where(and(inArray(payments.admissionId, ids), isNull(payments.voidedAt)))
+        .groupBy(payments.admissionId),
+    ]);
+    const doneBy = new Map(done.map((d) => [d.orderId, Number(d.n)]));
+    const now = new Date().toISOString();
+    return rows.map((a) => {
+      const charge = stayCharge({
+        status: a.status as AdmissionStatus,
+        periods: periods
+          .filter((x) => x.p.admissionId === a.id)
+          .map((x) => ({ fromAt: iso(x.p.fromAt), toAt: iso(x.p.toAt), dayPrice: x.p.dayPrice ?? 0, wardName: x.wardName, bedLabel: x.bedLabel })),
+        orders: orderRows.filter((o) => o.admissionId === a.id).map((o) => ({ id: o.id, name: o.name, unitPrice: o.unitPrice, done: doneBy.get(o.id) ?? 0 })),
+        discount: a.discount,
+        now,
+        dayOf: localDay,
+      });
+      return {
+        id: a.id,
+        number: a.number,
+        status: a.status,
+        admittedAt: iso(a.admittedAt),
+        visitId: a.visitId,
+        charge,
+        paid: Number(paidRows.find((x) => x.admissionId === a.id)?.paid ?? 0),
+      };
+    });
+  }
+
+  async getStayCharge(admissionId: string): Promise<{ visitId: string | null; charge: StayCharge; paid: number } | undefined> {
+    const [s] = await this.stayBills(db, eq(admissions.id, admissionId));
+    return s && { visitId: s.visitId, charge: s.charge, paid: s.paid };
   }
 
   async getBill(visitId: string): Promise<Bill | undefined> {
@@ -4950,8 +5042,7 @@ export class PgStorage implements IStorage {
         shares: shares
           .filter((x) => x.p.invoicePaymentId === r.id)
           .map((x) => {
-            const source = x.p.orderId ? ("order" as const) : ("appointment" as const);
-            const sourceId = (x.p.orderId ?? x.p.appointmentId)!;
+            const { source, sourceId } = paymentSource(x.p);
             return { source, sourceId, title: lines.find((l) => l.source === source && l.sourceId === sourceId)?.title ?? "—", amount: x.p.amount };
           }),
       }));
@@ -5012,8 +5103,7 @@ export class PgStorage implements IStorage {
         .returning();
       await tx.insert(payments).values(
         shares.map((s) => ({
-          orderId: s.source === "order" ? s.sourceId : null,
-          appointmentId: s.source === "appointment" ? s.sourceId : null,
+          ...paymentTarget(s.source, s.sourceId),
           invoicePaymentId: receipt.id,
           amount: s.amount,
           method: input.method,
@@ -5070,7 +5160,8 @@ export class PgStorage implements IStorage {
              sum(greatest(0, l.amount - l.paid))::int AS due, sum(greatest(0, l.paid - l.amount))::int AS credit,
              count(*)::int AS lines,
              sum(CASE WHEN l.appt = 1 THEN l.live ELSE 0 END)::int AS appointments,
-             sum(CASE WHEN l.appt = 0 THEN l.live ELSE 0 END)::int AS orders
+             sum(CASE WHEN l.appt = 0 AND l.stay = 0 THEN l.live ELSE 0 END)::int AS orders,
+             sum(CASE WHEN l.stay = 1 THEN l.live ELSE 0 END)::int AS stays
         FROM visits v
         JOIN patients pt ON pt.id = v.patient_id
         JOIN lines l ON l.visit_id = v.id AND (l.live = 1 OR l.paid <> 0)
@@ -5091,6 +5182,7 @@ export class PgStorage implements IStorage {
         invoiceNumber: r.invoice_number === null ? null : Number(r.invoice_number),
         appointments: Number(r.appointments),
         orders: Number(r.orders),
+        stays: Number(r.stays),
         totals: { ...sums, status: billStatus(sums, Number(r.lines)) },
       } satisfies BillSummary;
     });
@@ -5117,6 +5209,11 @@ export class PgStorage implements IStorage {
             .update(orders)
             .set({ discount: sql`discount + ${l.amount}`, totalAmount: sql`total_amount - ${l.amount}`, updatedAt: now, updatedBy: actor.id })
             .where(eq(orders.id, l.sourceId));
+        } else if (l.source === "stay") {
+          await tx
+            .update(admissions)
+            .set({ discount: sql`discount + ${l.amount}`, updatedAt: now, updatedBy: actor.id })
+            .where(eq(admissions.id, l.sourceId));
         } else {
           await tx
             .update(appointments)
@@ -5338,7 +5435,7 @@ export class PgStorage implements IStorage {
         .orderBy(desc(admissions.admittedAt))
         .limit(query.limit ?? 500),
       db
-        .select({ p: admissionBeds, wardName: wards.name, bedLabel: beds.label, dayPrice: wards.dayPrice })
+        .select({ p: admissionBeds, wardName: wards.name, bedLabel: beds.label, dayPrice: sql<number>`coalesce(${admissionBeds.dayPrice}, ${wards.dayPrice})::int` })
         .from(admissionBeds)
         .innerJoin(admissions, eq(admissions.id, admissionBeds.admissionId))
         .innerJoin(beds, eq(beds.id, admissionBeds.bedId))
@@ -5376,9 +5473,9 @@ export class PgStorage implements IStorage {
   }
 
   /** Locks a bed and says whether it can take a patient (FOR UPDATE; the open-period index is the last guard). */
-  private async lockFreeBed(tx: typeof db, bedId: string): Promise<{ wardId: string; departmentId: string }> {
+  private async lockFreeBed(tx: typeof db, bedId: string): Promise<{ wardId: string; departmentId: string; dayPrice: number }> {
     const [row] = await tx
-      .select({ bed: beds, wardActive: wards.isActive, departmentId: wards.departmentId })
+      .select({ bed: beds, wardActive: wards.isActive, departmentId: wards.departmentId, dayPrice: wards.dayPrice })
       .from(beds)
       .innerJoin(wards, eq(wards.id, beds.wardId))
       .where(eq(beds.id, bedId))
@@ -5386,7 +5483,7 @@ export class PgStorage implements IStorage {
     const [taken] = row ? await tx.select({ id: admissionBeds.id }).from(admissionBeds).where(and(eq(admissionBeds.bedId, bedId), isNull(admissionBeds.toAt))).limit(1) : [];
     const problem = bedFreeProblem(row && { isActive: row.bed.isActive, state: row.bed.state as BedState }, row?.wardActive ?? false, Boolean(taken));
     if (problem) throw new StorageConflict(problem);
-    return { wardId: row.bed.wardId, departmentId: row.departmentId };
+    return { wardId: row.bed.wardId, departmentId: row.departmentId, dayPrice: row.dayPrice };
   }
 
   private openPeriodConflict(err: unknown): never {
@@ -5410,11 +5507,26 @@ export class PgStorage implements IStorage {
         const [already] = await tx.select({ id: admissions.id }).from(admissions).where(and(eq(admissions.patientId, input.patientId), eq(admissions.status, "active"))).limit(1);
         if (already) throw new StorageConflict(PATIENT_ALREADY_ADMITTED);
         const place = await this.lockFreeBed(exec, input.bedId);
+        // B6.6: the stay bills on the visit of its admission day (made on first use, as an order's is).
+        const [visit] = await tx
+          .insert(visits)
+          .values({ patientId: input.patientId, visitDate: localDay(admittedAt.toISOString()), createdBy: actor.id })
+          .onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql`excluded.patient_id` } })
+          .returning({ id: visits.id });
         const [a] = await tx
           .insert(admissions)
-          .values({ patientId: input.patientId, departmentId: place.departmentId, doctorId: input.doctorId, admittedAt: admittedAt.toISOString(), reason: input.reason, createdBy: actor.id, createdByName: actor.name })
+          .values({
+            patientId: input.patientId,
+            departmentId: place.departmentId,
+            doctorId: input.doctorId,
+            admittedAt: admittedAt.toISOString(),
+            reason: input.reason,
+            visitId: visit.id,
+            createdBy: actor.id,
+            createdByName: actor.name,
+          })
           .returning({ id: admissions.id });
-        await tx.insert(admissionBeds).values({ admissionId: a.id, bedId: input.bedId, wardId: place.wardId, fromAt: admittedAt.toISOString(), movedBy: actor.id, movedByName: actor.name });
+        await tx.insert(admissionBeds).values({ admissionId: a.id, bedId: input.bedId, wardId: place.wardId, fromAt: admittedAt.toISOString(), dayPrice: place.dayPrice, movedBy: actor.id, movedByName: actor.name });
         return a.id;
       })
       .catch((e) => this.openPeriodConflict(e));
@@ -5437,7 +5549,7 @@ export class PgStorage implements IStorage {
           // The bed just left wants cleaning before the next patient.
           await tx.update(beds).set({ state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name }).where(eq(beds.id, open.bedId));
         }
-        await tx.insert(admissionBeds).values({ admissionId: id, bedId: input.bedId, wardId: place.wardId, fromAt: now, note: input.note, movedBy: actor.id, movedByName: actor.name });
+        await tx.insert(admissionBeds).values({ admissionId: id, bedId: input.bedId, wardId: place.wardId, fromAt: now, dayPrice: place.dayPrice, note: input.note, movedBy: actor.id, movedByName: actor.name });
         await tx.update(admissions).set({ departmentId: place.departmentId, updatedAt: now, updatedBy: actor.id }).where(eq(admissions.id, id));
         return true;
       })
@@ -5736,6 +5848,14 @@ export class PgStorage implements IStorage {
         FROM orders o
        WHERE o.status <> 'cancelled'
          AND (o.created_at AT TIME ZONE ${LOCAL_TZ})::date BETWEEN ${days.from}::date AND ${days.to}::date
+      HAVING count(*) > 0
+      UNION ALL
+      SELECT 'statsionar', 'Statsionar: yotoq-kun va muolajalar', NULL,
+             count(*)::int, sum(${STAY_GROSS_SQL})::bigint, sum(least(ad.discount, ${STAY_GROSS_SQL}))::bigint,
+             sum(coalesce((SELECT sum(p.amount) FROM payments p WHERE p.admission_id = ad.id AND p.voided_at IS NULL), 0))::bigint
+        FROM admissions ad
+       WHERE ad.status <> 'cancelled'
+         AND (ad.admitted_at AT TIME ZONE ${LOCAL_TZ})::date BETWEEN ${days.from}::date AND ${days.to}::date
       HAVING count(*) > 0`);
     return (res.rows as Record<string, unknown>[]).map((r) => {
       const gross = Number(r.gross);
@@ -5887,8 +6007,7 @@ export class PgStorage implements IStorage {
       if (plan.taken < r.amount) throw new StorageConflict(REFUND_BILL_CHANGED);
       await tx.insert(payments).values(
         plan.lines.map((l) => ({
-          orderId: l.source === "order" ? l.sourceId : null,
-          appointmentId: l.source === "appointment" ? l.sourceId : null,
+          ...paymentTarget(l.source, l.sourceId),
           refundId: r.id,
           amount: -l.amount,
           method: r.method,
