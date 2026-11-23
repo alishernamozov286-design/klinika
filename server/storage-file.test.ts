@@ -3219,3 +3219,27 @@ describe("discharge and epicrisis (B6.7)", () => {
   });
 });
 
+describe("occupancy report source (R.2)", () => {
+  it("lists the stays a period's census can see: admitted by its end, not gone before its start, no mistakes", async () => {
+    const admin = { id: "u-admin", name: "Admin" };
+    const dept = await storage.createDepartment({ name: "Kardiologiya R2", kind: "statsionar", description: null, isActive: true }, admin);
+    const user = await storage.createUser({ username: "drr2", password: "parol123", fullName: "R2 Shifokor", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: dept.id, specialty: "Kardiolog", consultationPrice: 1, slotMinutes: 20, schedule: [], isActive: true }, admin);
+    const ward = (await storage.addBeds((await storage.createWard({ departmentId: dept.id, name: "R2", floor: 1, gender: "mixed", dayPrice: 1, note: null }, admin)).id, 2, admin))!;
+    const p1 = await storage.createPatient({ fullName: "R2 Bir", phone: "+998903030301", gender: "erkak", age: 40, address: null });
+    const p2 = await storage.createPatient({ fullName: "R2 Ikki", phone: "+998903030302", gender: "erkak", age: 41, address: null });
+    const day = 86_400_000;
+    const old = await storage.admitPatient({ patientId: p1.id, bedId: ward.beds[0].id, doctorId: doctor.id, admittedAt: new Date(Date.now() - 20 * day).toISOString(), reason: null }, admin);
+    await storage.saveEpicrisis(old.id, 0, { finalDiagnosis: "x", finalDiagnosisCode: null, treatmentSummary: null, epicrisis: "x", recommendations: "x" }, null, admin);
+    await storage.dischargeAdmission(old.id, new Date(Date.now() - 15 * day).toISOString(), admin);
+    const now = await storage.admitPatient({ patientId: p2.id, bedId: ward.beds[1].id, doctorId: doctor.id, admittedAt: new Date(Date.now() - 2 * day).toISOString(), reason: null }, admin);
+    const span = (fromDaysAgo: number, toDaysAgo: number) => ({ from: new Date(Date.now() - fromDaysAgo * day).toISOString(), to: new Date(Date.now() - toDaysAgo * day).toISOString() });
+    const ids = async (q: { from: string; to: string }) => (await storage.listAdmissions({ inHospitalBetween: q })).map((a) => a.id).filter((id) => id === old.id || id === now.id).sort();
+    expect(await ids(span(7, 0))).toEqual([now.id]);
+    expect(await ids(span(30, 0))).toEqual([old.id, now.id].sort());
+    expect(await ids(span(30, 18))).toEqual([old.id]);
+    await storage.cancelAdmission(now.id, "Xato yotqizildi", admin);
+    expect(await ids(span(7, 0))).toEqual([]);
+  });
+});
+

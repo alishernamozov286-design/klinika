@@ -4422,6 +4422,11 @@ export class FileStorage implements IStorage {
   async listAdmissions(query: AdmissionQuery = {}): Promise<AdmissionView[]> {
     return this.db.admissions
       .filter((a) => (!query.status || a.status === query.status) && (!query.patientId || a.patientId === query.patientId) && (!query.id || a.id === query.id))
+      .filter((a) => {
+        const span = query.inHospitalBetween;
+        if (!span) return true;
+        return a.status !== "cancelled" && Date.parse(a.admittedAt) <= Date.parse(span.to) && (!a.dischargedAt || Date.parse(a.dischargedAt) >= Date.parse(span.from));
+      })
       .sort((x, y) => y.admittedAt.localeCompare(x.admittedAt))
       .slice(0, query.limit ?? 500)
       .map((a) => this.admissionViewOf(a));
@@ -5362,8 +5367,9 @@ export class FileStorage implements IStorage {
       totalTests: items.length,
       topTests: Array.from(testAgg.entries())
         .map(([name, v]) => ({ name, ...v }))
-        .sort((a, b) => b.revenue - a.revenue)
-        .slice(0, 8),
+        // R.2 "eng ko'p buyuriladigan tahlillar": by how often ordered, then by what they brought in.
+        .sort((a, b) => b.count - a.count || b.revenue - a.revenue)
+        .slice(0, 100),
       byCategory: Array.from(catAgg.entries())
         .map(([category, v]) => ({ category, ...v }))
         .sort((a, b) => b.revenue - a.revenue),

@@ -19,7 +19,8 @@ import type { EpicrisisVersion } from "@shared/schema";
 import type { AdmissionObservation, AdmissionView, AdmitInput, Bed, BedView, CaseHistoryVersion, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
 import type { CaseText, Vitals } from "@shared/case-history";
 import type { AdmissionStatus, BedState } from "@shared/inpatient";
-export type AdmissionQuery = { status?: AdmissionStatus; patientId?: string; id?: string; limit?: number };
+/** `inHospitalBetween` (ISO instants): stays admitted by `to` and not ended before `from` — the stays a period's census can see (R.2). */
+export type AdmissionQuery = { status?: AdmissionStatus; patientId?: string; id?: string; limit?: number; inHospitalBetween?: { from: string; to: string } };
 import type { Bill, BillDiscount, BillSummary, DiscountBillInput, ReceiptSlip, RefundView, RequestRefundInput, CashDesk, CashShift, CloseShiftInput, OpenShiftInput, PayBillInput, ShiftReport, ShiftSummary } from "@shared/schema";
 /** Opening time range: `from` inclusive, `to` exclusive (ISO instants); `open` alone lists the shifts still open. */
 /** B7.4: `status` alone lists every refund in it (open ones whenever asked); a range applies to the request time. */

@@ -44,6 +44,7 @@ import {
 } from "@shared/schema";
 import { VITALS, VITAL_SPEC, caseChanges, caseTextOf, formatVital, normalizeCase, vitalsProblem, type Vitals } from "@shared/case-history";
 import { labResults } from "./routes-medical";
+import { buildInpatientReport } from "@shared/inpatient-report";
 import { ADMIN_ROUTE_LABELS } from "@shared/prescription";
 import { buildEpicrisisDraft, epicrisisChanges, epicrisisTextOf, normalizeEpicrisis } from "@shared/epicrisis";
 import { patientAge } from "@shared/patient-identity";
@@ -729,6 +730,48 @@ export function registerInpatientRoutes(app: Express) {
       };
       await audit(req, "export", "admission", admission.id, `Statsionar karta №${admission.number} (№${admission.patientNumber} ${admission.patientName}): epikriz chiqarildi (v${epicrisis.version})`);
       res.json(doc);
+    }),
+  );
+
+  // ------------------------------------------------------------ R.2 occupancy report
+
+  /** TZ §13 "statsionar bandligi": the census day by day, by department and ward; who came, who left, how long they stayed. */
+  app.get(
+    "/api/reports/inpatient",
+    requirePermission("reports.view"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const to = stringParam(req.query.to) ?? today;
+      const from = stringParam(req.query.from) ?? addDays(to, -29);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ message: "Davrni to'g'ri tanlang" });
+      if (addDays(from, 366) < to) return res.status(400).json({ message: "Davr ko'pi bilan bir yil" });
+      const endOfDay = (day: string) => new Date(`${day}T23:59:59.999`).getTime();
+      const [wards, stays] = await Promise.all([
+        storage.listWards().catch((e) => emptyIfMissing(e, [])),
+        storage
+          .listAdmissions({ inHospitalBetween: { from: new Date(`${from}T00:00:00`).toISOString(), to: new Date(endOfDay(to)).toISOString() }, limit: 20000 })
+          .catch((e) => emptyIfMissing(e, [])),
+      ]);
+      res.json(
+        buildInpatientReport({
+          from,
+          to,
+          wards: wards.map((w) => ({ id: w.id, name: w.name, departmentId: w.departmentId, departmentName: w.departmentName })),
+          beds: wards.flatMap((w) => w.beds.map((b) => ({ id: b.id, wardId: w.id, createdAt: b.createdAt, usable: w.isActive && b.isActive && b.state !== "maintenance" }))),
+          stays: stays.map((a) => ({
+            id: a.id,
+            status: a.status,
+            admittedAt: a.admittedAt,
+            dischargedAt: a.dischargedAt,
+            departmentId: a.departmentId,
+            periods: a.stays.map((x) => ({ bedId: x.bedId, wardId: x.wardId, fromAt: x.fromAt, toAt: x.toAt })),
+          })),
+          endOfDay,
+          today,
+          now: Date.now(),
+          dayOf: localDay,
+        }),
+      );
     }),
   );
 }

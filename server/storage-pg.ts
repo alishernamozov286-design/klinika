@@ -529,6 +529,9 @@ const LOCAL_TZ = sql.raw(`'${SERVER_TZ}'`);
  * counted) at its frozen price, one day at the first ward when shorter than a
  * day; plus the procedures done at their ordered price. `ad` is the admission.
  */
+/** R.2: how many tests the ranking lists (the report shows the top ten, the rest on request and in the export). */
+const TOP_TESTS_LIMIT = 100;
+
 export const STAY_GROSS_SQL = sql`(
           coalesce((SELECT CASE WHEN sum(x.d) = 0 THEN (array_agg(x.price ORDER BY x.from_at))[1] ELSE sum(x.d * x.price) END
                       FROM (SELECT greatest(0, (coalesce(ab.to_at, now()) AT TIME ZONE ${LOCAL_TZ})::date - (ab.from_at AT TIME ZONE ${LOCAL_TZ})::date) AS d,
@@ -5449,7 +5452,13 @@ export class PgStorage implements IStorage {
   // ------------------------------------------------------------ B6.2 admissions
 
   async listAdmissions(query: AdmissionQuery = {}): Promise<AdmissionView[]> {
-    const where = and(query.status ? eq(admissions.status, query.status) : undefined, query.patientId ? eq(admissions.patientId, query.patientId) : undefined, query.id ? eq(admissions.id, query.id) : undefined);
+    const span = query.inHospitalBetween;
+    const where = and(
+      query.status ? eq(admissions.status, query.status) : undefined,
+      query.patientId ? eq(admissions.patientId, query.patientId) : undefined,
+      query.id ? eq(admissions.id, query.id) : undefined,
+      span ? and(lte(admissions.admittedAt, span.to), ne(admissions.status, "cancelled"), or(isNull(admissions.dischargedAt), gte(admissions.dischargedAt, span.from))) : undefined,
+    );
     const [rows, periods] = await Promise.all([
       db
         .select({ a: admissions, patientName: patients.fullName, patientNumber: patients.patientNumber, patientGender: patients.gender, doctorName: users.fullName, doctorSpecialty: doctors.specialty, departmentName: departments.name })
@@ -6747,8 +6756,9 @@ export class PgStorage implements IStorage {
         .innerJoin(orders, eq(orders.id, orderTests.orderId))
         .where(inRange)
         .groupBy(orderTests.testName)
-        .orderBy(desc(sql`sum(${orderTests.price})`))
-        .limit(8),
+        // R.2 "eng ko'p buyuriladigan tahlillar": by how often ordered, then by what they brought in.
+        .orderBy(desc(sql`count(*)`), desc(sql`sum(${orderTests.price})`))
+        .limit(TOP_TESTS_LIMIT),
       db
         .select({
           category: sql<string>`coalesce(${tests.category}, 'Boshqa')`,

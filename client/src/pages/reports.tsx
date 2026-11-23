@@ -27,10 +27,12 @@ import {
 } from "lucide-react";
 import type { RevenueReportData } from "@shared/schema";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, MeterBar, PageHeader, SectionCard, StatCard } from "@/components/ui-kit";
 import { ExportButtons } from "@/components/export-buttons";
 import { FinanceReportView } from "@/components/reports/finance";
+import { InpatientReportView } from "@/components/reports/inpatient";
 import type { ExportDoc, ExportSection } from "@/lib/export-types";
 import { dayKey, daysAgo, formatDate, money, moneyShort } from "@/lib/format";
 
@@ -50,6 +52,8 @@ const PIE_COLORS = [
 ];
 
 const AXIS_TICK = { fontSize: 12, fill: "hsl(var(--muted-foreground))" } as const;
+/** R.2: the ranking shows this many, the rest on request (and all in the export). */
+const TOP_SHOWN = 10;
 
 /** Recharts' default tooltip ignores our tokens; this one matches the popovers. */
 function ChartTooltip({
@@ -84,11 +88,15 @@ function ChartTooltip({
 
 /** The page: the accountant's finance report first (B7.8), the lab report beside it. */
 export default function Reports() {
-  const [view, setView] = useState<"finance" | "lab">(() => (new URLSearchParams(window.location.search).get("view") === "lab" ? "lab" : "finance"));
+  type View = "finance" | "lab" | "inpatient";
+  const [view, setView] = useState<View>(() => {
+    const asked = new URLSearchParams(window.location.search).get("view");
+    return asked === "lab" || asked === "inpatient" ? asked : "finance";
+  });
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Analitika" title="Hisobotlar" description="Moliyaviy hisobot (barcha xizmatlar, kassa, xarajatlar) va laboratoriya ko'rsatkichlari" />
-      <Tabs value={view} onValueChange={(v) => setView(v as "finance" | "lab")}>
+      <PageHeader eyebrow="Analitika" title="Hisobotlar" description="Moliyaviy hisobot (barcha xizmatlar, kassa, xarajatlar), laboratoriya ko'rsatkichlari va statsionar bandligi" />
+      <Tabs value={view} onValueChange={(v) => setView(v as View)}>
         <TabsList>
           <TabsTrigger value="finance" data-testid="tab-report-finance">
             Moliyaviy hisobot
@@ -96,9 +104,12 @@ export default function Reports() {
           <TabsTrigger value="lab" data-testid="tab-report-lab">
             Laboratoriya
           </TabsTrigger>
+          <TabsTrigger value="inpatient" data-testid="tab-report-inpatient">
+            Statsionar
+          </TabsTrigger>
         </TabsList>
       </Tabs>
-      {view === "finance" ? <FinanceReportView /> : <LabReport />}
+      {view === "finance" ? <FinanceReportView /> : view === "lab" ? <LabReport /> : <InpatientReportView />}
     </div>
   );
 }
@@ -106,6 +117,7 @@ export default function Reports() {
 /** Lab orders only: tests, categories, referrers (the report from before B7.1). */
 function LabReport() {
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("30");
+  const [allTests, setAllTests] = useState(false);
 
   const from = daysAgo(Number(range) - 1);
   const to = dayKey(new Date());
@@ -179,13 +191,15 @@ function LabReport() {
     }
     if (data.topTests.length) {
       sections.push({
-        title: "Eng ko'p buyurtma qilingan tahlillar",
+        title: "Eng ko'p buyuriladigan tahlillar",
         columns: [
+          { header: "№", type: "number", width: 6 },
           { header: "Tahlil", width: 30 },
           { header: "Soni", type: "number", width: 10 },
+          { header: "Ulushi, %", type: "number", width: 10 },
           { header: "Tushum", type: "money", width: 18 },
         ],
-        rows: data.topTests.map((t) => [t.name, t.count, t.revenue]),
+        rows: data.topTests.map((t, i) => [i + 1, t.name, t.count, data.totalTests ? Math.round((t.count / data.totalTests) * 1000) / 10 : 0, t.revenue]),
       });
     }
 
@@ -438,12 +452,23 @@ function LabReport() {
             </SectionCard>
           </div>
 
-          <SectionCard icon={FlaskConical} title="Eng ko'p buyurtma qilingan tahlillar">
+          <SectionCard
+            icon={FlaskConical}
+            title="Eng ko'p buyuriladigan tahlillar"
+            description={data ? `Soni bo'yicha · jami ${data.totalTests} ta tahlil, ${data.topTests.length} xil` : undefined}
+            action={
+              (data?.topTests.length ?? 0) > TOP_SHOWN ? (
+                <Button variant="ghost" size="sm" onClick={() => setAllTests((x) => !x)} data-testid="button-top-tests-all">
+                  {allTests ? "Qisqartirish" : `Barchasi (${data!.topTests.length})`}
+                </Button>
+              ) : undefined
+            }
+          >
             {(data?.topTests.length ?? 0) === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">Ma'lumot yo'q</p>
             ) : (
-              <div className="space-y-4">
-                {data!.topTests.map((t, i) => {
+              <div className="space-y-4" data-testid="top-tests">
+                {(allTests ? data!.topTests : data!.topTests.slice(0, TOP_SHOWN)).map((t, i) => {
                   const max = data!.topTests[0].count || 1;
                   return (
                     <div key={t.name} className="flex items-center gap-3">
@@ -458,7 +483,7 @@ function LabReport() {
                           <>
                             <span className="truncate text-foreground">{t.name}</span>
                             <span className="shrink-0 tabular">
-                              {t.count} ta · {money(t.revenue)}
+                              {t.count} ta{data!.totalTests ? ` · ${Math.round((t.count / data!.totalTests) * 1000) / 10}%` : ""} · {money(t.revenue)}
                             </span>
                           </>
                         }
