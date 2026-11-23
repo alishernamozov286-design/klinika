@@ -155,6 +155,17 @@ import { OUT_BUCKETS, movementBucket, signedValue, type DailyFlow, type Departme
 import type { CashDayRow } from "@shared/cash-report";
 import { sortDebtors, type DebtorRow } from "@shared/debt";
 import type { FinanceServiceRow } from "@shared/finance-report";
+import {
+  DISCHARGE_NOT_ACTIVE,
+  EPICRISIS_CANCELLED,
+  EPICRISIS_REASON,
+  EPICRISIS_STALE,
+  dischargeProblem,
+  dischargeTimeProblem,
+  epicrisisSaveProblem,
+  epicrisisTextOf,
+  type EpicrisisText,
+} from "@shared/epicrisis";
 import { stayCharge, type StayCharge } from "@shared/stay-bill";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem } from "@shared/procedures";
@@ -219,6 +230,7 @@ import type {
   AdmissionView,
   AdmissionObservation,
   CaseHistoryVersion,
+  EpicrisisVersion,
   InpatientOrder,
   InpatientOrderView,
   ProcedureTask,
@@ -4585,6 +4597,61 @@ export class FileStorage implements IStorage {
       if (o.admissionId === id && o.status === "active") Object.assign(o, { status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: `Yotqizish bekor qilindi: ${reason}` });
     for (const t of this.db.procedureTasks) if (t.admissionId === id && t.status === "planned") t.status = "cancelled";
     Object.assign(a, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
+    await this.persist();
+    return this.admissionViewOf(a);
+  }
+
+  // ------------------------------------------------------------ B6.7 discharge and epicrisis
+
+  async listEpicrisis(admissionId: string): Promise<EpicrisisVersion[]> {
+    return this.db.epicrisisVersions.filter((v) => v.admissionId === admissionId).sort((a, b) => b.version - a.version);
+  }
+
+  async saveEpicrisis(admissionId: string, baseVersion: number, text: EpicrisisText, reason: string | null, actor: Actor): Promise<EpicrisisVersion | undefined> {
+    const a = this.db.admissions.find((x) => x.id === admissionId);
+    if (!a) return undefined;
+    if (a.status === "cancelled") throw new StorageConflict(EPICRISIS_CANCELLED);
+    if (a.status === "discharged" && !reason) throw new Error(EPICRISIS_REASON);
+    const latest = (await this.listEpicrisis(admissionId))[0];
+    if ((latest?.version ?? 0) !== baseVersion) throw new StorageConflict(EPICRISIS_STALE);
+    const problem = epicrisisSaveProblem(latest ? epicrisisTextOf(latest) : null, text);
+    if (problem) throw new Error(problem);
+    const row: EpicrisisVersion = {
+      id: randomUUID(),
+      admissionId,
+      version: baseVersion + 1,
+      ...text,
+      reason: a.status === "discharged" ? reason : null,
+      savedAt: new Date().toISOString(),
+      savedBy: actor.id,
+      savedByName: actor.name,
+    };
+    this.db.epicrisisVersions.push(row);
+    await this.persist();
+    return row;
+  }
+
+  async dischargeAdmission(id: string, at: string, actor: Actor): Promise<AdmissionView | undefined> {
+    const a = this.db.admissions.find((x) => x.id === id);
+    if (!a) return undefined;
+    if (a.status !== "active") throw new StorageConflict(DISCHARGE_NOT_ACTIVE);
+    const late = dischargeTimeProblem(at, a.admittedAt);
+    if (late) throw new Error(late);
+    const latest = (await this.listEpicrisis(id))[0];
+    const missing = dischargeProblem(latest ? epicrisisTextOf(latest) : null);
+    if (missing) throw new Error(missing);
+    const when = new Date(at).toISOString();
+    const now = new Date().toISOString();
+    const open = this.db.admissionBeds.find((p) => p.admissionId === id && !p.toAt);
+    if (open) {
+      open.toAt = when < open.fromAt ? open.fromAt : when;
+      const bed = this.db.beds.find((b) => b.id === open.bedId);
+      if (bed) Object.assign(bed, { state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name });
+    }
+    for (const o of this.db.inpatientOrders)
+      if (o.admissionId === id && o.status === "active") Object.assign(o, { status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: "Bemor chiqarildi" });
+    for (const t of this.db.procedureTasks) if (t.admissionId === id && t.status === "planned") t.status = "cancelled";
+    Object.assign(a, { status: "discharged", dischargedAt: when, dischargedBy: actor.id, dischargedByName: actor.name, updatedAt: now, updatedBy: actor.id });
     await this.persist();
     return this.admissionViewOf(a);
   }

@@ -290,6 +290,11 @@ export const PERMISSIONS = {
     label: "Kundalik kuzatuv",
     description: "Statsionar bemorning harorati, bosimi, pulsi va holati haqida yozuv; xatosini sabab bilan bekor qilish",
   },
+  "inpatient.discharge": {
+    group: "inpatient",
+    label: "Bemorni chiqarish",
+    description: "Epikriz to'ldirilgach bemorni statsionardan chiqarish: yotoq bo'shaydi, tayinlovlar to'xtaydi (TZ §8.1.5)",
+  },
   "procedures.prescribe": {
     group: "inpatient",
     label: "Muolaja tayinlash",
@@ -520,6 +525,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       "inpatient.history",
       "inpatient.observe",
       "procedures.prescribe",
+      "inpatient.discharge",
     ],
   },
   {

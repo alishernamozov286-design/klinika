@@ -35,6 +35,8 @@ export function pdfSafe(text: string): string {
     .replace(/[ʻʼ‘’]/g, "'")
     .replace(/↑/g, " (yuqori)")
     .replace(/↓/g, " (past)")
+    // The embedded Roboto has no arrow glyph; a dash reads the same ("38.6 – 36.7").
+    .replace(/\s*→\s*/g, " – ")
     .replace(/ | /g, " ");
 }
 

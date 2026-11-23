@@ -28,6 +28,7 @@ import {
   admissions,
   admissionBeds,
   caseHistoryVersions,
+  epicrisisVersions,
   admissionObservations,
   inpatientOrders,
   procedureTasks,
@@ -228,6 +229,17 @@ import {
   type CaseText,
   type Vitals,
 } from "@shared/case-history";
+import {
+  DISCHARGE_NOT_ACTIVE,
+  EPICRISIS_CANCELLED,
+  EPICRISIS_REASON,
+  EPICRISIS_STALE,
+  dischargeProblem,
+  dischargeTimeProblem,
+  epicrisisSaveProblem,
+  epicrisisTextOf,
+  type EpicrisisText,
+} from "@shared/epicrisis";
 import { stayCharge, type StayCharge } from "@shared/stay-bill";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem, type TaskStatus } from "@shared/procedures";
@@ -280,6 +292,7 @@ import type {
   AdmissionView,
   AdmissionObservation,
   CaseHistoryVersion,
+  EpicrisisVersion,
   InpatientOrder,
   InpatientOrderView,
   ProcedureTask,
@@ -417,6 +430,7 @@ const iso = <T extends string | null>(value: T): T =>
   (value ? (new Date(value).toISOString() as T) : value);
 
 const mapCaseVersion = (r: CaseHistoryVersion): CaseHistoryVersion => ({ ...r, savedAt: iso(r.savedAt) });
+const mapEpicrisis = (r: EpicrisisVersion): EpicrisisVersion => ({ ...r, savedAt: iso(r.savedAt) });
 const mapObservation = (r: AdmissionObservation): AdmissionObservation => ({
   ...r,
   observedAt: iso(r.observedAt),
@@ -5699,6 +5713,70 @@ export class PgStorage implements IStorage {
         .returning();
       return mapObservation(row);
     });
+  }
+
+  // ------------------------------------------------------------ B6.7 discharge and epicrisis
+
+  async listEpicrisis(admissionId: string): Promise<EpicrisisVersion[]> {
+    const rows = await db.select().from(epicrisisVersions).where(eq(epicrisisVersions.admissionId, admissionId)).orderBy(desc(epicrisisVersions.version));
+    return rows.map(mapEpicrisis);
+  }
+
+  async saveEpicrisis(admissionId: string, baseVersion: number, text: EpicrisisText, reason: string | null, actor: Actor): Promise<EpicrisisVersion | undefined> {
+    try {
+      return await db.transaction(async (tx) => {
+        const [a] = await tx.select({ status: admissions.status }).from(admissions).where(eq(admissions.id, admissionId)).for("share");
+        if (!a) return undefined;
+        if (a.status === "cancelled") throw new StorageConflict(EPICRISIS_CANCELLED);
+        if (a.status === "discharged" && !reason) throw new Error(EPICRISIS_REASON);
+        const [latest] = await tx.select().from(epicrisisVersions).where(eq(epicrisisVersions.admissionId, admissionId)).orderBy(desc(epicrisisVersions.version)).limit(1);
+        if ((latest?.version ?? 0) !== baseVersion) throw new StorageConflict(EPICRISIS_STALE);
+        const problem = epicrisisSaveProblem(latest ? epicrisisTextOf(latest) : null, text);
+        if (problem) throw new Error(problem);
+        const [row] = await tx
+          .insert(epicrisisVersions)
+          .values({ admissionId, version: baseVersion + 1, ...text, reason: a.status === "discharged" ? reason : null, savedAt: new Date().toISOString(), savedBy: actor.id, savedByName: actor.name })
+          .returning();
+        return mapEpicrisis(row);
+      });
+    } catch (err) {
+      const e = err as { code?: string; constraint?: string };
+      if (e?.code === "23505" && e.constraint === "UQ_epicrisis_versions") throw new StorageConflict(EPICRISIS_STALE);
+      throw err;
+    }
+  }
+
+  async dischargeAdmission(id: string, at: string, actor: Actor): Promise<AdmissionView | undefined> {
+    const found = await db.transaction(async (tx) => {
+      const [a] = await tx.select().from(admissions).where(eq(admissions.id, id)).for("update");
+      if (!a) return false;
+      if (a.status !== "active") throw new StorageConflict(DISCHARGE_NOT_ACTIVE);
+      const late = dischargeTimeProblem(at, iso(a.admittedAt) ?? a.admittedAt);
+      if (late) throw new Error(late);
+      const [latest] = await tx.select().from(epicrisisVersions).where(eq(epicrisisVersions.admissionId, id)).orderBy(desc(epicrisisVersions.version)).limit(1);
+      const missing = dischargeProblem(latest ? epicrisisTextOf(latest) : null);
+      if (missing) throw new Error(missing);
+      const when = new Date(at).toISOString();
+      const now = new Date().toISOString();
+      // The bed: its period ends at discharge (the bill stops growing), and it wants cleaning.
+      const [open] = await tx.select().from(admissionBeds).where(and(eq(admissionBeds.admissionId, id), isNull(admissionBeds.toAt))).for("update");
+      if (open) {
+        await tx.update(admissionBeds).set({ toAt: when < (iso(open.fromAt) ?? open.fromAt) ? (iso(open.fromAt) ?? open.fromAt) : when }).where(eq(admissionBeds.id, open.id));
+        await tx.update(beds).set({ state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name }).where(eq(beds.id, open.bedId));
+      }
+      // Orders stop; what was still planned is called off.
+      await tx
+        .update(inpatientOrders)
+        .set({ status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: "Bemor chiqarildi" })
+        .where(and(eq(inpatientOrders.admissionId, id), eq(inpatientOrders.status, "active")));
+      await tx.update(procedureTasks).set({ status: "cancelled" }).where(and(eq(procedureTasks.admissionId, id), eq(procedureTasks.status, "planned")));
+      await tx
+        .update(admissions)
+        .set({ status: "discharged", dischargedAt: when, dischargedBy: actor.id, dischargedByName: actor.name, updatedAt: now, updatedBy: actor.id })
+        .where(eq(admissions.id, id));
+      return true;
+    });
+    return found ? this.getAdmission(id) : undefined;
   }
 
   // ------------------------------------------------------------ B6.5 orders and procedures

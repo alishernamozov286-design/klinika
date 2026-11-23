@@ -15,6 +15,7 @@ import type {
   AdmissionBed,
   AdmissionObservation,
   CaseHistoryVersion,
+  EpicrisisVersion,
   InpatientOrder,
   ProcedureTask,
   LabConsumption,
@@ -108,6 +109,8 @@ export type DbShape = {
   admissionBeds: AdmissionBed[];
   /** B6.4 case history versions and daily observations. */
   caseHistoryVersions: CaseHistoryVersion[];
+  /** B6.7 epicrisis versions. */
+  epicrisisVersions: EpicrisisVersion[];
   admissionObservations: AdmissionObservation[];
   /** B6.5 doctors' orders and their schedule. */
   inpatientOrders: InpatientOrder[];
@@ -185,6 +188,7 @@ export const emptyDb = (): DbShape => ({
   admissions: [],
   admissionBeds: [],
   caseHistoryVersions: [],
+  epicrisisVersions: [],
   admissionObservations: [],
   inpatientOrders: [],
   procedureTasks: [],

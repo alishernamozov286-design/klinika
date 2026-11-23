@@ -74,6 +74,10 @@ describe("pdfSafe", () => {
     expect(pdfSafe("Oʻtkir Gʻaniyev")).toBe("O'tkir G'aniyev");
   });
 
+  it("writes a trend arrow as a dash (B6.7 epicrisis dynamics)", () => {
+    expect(pdfSafe("harorat 38.6 → 36.7 °C")).toBe("harorat 38.6 – 36.7 °C");
+  });
+
   it("normalises the curly quotes a phone keyboard produces", () => {
     expect(pdfSafe("O‘tkir")).toBe("O'tkir");
     expect(pdfSafe("O’tkir")).toBe("O'tkir");

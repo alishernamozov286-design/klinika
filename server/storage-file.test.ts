@@ -564,6 +564,7 @@ describe("roles", () => {
       "inpatient.history",
       "inpatient.observe",
       "procedures.prescribe",
+      "inpatient.discharge",
     ]);
   });
 
@@ -3164,3 +3165,57 @@ describe("medicine stock (B6.6b)", () => {
     expect((await storage.getStayCharge(a.id))!.charge.procedures).toEqual([{ orderId: o.id, name: "Seftriakson 1 g", done: 3, unitPrice: 12000, amount: 36000 }]);
   });
 });
+
+describe("discharge and epicrisis (B6.7)", () => {
+  it("drafts version the epicrisis; discharge needs it whole and closes the stay; afterwards only a reasoned correction", async () => {
+    const admin = { id: "u-admin", name: "Admin" };
+    const dept = await storage.createDepartment({ name: "Nevrologiya", kind: "statsionar", description: null, isActive: true }, admin);
+    const user = await storage.createUser({ username: "dr67", password: "parol123", fullName: "Aliyeva Gulnora", role: "shifokor", isActive: true });
+    const doctor = await storage.createDoctor({ userId: user.id, departmentId: dept.id, specialty: "Nevrolog", consultationPrice: 100000, slotMinutes: 20, schedule: [], isActive: true }, admin);
+    const ward = (await storage.addBeds((await storage.createWard({ departmentId: dept.id, name: "701", floor: 7, gender: "mixed", dayPrice: 100000, note: null }, admin)).id, 1, admin))!;
+    const p = await storage.createPatient({ fullName: "Toshmatov Ravshan", phone: "+998902020202", gender: "erkak", age: 58, address: null });
+    const admittedAt = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    const a = await storage.admitPatient({ patientId: p.id, bedId: ward.beds[0].id, doctorId: doctor.id, admittedAt, reason: null }, admin);
+    const dr = { id: user.id, name: "Aliyeva Gulnora" };
+    const o = (await storage.createInpatientOrder(
+      a.id,
+      { kind: "procedure", itemId: null, serviceId: null, name: "Fizioterapiya", dose: null, route: null, times: ["08:00"], startOn: todayKey(), days: 2, note: null, unitPrice: null, issueQty: null },
+      [new Date(Date.now() + 3_600_000).toISOString(), new Date(Date.now() + 25 * 3_600_000).toISOString()],
+      dr,
+    ))!;
+
+    // Not without an epicrisis; drafts are versions; a stale save is refused.
+    await expect(storage.dischargeAdmission(a.id, new Date().toISOString(), dr)).rejects.toThrow(/Yakuniy tashxis, Epikriz, Tavsiyalar/);
+    const text = { finalDiagnosis: "Ishemik insult", finalDiagnosisCode: null, treatmentSummary: null, epicrisis: "Kechishi yaxshi", recommendations: null };
+    const v1 = (await storage.saveEpicrisis(a.id, 0, text, null, dr))!;
+    expect(v1).toMatchObject({ version: 1, reason: null, savedByName: "Aliyeva Gulnora" });
+    await expect(storage.dischargeAdmission(a.id, new Date().toISOString(), dr)).rejects.toThrow(/: Tavsiyalar/);
+    await expect(storage.saveEpicrisis(a.id, 0, { ...text, recommendations: "x" }, null, dr)).rejects.toThrow(/boshqa oynada/);
+    await storage.saveEpicrisis(a.id, 1, { ...text, recommendations: "Nevrolog nazorati, 1 oydan keyin" }, null, dr);
+    await expect(storage.dischargeAdmission(a.id, new Date(Date.parse(admittedAt) - 60_000).toISOString(), dr)).rejects.toThrow(/oldin/);
+
+    // Discharge: one step closes it all.
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const out = (await storage.dischargeAdmission(a.id, at, dr))!;
+    expect(out).toMatchObject({ status: "discharged", dischargedByName: "Aliyeva Gulnora", current: null });
+    expect(out.stays[0].toAt).toBe(new Date(at).toISOString());
+    expect((await storage.getWard(ward.id))!.beds[0]).toMatchObject({ display: "cleaning", occupant: null });
+    const order = (await storage.getInpatientOrder(o.id))!;
+    expect(order).toMatchObject({ status: "stopped", stopReason: "Bemor chiqarildi" });
+    expect(order.tasks.every((t) => t.status === "cancelled")).toBe(true);
+    expect((await storage.getStayCharge(a.id))!.charge.days).toBe(3);
+    await expect(storage.dischargeAdmission(a.id, at, dr)).rejects.toThrow(/statsionarda emas/);
+    // The card is closed for the history and for new orders.
+    await expect(storage.saveCaseHistory(a.id, 0, { complaints: "x", anamnesis: null, examination: null, diagnosis: null, diagnosisCode: null, treatmentPlan: null }, dr)).rejects.toThrow(/yopilgan/);
+
+    // After discharge: a correction carries its reason.
+    await expect(storage.saveEpicrisis(a.id, 2, { ...text, recommendations: "Yangilandi" }, null, dr)).rejects.toThrow(/sababini/);
+    const fix = (await storage.saveEpicrisis(a.id, 2, { ...text, recommendations: "Nevrolog nazorati, 2 haftadan keyin" }, "Nazorat muddati xato yozilgan", dr))!;
+    expect(fix).toMatchObject({ version: 3, reason: "Nazorat muddati xato yozilgan" });
+    expect((await storage.listEpicrisis(a.id)).map((v) => v.version)).toEqual([3, 2, 1]);
+    // The patient may come back.
+    const again = await storage.admitPatient({ patientId: p.id, bedId: ward.beds[0].id, doctorId: doctor.id, admittedAt: null, reason: null }, admin).catch((e: Error) => e.message);
+    expect(String(again)).toMatch(/tozalanmoqda/);
+  });
+});
+

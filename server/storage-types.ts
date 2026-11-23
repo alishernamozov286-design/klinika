@@ -14,6 +14,8 @@ import type { InpatientOrderView, ProcedureTaskView } from "@shared/schema";
 import type { AdminRoute } from "@shared/prescription";
 import type { OrderKind } from "@shared/procedures";
 import type { StayCharge } from "@shared/stay-bill";
+import type { EpicrisisText } from "@shared/epicrisis";
+import type { EpicrisisVersion } from "@shared/schema";
 import type { AdmissionObservation, AdmissionView, AdmitInput, Bed, BedView, CaseHistoryVersion, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
 import type { CaseText, Vitals } from "@shared/case-history";
 import type { AdmissionStatus, BedState } from "@shared/inpatient";
@@ -1028,6 +1030,21 @@ export interface IStorage {
   markProcedureTask(id: string, mark: { status: "done" | "missed"; note: string | null }, actor: Actor): Promise<ProcedureTaskView | undefined>;
   /** Puts a mistaken mark back to planned, with a reason. */
   revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined>;
+  // ---- B6.7 discharge and epicrisis (TZ §8.1.5)
+  /** Every version of a stay's epicrisis, newest first. */
+  listEpicrisis(admissionId: string): Promise<EpicrisisVersion[]>;
+  /**
+   * The next version. Before discharge a draft (no reason); after it a
+   * correction (reason required). A newer version than `baseVersion` →
+   * StorageConflict (EPICRISIS_STALE); a cancelled stay is refused.
+   */
+  saveEpicrisis(admissionId: string, baseVersion: number, text: EpicrisisText, reason: string | null, actor: Actor): Promise<EpicrisisVersion | undefined>;
+  /**
+   * Discharges an active stay whose epicrisis is complete, in one step: the
+   * bed period closes at `at`, the bed wants cleaning, orders stop and doses
+   * still planned are called off.
+   */
+  dischargeAdmission(id: string, at: string, actor: Actor): Promise<AdmissionView | undefined>;
   /** B6.6: what a stay has run up (bed-days, procedures), what was paid on it, and the visit whose bill carries it. */
   getStayCharge(admissionId: string): Promise<{ visitId: string | null; charge: StayCharge; paid: number } | undefined>;
   /** A mistaken stay: closed with a reason, never deleted. */

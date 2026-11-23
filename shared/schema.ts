@@ -44,6 +44,7 @@ import type { RefundLine, RefundStatus } from "./refund";
 import { DISCOUNT_MODES, type DiscountLine, type DiscountMode } from "./discount";
 import { BED_STATES, MAX_BEDS_PER_WARD, WARD_GENDERS, type AdmissionStatus, type BedDisplay, type BedState, type WardGender } from "./inpatient";
 import { CASE_FIELD_MAX, VITALS, VITAL_SPEC, type Vital } from "./case-history";
+import { EPICRISIS_MAX, type EpicrisisText } from "./epicrisis";
 import { MAX_ORDER_DAYS, MAX_TIMES_PER_DAY, ORDER_KINDS, type OrderKind, type TaskStatus } from "./procedures";
 import { EXTRA_REASONS, MAX_NORM_QUANTITY, type ConsumptionKind, type ExtraReason, type NormStatus } from "./consumption";
 
@@ -533,6 +534,31 @@ export const caseHistoryVersions = pgTable(
     savedByName: text("saved_by_name"),
   },
   (t) => [uniqueIndex("UQ_case_history_versions").on(t.admissionId, t.version)],
+);
+
+/**
+ * Epikriz (B6.7, TZ §8.1.5): like the case history, every save is a new row —
+ * drafts while the patient is in hospital, corrections (with a reason) after
+ * discharge. The newest is the document. Never changed, never deleted.
+ */
+export const epicrisisVersions = pgTable(
+  "epicrisis_versions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    admissionId: varchar("admission_id").notNull(),
+    version: integer("version").notNull(),
+    finalDiagnosis: text("final_diagnosis"),
+    finalDiagnosisCode: varchar("final_diagnosis_code"),
+    treatmentSummary: text("treatment_summary"),
+    epicrisis: text("epicrisis"),
+    recommendations: text("recommendations"),
+    /** A correction after discharge says why. */
+    reason: text("reason"),
+    savedAt: isoTimestamp("saved_at").defaultNow().notNull(),
+    savedBy: varchar("saved_by"),
+    savedByName: text("saved_by_name"),
+  },
+  (t) => [uniqueIndex("UQ_epicrisis_versions").on(t.admissionId, t.version)],
 );
 
 /**
@@ -2028,6 +2054,28 @@ export type AdmissionView = Admission & {
 };
 export type WardView = Ward & { departmentName: string; beds: BedView[] };
 export type CaseHistoryVersion = typeof caseHistoryVersions.$inferSelect;
+export type EpicrisisVersion = typeof epicrisisVersions.$inferSelect;
+/** B6.7: the epicrisis panel in one read. */
+export type EpicrisisView = {
+  current: EpicrisisVersion | null;
+  versionCount: number;
+  /** Filled from the stay — what "Avto-to'ldirish" puts in. */
+  draft: EpicrisisText;
+  can: { write: boolean; discharge: boolean; amend: boolean };
+};
+/** B6.7: everything the epicrisis PDF prints. */
+export type EpicrisisDocument = {
+  admission: AdmissionView;
+  epicrisis: EpicrisisVersion;
+  icd: IcdLabel | null;
+  patient: { birthDate: string | null; age: number | null; gender: string | null; address: string | null };
+  allergies: PatientAllergy[];
+  days: number;
+  clinic: LabSettings;
+  logo: string | null;
+  generatedAt: string;
+  generatedBy: string;
+};
 export type InpatientOrder = Omit<typeof inpatientOrders.$inferSelect, "kind" | "status"> & { kind: OrderKind; status: "active" | "stopped" };
 export type ProcedureTask = Omit<typeof procedureTasks.$inferSelect, "status"> & { status: TaskStatus };
 /** An order with its whole schedule (oldest dose first) — the case history page. */
@@ -2906,6 +2954,30 @@ export const observationSchema = z.object({
     .transform((v) => v || null),
 });
 export type ObservationInput = z.infer<typeof observationSchema>;
+
+/** B6.7: a save of the epicrisis (a draft before discharge, a correction with its reason after). */
+const epiText = (max: number) =>
+  z
+    .string()
+    .max(max, `Ko'pi bilan ${max} belgi`)
+    .nullish()
+    .transform((v) => v ?? null);
+export const saveEpicrisisSchema = z.object({
+  baseVersion: z.number().int().min(0),
+  finalDiagnosis: epiText(EPICRISIS_MAX.finalDiagnosis),
+  finalDiagnosisCode: z.string().trim().max(10).nullish().transform((v) => v || null),
+  treatmentSummary: epiText(EPICRISIS_MAX.treatmentSummary),
+  epicrisis: epiText(EPICRISIS_MAX.epicrisis),
+  recommendations: epiText(EPICRISIS_MAX.recommendations),
+  reason: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null),
+});
+export const dischargeSchema = z.object({
+  dischargedAt: z
+    .string()
+    .datetime({ offset: true, message: "Vaqtni to'g'ri kiriting" })
+    .nullish()
+    .transform((v) => v ?? null),
+});
 
 /** B6.5: a doctor's order for a stay. */
 export const inpatientOrderSchema = z.object({

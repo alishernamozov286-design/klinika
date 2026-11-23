@@ -13,6 +13,8 @@
  *   procedures.perform          mark a dose done / not done, put a mistaken mark back
  *   procedures.prescribe        order lab tests from the case history (B6.6; the order joins the stay's bill)
  *   inpatient.read + (payments.create | finance.view)   the stay's charge: bed-days, procedures, paid, owed
+ *   inpatient.history           draft the epicrisis (B6.7); after discharge a correction needs records.amend and a reason
+ *   inpatient.discharge         discharge the patient once the epicrisis is complete
  *
  * Rules: shared/inpatient.ts.
  */
@@ -26,6 +28,10 @@ import {
   inpatientOrderSchema,
   observationSchema,
   stayLabOrderSchema,
+  saveEpicrisisSchema,
+  dischargeSchema,
+  type EpicrisisDocument,
+  type EpicrisisView,
   taskMarkSchema,
   taskReasonSchema,
   saveCaseHistorySchema,
@@ -39,6 +45,8 @@ import {
 import { VITALS, VITAL_SPEC, caseChanges, caseTextOf, formatVital, normalizeCase, vitalsProblem, type Vitals } from "@shared/case-history";
 import { labResults } from "./routes-medical";
 import { ADMIN_ROUTE_LABELS } from "@shared/prescription";
+import { buildEpicrisisDraft, epicrisisChanges, epicrisisTextOf, normalizeEpicrisis } from "@shared/epicrisis";
+import { patientAge } from "@shared/patient-identity";
 import { ORDER_NOTHING_AHEAD, TASK_STATUS_LABELS, addDays, normalizeTimes, orderProblem, planSlots, sortTasks } from "@shared/procedures";
 import type { InpatientOrderView, ProcedureTaskView } from "@shared/schema";
 import { ADMISSION_STATUSES, BED_STATE_LABELS, WARD_GENDER_LABELS, buildInpatientOverview, type AdmissionStatus } from "@shared/inpatient";
@@ -555,6 +563,172 @@ export function registerInpatientRoutes(app: Express) {
         `Statsionar karta №${admission.number} (№${admission.patientNumber} ${admission.patientName}): laboratoriya buyurtmasi #${order.orderNumber} — ${order.items.map((i) => i.testName).join(", ")}`,
       );
       res.status(201).json(order);
+    }),
+  );
+
+  // ------------------------------------------------------------ B6.7 discharge and epicrisis
+
+  /** The draft as the stay tells it: case history, observations, what was given, lab results, examinations. */
+  async function epicrisisDraft(req: Parameters<typeof hasPermission>[0], admission: AdmissionView) {
+    const [versions, observations, orders, patient, charge, labOrders, records] = await Promise.all([
+      storage.listCaseHistory(admission.id).catch((e) => emptyIfMissing(e, [])),
+      storage.listObservations(admission.id).catch((e) => emptyIfMissing(e, [])),
+      storage.listInpatientOrders(admission.id).catch((e) => emptyIfMissing(e, [])),
+      storage.getPatient(admission.patientId),
+      storage.getStayCharge(admission.id).catch(() => undefined),
+      hasPermission(req, "orders.read") ? storage.listOrders({ patientId: admission.patientId }) : Promise.resolve(null),
+      hasPermission(req, "records.read") ? storage.listRecords({ patientId: admission.patientId }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve([]),
+    ]);
+    const until = admission.dischargedAt ?? new Date().toISOString();
+    const within = (t: string) => t >= admission.admittedAt && t <= until;
+    const firstDay = localDay(admission.admittedAt);
+    const lastDay = localDay(until);
+    const current = versions[0] ?? null;
+    return buildEpicrisisDraft({
+      patient: { name: admission.patientName, age: patient ? patientAge(patient) : null },
+      admittedAt: admission.admittedAt,
+      until,
+      days: charge?.charge.days ?? 1,
+      departmentName: admission.departmentName,
+      places: admission.stays.map((x) => `palata ${x.wardName}`).filter((v, i, all) => all.indexOf(v) === i),
+      reason: admission.reason,
+      caseText: current ? caseTextOf(current) : null,
+      observations: observations
+        .filter((o) => !o.voidedAt)
+        .sort((a, b) => a.observedAt.localeCompare(b.observedAt)),
+      treatments: orders.map((o) => ({
+        name: o.name,
+        dose: o.dose,
+        route: o.route ? (ADMIN_ROUTE_LABELS[o.route as keyof typeof ADMIN_ROUTE_LABELS] ?? o.route) : null,
+        kind: o.kind,
+        done: o.tasks.filter((t) => t.status === "done").length,
+        stopped: o.status === "stopped" && o.stopReason !== "Bemor chiqarildi",
+      })),
+      labs: labOrders ? labResults(labOrders.items.filter((o) => within(o.createdAt))) : [],
+      exams: records
+        .filter((r) => r.status === "signed" && r.date >= firstDay && r.date <= lastDay)
+        .map((r) => ({ title: `${r.specialty} ko'rigi`, date: r.date, diagnosis: r.finalDiagnosis ?? r.preliminaryDiagnosis })),
+      dayLabel: (iso) => {
+        const [y, m, d] = localDay(iso).split("-");
+        return `${d}.${m}.${y}`;
+      },
+    });
+  }
+
+  app.get(
+    "/api/admissions/:id/epicrisis",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Epikrizni ko'rish uchun ruxsatingiz yo'q" });
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const versions = await storage.listEpicrisis(admission.id).catch((e) => emptyIfMissing(e, []));
+      const view: EpicrisisView = {
+        current: versions[0] ?? null,
+        versionCount: versions.length,
+        draft: await epicrisisDraft(req, admission),
+        can: {
+          write: admission.status === "active" && hasPermission(req, "inpatient.history"),
+          discharge: admission.status === "active" && hasPermission(req, "inpatient.discharge"),
+          amend: admission.status === "discharged" && hasPermission(req, "records.amend"),
+        },
+      };
+      res.json(view);
+    }),
+  );
+
+  app.get(
+    "/api/admissions/:id/epicrisis/versions",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Epikrizni ko'rish uchun ruxsatingiz yo'q" });
+      res.json(await storage.listEpicrisis(req.params.id).catch((e) => emptyIfMissing(e, [])));
+    }),
+  );
+
+  app.post(
+    "/api/admissions/:id/epicrisis",
+    requirePermission("inpatient.history", "records.amend"),
+    handle(async (req, res) => {
+      const { baseVersion, reason, ...input } = saveEpicrisisSchema.parse(req.body);
+      const text = normalizeEpicrisis(input);
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      // A draft is the attending side's; a signed (discharged) epicrisis is corrected only with the amend right.
+      if (admission.status === "active" && !hasPermission(req, "inpatient.history")) return res.status(403).json({ message: "Epikriz yozish uchun ruxsatingiz yo'q" });
+      if (admission.status === "discharged" && !hasPermission(req, "records.amend")) return res.status(403).json({ message: "Chiqarilgan bemorning epikrizini faqat tuzatish huquqi bor shifokor o'zgartiradi" });
+      const before = (await storage.listEpicrisis(admission.id))[0];
+      if (text.finalDiagnosisCode && text.finalDiagnosisCode !== before?.finalDiagnosisCode) {
+        const [found] = await storage.getIcd([text.finalDiagnosisCode]).catch((e) => emptyIfMissing(e, []));
+        if (!found?.selectable) return res.status(400).json({ message: `MKB-10 katalogida tanlab bo'lmaydigan kod: ${text.finalDiagnosisCode}` });
+      }
+      const saved = await storage.saveEpicrisis(admission.id, baseVersion, text, reason, actorOf(req));
+      if (!saved) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const changed = epicrisisChanges(before ? epicrisisTextOf(before) : null, text);
+      await audit(
+        req,
+        saved.version === 1 ? "create" : "update",
+        "admission",
+        admission.id,
+        `Statsionar karta №${admission.number} (№${admission.patientNumber} ${admission.patientName}): epikriz, ${saved.version}-versiya — ${changed.join(", ")}${saved.reason ? `; tuzatish sababi: ${saved.reason}` : ""}`,
+      );
+      res.status(saved.version === 1 ? 201 : 200).json(saved);
+    }),
+  );
+
+  /** TZ §8.1.5: discharge — the epicrisis complete, the stay closed in one step. */
+  app.post(
+    "/api/admissions/:id/discharge",
+    requirePermission("inpatient.discharge"),
+    handle(async (req, res) => {
+      const { dischargedAt } = dischargeSchema.parse(req.body);
+      const a = await storage.dischargeAdmission(req.params.id, dischargedAt ?? new Date().toISOString(), actorOf(req));
+      if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const charge = await storage.getStayCharge(a.id).catch(() => undefined);
+      const due = charge ? Math.max(0, charge.charge.amount - charge.paid) : 0;
+      await audit(
+        req,
+        "update",
+        "admission",
+        a.id,
+        `Statsionar karta №${a.number} (№${a.patientNumber} ${a.patientName}): bemor chiqarildi ${localDay(a.dischargedAt!)}${charge ? `, ${charge.charge.days} yotoq-kun` : ""}${due ? `, hisobda qarz ${sum(due)}` : ""}`,
+      );
+      res.json(a);
+    }),
+  );
+
+  /** The epicrisis as the PDF prints it; issuing it is logged. */
+  app.get(
+    "/api/admissions/:id/epicrisis/document",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Epikrizni ko'rish uchun ruxsatingiz yo'q" });
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const [epicrisis] = await storage.listEpicrisis(admission.id);
+      if (!epicrisis) return res.status(409).json({ message: "Epikriz hali yozilmagan" });
+      const [patient, allergies, clinic, logo, charge, icd] = await Promise.all([
+        storage.getPatient(admission.patientId),
+        storage.listAllergies(admission.patientId).catch((e) => emptyIfMissing(e, [])),
+        storage.getSettings(),
+        storage.getLogo(),
+        storage.getStayCharge(admission.id).catch(() => undefined),
+        epicrisis.finalDiagnosisCode ? storage.getIcd([epicrisis.finalDiagnosisCode]).catch((e) => emptyIfMissing(e, [])) : Promise.resolve([]),
+      ]);
+      const doc: EpicrisisDocument = {
+        admission,
+        epicrisis,
+        icd: icd[0] ? { code: icd[0].code, nameRu: icd[0].nameRu, nameUz: icd[0].nameUz } : null,
+        patient: { birthDate: patient?.birthDate ?? null, age: patient ? patientAge(patient) : null, gender: patient?.gender ?? null, address: patient?.address ?? null },
+        allergies: allergies.filter((x) => x.isActive),
+        days: charge?.charge.days ?? 1,
+        clinic,
+        logo: logo?.dataUrl ?? null,
+        generatedAt: new Date().toISOString(),
+        generatedBy: req.user!.fullName,
+      };
+      await audit(req, "export", "admission", admission.id, `Statsionar karta №${admission.number} (№${admission.patientNumber} ${admission.patientName}): epikriz chiqarildi (v${epicrisis.version})`);
+      res.json(doc);
     }),
   );
 }
