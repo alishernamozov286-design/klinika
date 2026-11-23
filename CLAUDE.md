@@ -121,7 +121,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-23. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 65,5 → ≈86%**.
+> Holat 2026-11-23. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 66,5 → ≈88%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -539,7 +539,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Testlar: `shared/patient-flow.test.ts` (2: bir kunda bir marta, turlar, statsionar kunlari, xato va eski yotish sanalmaydi, davr bo'yicha bir marta, bugungacha), `storage-file.test.ts` (1: faoliyat manbasi — bekor qilingan buyurtma sanalmaydi), brauzerda admin va kassir yo'li (18 tekshiruv: bugun ikki bemor bir martadan, bekor qilingan buyurtma tahlillari kirmaydi, yotish har kuni, yangi kartalar, davr jami, bir yildan uzun davr 400, tab, ko'rsatkichlar, grafiklar va o'qishlar, turlar, eksport, jadval ko'rinishi, kassirga 403, telefonda to'rt tab sig'adi).
 - [~] **R.3** PDF va Excel eksport: bor. Har yangi hisobotga qo‘shiladi.
 
-### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 11%
+### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 22%
 
 - [ ] **B8.1** Real vaqt xabarlari (`§2`, `§11`): WebSocket; navbat, yangi natija, yangi yo‘llanma darhol ko‘rinadi.
 - [ ] **B8.2** Fayl ombori (`§2`, D-3): UZI rasmlari, skanlar, PDF arxiv.
@@ -547,7 +547,20 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 - [ ] **B8.4** Monitoring va xatolar jurnali (`§14`): server xatolari, modul bo‘yicha javob vaqti.
 - [~] **B8.5** Moslashuvchan interfeys (`§14`): yangi sahifalar (rollar, xarajatlar, sozlamalar) telefon o'lchamida tekshirildi. **Qoldi:** eski sahifalarni (bemorlar, buyurtmalar, natijalar) planshet/telefonda to'liq tekshirish.
 - [ ] **B8.6** Modullararo end-to-end test: TZ `§2` dagi ikkala sxema bo‘yicha to‘liq yo‘l.
-- [ ] **B8.7** Xavfsizlik sinovi (`/security-review` + qo‘lda): ruxsatlarni chetlab o‘tish, IDOR, sessiya.
+- [x] **B8.7** Xavfsizlik sinovi (`/security-review` + qo‘lda): ruxsatlarni chetlab o‘tish, IDOR, sessiya.
+  - **Marshrutlar skani:** 238 ta API — 205 tasi ruxsat bilan, 27 tasi faqat kirgan foydalanuvchiga (har biri qo'lda ko'rildi: o'z ma'lumoti, katalog yoki handler ichida tekshiruv — masalan `/api/appointments`, bildirishnomalar va seanslar egasiga cheklangan), himoyasizlari faqat login/logout/joriy foydalanuvchi va Telegram webhook.
+  - **Topildi va tuzatildi:**
+    1. *Telegram webhook (yuqori xavf):* Vercel rejimida `TELEGRAM_WEBHOOK_SECRET` majburiy emas edi — soxta "kontakt" yangilanishi bemor telefonini begona chatga bog'lab, **tahlil natijalarini unga yuborardi** (yo'l ochiq: `/api/telegram/webhook`). Endi kalitsiz webhook ro'yxatdan o'tmaydi (xato logga yoziladi).
+    2. *Xato xabarlarida ichki ma'lumot:* har qanday `Error` mijozga xom matni bilan (400) qaytardi — bazaning o'z xatolari jadval, cheklov va ustun nomlari bilan, ulanish xatolari xost bilan. Endi `server/api-errors.ts`: SQLSTATE kodli xatolar ma'noli o'zbekcha xabar va to'g'ri kod bilan (23505→409, 23503→409, 23514/23502/22P02/22001→400, 40001/40P01→409, qolgani 500), ulanish xatolari 503, ichki matn faqat logga; 500 da umumiy xabar.
+    3. *Loglarda bemor ma'lumoti:* so'rov jurnali muvaffaqiyatli javoblar matnini (bemor ismlari) yozardi — endi faqat rad javoblarining xabari.
+    4. *Standart sirlar:* `SESSION_SECRET` bo'lmasa kod manbada turgan ochiq kalitga o'tardi (seansni soxtalashtirish mumkin) — ishlab chiqarishda endi server ishga tushmaydi; bo'sh bazada ishlab chiqarishda `admin/admin123` yaratilardi — endi `ADMIN_INITIAL_PASSWORD` yoki tasodifiy parol (logga bir marta).
+    5. *Xavfsizlik sarlavhalari yo'q edi:* `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN` (clickjacking), `Referrer-Policy: same-origin`, `Permissions-Policy`, ishlab chiqarishda HSTS; `X-Powered-By` o'chirildi.
+    6. *Bog'liqliklar:* `npm audit fix` (mos versiyalar ichida) — 23 → 7 zaiflik; build va testlar o'tdi.
+  - **Tekshirildi, joyida:** cookie `HttpOnly`, `SameSite=Lax`, ishlab chiqarishda `Secure`; login'da yangi seans ID (fixation yo'q); chiqishdan keyin eski cookie o'lik; noto'g'ri parollardan keyin hisob qulflanadi (to'g'ri parol bilan ham); ruxsatlar serverda; boshqa foydalanuvchi bildirishnomasi/seansi; noma'lum ID 404; parol xeshi va MFA siri javoblarda yo'q; `sql.raw` faqat tekshirilgan vaqt zonasi va doimiy nomlar bilan; React escaping (yagona `innerHTML` — kutubxona yasagan QR SVG); zod ortiqcha maydonlarni tashlaydi (rol "kontrabanda" qilinmaydi).
+  - **Takrorlanadigan sinov:** `npm run security:smoke` (`scripts/security-smoke.mjs`) — ishlayotgan **sinov** serveriga anonim va har bir rol (kassir, registrator, hamshira, laborant, omborchi, shifokor) nomidan 25+ hujum: yopiq yo'llar (17 ta anonim → 401, rollar → 403), rol tashqarisidagi yozuvlar, huquqni oshirish (adminning paroli, bloki, qulfi, 2FA, seanslari, o'chirilishi), IDOR, seans, parol taxmini, sarlavhalar, sizib chiqishlar. O'z ma'lumotini yaratadi, localhost'dan boshqa manzilda ishga tushmaydi. Natija: hammasi o'tdi.
+  - Testlar: `server/api-errors.test.ts` (4).
+  - **Ishlab chiqarish uchun (foydalanuvchi bajaradi):** (a) haqiqiy bazada `admin` hisobining paroli standart/oddiy — darhol almashtirish va super admin uchun 2FA yoqish; (b) deploydan oldin Vercel muhitida `SESSION_SECRET` (endi majburiy) va `TELEGRAM_WEBHOOK_SECRET` borligini tekshirish (mahalliy `.env` da ikkalasi bor); (c) `MFA_ENCRYPTION_KEY` alohida o'rnatish tavsiya etiladi (hozir `SESSION_SECRET` ga tayanadi — uni almashtirish 2FA'ni buzadi).
+  - **Qoldi (alohida reja bilan):** asosiy versiya yangilanishlari — `drizzle-orm` 0.45 (zaiflik identifikatorlarda; bizda identifikator foydalanuvchidan kelmaydi), `zod` 4 (katta to'plamlar; so'rov 100 KB bilan cheklangan), `xlsx` (tuzatish yo'q; zaiflik o'qishda, biz faqat yozamiz); Content-Security-Policy (Vite bilan ehtiyotkor sozlash kerak).
 - [ ] **B8.8** Yuklama sinovi (`§14`): 150 ta parallel foydalanuvchi.
 - [ ] **B8.9** Xodimlar uchun qo‘llanma (rol bo‘yicha) va ishga tushirish.
 
@@ -592,6 +605,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-23 · B8.7 · Xavfsizlik sinovi: Telegram webhook kalitsiz yoqilmaydi (soxta kontakt bilan natijalarni o'g'irlash yopildi), baza xatolari mijozga sizmaydi, loglarda bemor ma'lumoti yo'q, ishlab chiqarishda standart sirlar va admin paroli yo'q, xavfsizlik sarlavhalari, npm audit 23→7; takrorlanadigan `npm run security:smoke`.
 - 2026-11-23 · R.2 · Bemorlar oqimi: butun klinika bo'yicha kunlik bemorlar (har biri kuniga bir marta; qabul, laboratoriya, statsionar), yangi bemorlar, kunlik buyurilgan va tasdiqlangan tahlillar. R.2 yopildi.
 - 2026-11-23 · R.2 · Statsionar bandligi hisoboti (yarim tun usuli, kunlik grafik, bo'lim va palatalar, o'rtacha yotish kuni, PDF/Excel) va eng ko'p buyuriladigan tahlillar reytingi (soni bo'yicha, to'liq, ulushi bilan). Yo'l-yo'lakay: orqa sanali yotishda bandlik 100% dan oshardi.
 - 2026-11-23 · B6.7 · Chiqarish va epikriz: versiyali epikriz (yotish yozuvlaridan avto-to'ldirish, tahrir), chiqarish bitta qadamda (yotoq davri yopiladi — hisob to'xtaydi, yotoq tozalashga, tayinlovlar to'xtaydi, dozalar bekor), chiqarilgandan keyin faqat sababli tuzatish, epikriz PDF. 6-bosqich (Statsionar) yopildi. Yo'l-yo'lakay: PDF'larda "→" belgisi.

@@ -11,6 +11,18 @@ import { log } from "./logger";
  */
 export async function createApp(): Promise<Express> {
   const app = express();
+  // B8.7: do not advertise the framework.
+  app.disable("x-powered-by");
+  app.use((_req, res, next) => {
+    // B8.7 security headers: no MIME sniffing, no framing by other sites (clickjacking),
+    // no referrer to other origins, no powerful browser features, HTTPS remembered in production.
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "same-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+    if (process.env.NODE_ENV === "production") res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    next();
+  });
   // The default 100 KB body limit everywhere, except the logo upload (B4.7),
   // which carries an image of up to 300 KB as base64.
   const json = express.json();
@@ -32,7 +44,9 @@ export async function createApp(): Promise<Express> {
     res.on("finish", () => {
       if (!path.startsWith("/api")) return;
       let logLine = `${req.method} ${path} ${res.statusCode} in ${Date.now() - start}ms`;
-      if (capturedJsonResponse) logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      // B8.7: a successful response carries patients' data — it does not go to the log.
+      // Only a refusal's message does, to tell what went wrong.
+      if (res.statusCode >= 400 && capturedJsonResponse && typeof capturedJsonResponse.message === "string") logLine += ` :: ${capturedJsonResponse.message}`;
       if (logLine.length > 120) logLine = logLine.slice(0, 119) + "…";
       log(logLine);
     });
@@ -47,9 +61,11 @@ export async function createApp(): Promise<Express> {
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const status =
       typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
-    const message = err instanceof Error ? err.message : "Ichki xatolik";
     console.error("[error]", err);
-    if (!res.headersSent) res.status(status || 500).json({ message });
+    // B8.7: an unexpected failure's own text (a stack's message, a driver's error) stays in the log.
+    const code = status || 500;
+    const message = code < 500 && err instanceof Error ? err.message : "Ichki xatolik. Keyinroq urinib ko'ring";
+    if (!res.headersSent) res.status(code).json({ message });
   });
 
   return app;

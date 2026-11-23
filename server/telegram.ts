@@ -41,6 +41,8 @@ export const telegramUsesWebhook = Boolean(process.env.VERCEL);
 
 /** Optional shared secret; Telegram echoes it in X-Telegram-Bot-Api-Secret-Token. */
 const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim() || undefined;
+/** B8.7: webhook mode is only switched on with the secret that authenticates Telegram's calls. */
+export const telegramWebhookSecured = Boolean(webhookSecret);
 
 // A single message may not exceed 4096 characters. Long panels are split.
 const MAX_MESSAGE = 3500;

@@ -109,6 +109,7 @@ import {
   telegramEnabled,
   telegramPhoneStatus,
   telegramUsesWebhook,
+  telegramWebhookSecured,
   telegramWebhook,
 } from "./telegram";
 
@@ -130,6 +131,8 @@ import { registerFinanceRoutes } from "./routes-finance";
 import { registerInpatientRoutes } from "./routes-inpatient";
 import { REFUNDS_BY_REQUEST } from "@shared/refund";
 import { consumeForOrder } from "./reagent-consumption";
+import { SEEDED_ADMIN_PASSWORD } from "./storage-types";
+import { apiErrorResponse } from "./api-errors";
 import { describeConsumption } from "@shared/consumption";
 
 export async function registerRoutes(app: Express): Promise<void> {
@@ -140,18 +143,24 @@ export async function registerRoutes(app: Express): Promise<void> {
     console.log(`[seed] ${seeded.createdTests} ta tahlil narxlar ro'yxatiga yuklandi`);
   }
   if (seeded.createdUsers) {
-    console.log("[seed] Standart foydalanuvchilar yaratildi — admin / admin123");
+    // B8.7: in production the password is random — shown here once; change it at first sign-in.
+    console.log(`[seed] Administrator yaratildi — login: admin, parol: ${SEEDED_ADMIN_PASSWORD} (birinchi kirishda almashtiring)`);
   }
 
   // -------------------------------------------------------------- telegram
 
   // Registered before everything else and without auth: the caller is Telegram,
   // not a signed-in user. Requests are authenticated by the bot token in the
-  // URL path being unguessable plus, when set, TELEGRAM_WEBHOOK_SECRET.
+  // B8.7: authenticated by TELEGRAM_WEBHOOK_SECRET, which Telegram sends back in
+  // a header on every update. Without it the route is NOT registered: a forged
+  // "contact" update would bind a patient's phone to a stranger's chat and send
+  // them the patient's results. (The path itself is public knowledge.)
   // Registering the route is what commits this bot to webhook mode, so it only
   // happens on the deployment that actually receives them; index.ts polls
   // instead. Creating both on one bot is an error grammY refuses outright.
-  if (telegramEnabled && telegramUsesWebhook) {
+  if (telegramEnabled && telegramUsesWebhook && !telegramWebhookSecured) {
+    console.error("[telegram] TELEGRAM_WEBHOOK_SECRET o'rnatilmagan — webhook YOQILMADI (soxta so'rovlardan himoya). Kalitni o'rnating va webhookni qayta ro'yxatdan o'tkazing.");
+  } else if (telegramEnabled && telegramUsesWebhook) {
     app.post("/api/telegram/webhook", telegramWebhook());
     console.log("[telegram] webhook yo'li: POST /api/telegram/webhook");
   } else if (!telegramEnabled) {
@@ -2455,25 +2464,9 @@ export async function registerRoutes(app: Express): Promise<void> {
   // they reach the generic 500 handler in index.ts.
   app.use("/api", (err: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(err);
-    if (err instanceof ZodError) {
-      return res.status(400).json({ message: fromZodError(err).toString() });
-    }
-    if (err instanceof StorageConflict) {
-      return res.status(409).json({ message: err.message });
-    }
-    // A table from a newer release that this database has not been migrated to.
-    if ((err as { code?: string } | null)?.code === "42P01") {
-      return res.status(503).json({
-        message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyalarni ishga tushirishi kerak (npm run db:upgrade).",
-      });
-    }
-    // The JSON body parser's own refusals keep their status, in Uzbek.
-    const bodyError = (err as { type?: string } | null)?.type;
-    if (bodyError === "entity.too.large") return res.status(413).json({ message: "So'rov hajmi juda katta" });
-    if (bodyError === "entity.parse.failed") return res.status(400).json({ message: "So'rov ma'lumoti noto'g'ri (JSON)" });
-    if (err instanceof Error) {
-      return res.status(400).json({ message: err.message });
-    }
-    next(err);
+    const out = apiErrorResponse(err);
+    if (!out) return next(err);
+    if (out.log) console.error("[api]", err);
+    res.status(out.status).json({ message: out.message });
   });
 }

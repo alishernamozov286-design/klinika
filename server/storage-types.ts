@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { computeFlag } from "@shared/reference-range";
 import type { LockState } from "@shared/lockout";
 import { SUPER_ADMIN, SYSTEM_ROLE_KEYS } from "@shared/permissions";
@@ -433,11 +434,24 @@ export const DEFAULT_SETTINGS: LabSettings = {
  * admin from Sozlamalar → Xodimlar, with one of the roles from SYSTEM_ROLES
  * or one the clinic defined itself.
  */
+/**
+ * B8.7: the first administrator's password. ADMIN_INITIAL_PASSWORD when set;
+ * otherwise "admin123" only in development and tests — in production a random
+ * one, printed once to the server log when the empty database is seeded
+ * (a well-known default on a live clinic would be anyone's way in).
+ */
+export const SEEDED_ADMIN_PASSWORD = (() => {
+  const given = process.env.ADMIN_INITIAL_PASSWORD?.trim();
+  if (given) return given;
+  if (process.env.NODE_ENV !== "production") return "admin123";
+  return randomBytes(12).toString("base64url");
+})();
+
 export const SEED_USERS: { username: string; password: string; fullName: string; role: User["role"] }[] = [
   // A single word on purpose: the dashboard greets people by their given name,
   // which it takes to be the second word of "Familiya Ism Otasining-ismi".
   // A two-word job title would come out as "Salom, administratori".
-  { username: "admin", password: "admin123", fullName: "Administrator", role: SUPER_ADMIN },
+  { username: "admin", password: SEEDED_ADMIN_PASSWORD, fullName: "Administrator", role: SUPER_ADMIN },
 ];
 
 /**

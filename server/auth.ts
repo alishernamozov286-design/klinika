@@ -77,6 +77,11 @@ export function forgetSessionUser(id: string) {
 
 export function setupAuth(app: Express) {
   app.set("trust proxy", 1);
+  // B8.7: the fallback secret is public (it is in the source); signing production
+  // sessions with it would let anyone forge a session cookie.
+  if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET?.trim()) {
+    throw new Error("SESSION_SECRET o'rnatilmagan — ishlab chiqarish rejimida server ishga tushmaydi (seanslarni soxtalashtirishdan himoya)");
+  }
 
   app.use(
     session({
