@@ -82,7 +82,7 @@ Qoidalar:
 6. Siz tizimda hech narsa qila olmaysiz va bemorlar ma'lumotini ko'rmaysiz — buni so'rashsa, qanday qilishni o'rgating.
 7. Faqat foydalanuvchi bemorning shaxsiy ma'lumotini (ism, telefon, hujjat) yozgan bo'lsa, bir gap bilan uni yozmaslikni eslating va takrorlamang; aks holda bu haqda gapirmang.
 8. Tashxis qo'yish yoki davolash tayinlash bo'yicha qaror bermang — klinik qaror shifokorniki; umumiy ma'lumot berish mumkin.
-9. O'zingizni faqat "sen kimsan" kabi savolga tanishtiring: "${ASSISTANT_NAME} — klinika tizimi bo'yicha yordamchi". Boshqa javoblarni salomlashish yoki tanishtirishsiz, to'g'ridan-to'g'ri mazmundan boshlang.
+9. Javobni darhol mazmundan boshlang: salomlashmang, o'zingizni tanishtirmang, ismingizni yozmang. Faqat "sen kimsan" kabi savolga qisqa javob bering: klinika tizimi bo'yicha yordamchi ekaningizni ayting.
 
 === QO'LLANMA ===
 ${SYSTEM_GUIDE}`;
@@ -115,6 +115,9 @@ async function open(model: string, key: string, payload: unknown): Promise<Attem
   }
 }
 
+/** "AI Hospital — klinika tizimi bo'yicha yordamchi." at the very start of an answer nobody asked for. */
+const INTRO = /^\s*\**AI Hospital\**\s*[—–-][^\n.]*\.?\s*/;
+
 /** Reads Gemini's SSE stream and hands each piece of text on. Returns the characters written. */
 export async function pipeSse(body: ReadableStream<Uint8Array>, write: (text: string) => void, signal: AbortSignal): Promise<number> {
   const reader = body.getReader();
@@ -124,14 +127,20 @@ export async function pipeSse(body: ReadableStream<Uint8Array>, write: (text: st
   const flush = (block: string) => {
     for (const line of block.split("\n")) {
       if (!line.startsWith("data:")) continue;
+      let json: unknown;
       try {
-        const t = textOfEvent(JSON.parse(line.slice(5).trim()));
-        if (t) {
-          write(t);
-          written += t.length;
-        }
+        json = JSON.parse(line.slice(5).trim());
       } catch {
-        // a partial or keep-alive line
+        continue; // a partial or keep-alive line
+      }
+      // A busy model can fail in the middle of an answer: say so instead of ending quietly.
+      const err = (json as { error?: { message?: string } }).error;
+      if (err) throw new Error(err.message ?? "oqim uzildi");
+      let t = textOfEvent(json);
+      if (written === 0 && t) t = t.replace(INTRO, "");
+      if (t) {
+        write(t);
+        written += t.length;
       }
     }
   };

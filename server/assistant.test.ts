@@ -21,6 +21,16 @@ describe("AI Hospital server", () => {
     expect(n).toBe(parts.join("").length);
   });
 
+  it("drops a self-introduction at the start, and fails loudly when the stream breaks", async () => {
+    const parts: string[] = [];
+    await pipeSse(sse([ev("AI Hospital — klinika tizimi bo'yicha yordamchi.\n\n1. Bosing.")]), (t) => parts.push(t), new AbortController().signal);
+    expect(parts.join("")).toBe("1. Bosing.");
+    const broken = sse([ev("1. Avval "), `data: ${JSON.stringify({ error: { code: 503, message: "overloaded" } })}\n\n`]);
+    const got: string[] = [];
+    await expect(pipeSse(broken, (t) => got.push(t), new AbortController().signal)).rejects.toThrow(/overloaded/);
+    expect(got.join("")).toBe("1. Avval ");
+  });
+
   it("limits each person to a burst per minute", () => {
     const t = Date.UTC(2026, 10, 24, 10, 0, 5);
     for (let i = 0; i < PER_MINUTE; i++) expect(assistantLimit("u-limit", t)).toBeNull();

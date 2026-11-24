@@ -105,6 +105,17 @@ export function suggestionsFor(path: string): string[] {
   return [...(byPage[p] ?? ["Yangi bemorni qanday qo'shaman?", "To'lovni qanday qabul qilaman?"]), ...common].slice(0, 3);
 }
 
+/**
+ * Typewriter pace: characters to reveal in one animation frame (~60 a second)
+ * for how far the shown text is behind what has arrived. One at a time when
+ * the answer trickles in; faster when a big piece lands at once, so a long
+ * answer still finishes in a couple of seconds.
+ */
+export function typewriterStep(backlog: number): number {
+  if (backlog <= 0) return 0;
+  return Math.min(8, Math.max(1, Math.ceil(backlog / 30)));
+}
+
 /** Text pieces out of one Gemini SSE event's JSON (`data: {...}`); empty when it carries none. */
 export function textOfEvent(json: unknown): string {
   const c = (json as { candidates?: { content?: { parts?: { text?: unknown; thought?: unknown }[] } }[] } | null)?.candidates?.[0];

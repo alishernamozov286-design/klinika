@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_TURNS, isKnownPage, maskPersonal, pageName, prepareTurns, suggestionsFor, textOfEvent } from "./assistant";
+import { MAX_TURNS, isKnownPage, maskPersonal, pageName, prepareTurns, suggestionsFor, textOfEvent, typewriterStep } from "./assistant";
 
 describe("AI Hospital rules", () => {
   it("masks phones, passports, emails and ids before anything leaves the server", () => {
@@ -35,5 +35,22 @@ describe("AI Hospital rules", () => {
     expect(textOfEvent({ candidates: [{ content: { parts: [{ text: "o'ylash", thought: true }, { text: "javob" }] } }] })).toBe("javob");
     expect(textOfEvent({ usageMetadata: {} })).toBe("");
     expect(textOfEvent(null)).toBe("");
+  });
+
+  it("types out answers: one character a frame when trickling, faster for a big block, never past the end", () => {
+    expect(typewriterStep(0)).toBe(0);
+    expect(typewriterStep(1)).toBe(1);
+    expect(typewriterStep(20)).toBe(1);
+    expect(typewriterStep(90)).toBe(3);
+    expect(typewriterStep(2000)).toBe(8);
+    // A 1000-character answer that lands at once takes a couple of seconds at 60 frames a second.
+    let left = 1000;
+    let frames = 0;
+    while (left > 0) {
+      left -= typewriterStep(left);
+      frames++;
+    }
+    expect(frames / 60).toBeGreaterThan(1.5);
+    expect(frames / 60).toBeLessThan(5);
   });
 });

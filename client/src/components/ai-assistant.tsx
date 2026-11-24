@@ -13,6 +13,7 @@ import { useLocation } from "wouter";
 import { ArrowLeft, BrainCircuit, Check, Clock, Copy, Plus, RotateCcw, SendHorizontal, ShieldCheck, Sparkles, Square, Trash2, X } from "lucide-react";
 import { ASSISTANT_NAME, MAX_MESSAGE_CHARS, isKnownPage, suggestionsFor, type AssistantStatus } from "@shared/assistant";
 import { useAuth } from "@/hooks/use-auth";
+import { typewriter } from "@/lib/typewriter";
 import { cn } from "@/lib/utils";
 
 type Msg = { role: "user" | "model"; text: string; at: number; error?: boolean };
@@ -49,14 +50,24 @@ const dayLabel = (at: number) => {
 // ------------------------------------------------------------ a small, safe markdown
 
 /** **bold**, *italic*, `code` and [links](/path) — built as React nodes, never as HTML. */
+const CARET = "\u2063";
+
 function inline(text: string, onLink: (href: string) => void): ReactNode[] {
   const out: ReactNode[] = [];
+  /** Plain text, with the typing caret where the sentinel sits. */
+  const pushText = (t: string) => {
+    const parts = t.split(CARET);
+    parts.forEach((p, i) => {
+      if (p) out.push(p);
+      if (i < parts.length - 1) out.push(<span key={`caret-${out.length}`} aria-hidden className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[3px] animate-pulse rounded-full bg-violet-500" data-testid="ai-caret" />);
+    });
+  };
   const re = /(\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let k = 0;
   while ((m = re.exec(text))) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last) pushText(text.slice(last, m.index));
     if (m[2]) out.push(<strong key={k++} className="font-semibold">{m[2]}</strong>);
     else if (m[3]) {
       const href = m[4];
@@ -79,13 +90,13 @@ function inline(text: string, onLink: (href: string) => void): ReactNode[] {
     else if (m[6] || m[7]) out.push(<em key={k++}>{m[6] ?? m[7]}</em>);
     last = m.index + m[0].length;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) pushText(text.slice(last));
   return out;
 }
 
-export function Markdown({ text, onLink }: { text: string; onLink: (href: string) => void }) {
+export function Markdown({ text, onLink, caret = false }: { text: string; onLink: (href: string) => void; caret?: boolean }) {
   const blocks: ReactNode[] = [];
-  const lines = text.replace(/\r/g, "").split("\n");
+  const lines = (caret ? `${text.replace(/\s+$/, "")}${CARET}` : text).replace(/\r/g, "").split("\n");
   let i = 0;
   let k = 0;
   while (i < lines.length) {
@@ -231,6 +242,9 @@ export function AiAssistant() {
           const msgs = c.messages.filter((m, i) => !(i === c.messages.length - 1 && m.role === "model" && m.at === -1));
           return { ...c, updatedAt: Date.now(), messages: [...msgs, { role: "model", text, at: -1, error }] };
         });
+      // The answer "prints" out a few characters a frame instead of landing in blocks.
+      const typer = typewriter((t) => show(t));
+      ctrl.signal.addEventListener("abort", () => typer.stop());
       try {
         const res = await fetch("/api/assistant/chat", {
           method: "POST",
@@ -249,16 +263,18 @@ export function AiAssistant() {
           const { value, done } = await reader.read();
           if (done) break;
           answer += dec.decode(value, { stream: true });
-          show(answer);
+          typer.push(answer);
         }
         answer += dec.decode();
         if (!answer.trim()) throw new Error("Bo'sh javob keldi — qayta so'rab ko'ring.");
+        typer.push(answer);
+        await typer.finish();
+        if (ctrl.signal.aborted) throw new DOMException("stopped", "AbortError");
         show(answer);
       } catch (e) {
-        if ((e as Error).name === "AbortError") {
-          if (answer) show(answer + "\n\n_(To'xtatildi)_");
-          else show("_(To'xtatildi)_");
-        } else show(answer ? `${answer}\n\n_(${(e as Error).message})_` : (e as Error).message, !answer);
+        const onScreen = typer.stop();
+        if ((e as Error).name === "AbortError") show(onScreen ? `${onScreen}\n\n_(To'xtatildi)_` : "_(To'xtatildi)_");
+        else show(answer ? `${answer}\n\n_(${(e as Error).message})_` : (e as Error).message, !answer);
       } finally {
         // Stamp the finished answer with its time.
         patchChat(chatId, (c) => ({ ...c, messages: c.messages.map((m) => (m.at === -1 ? { ...m, at: Date.now() } : m)) }));
@@ -430,7 +446,7 @@ export function AiAssistant() {
                     ) : (
                       <div key={i} className="flex justify-start" data-testid="ai-answer">
                         <div className={cn("group max-w-[90%] rounded-3xl rounded-bl-lg border bg-card px-4 py-3 text-sm leading-relaxed shadow-sm", m.error && "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200")}>
-                          <Markdown text={m.text} onLink={onLink} />
+                          <Markdown text={m.text} onLink={onLink} caret={busy && m.at === -1 && i === messages.length - 1} />
                           <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground">
                             <span>{m.at === -1 ? "…" : hhmm(m.at)}</span>
                             {m.at !== -1 && !m.error && (
