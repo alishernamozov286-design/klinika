@@ -2273,6 +2273,9 @@ describe("reagent consumption (B5.6)", () => {
     const before = await verified(["3"]);
     expect(await storage.consumeVerified({ orderId: before.id }, today, HEAD)).toEqual([]);
 
+    // A norm counts for lines verified at or after its approval. On a fast machine
+    // the two can share a millisecond (CI did), so leave a real gap between them.
+    await new Promise((r) => setTimeout(r, 5));
     const { norm, replaced } = (await storage.approveNorm(draft.id, HEAD))!;
     expect(norm).toMatchObject({ status: "approved", approvedByName: HEAD.name });
     expect(replaced).toBeNull();
