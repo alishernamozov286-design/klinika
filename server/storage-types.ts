@@ -18,6 +18,21 @@ import type { StayCharge } from "@shared/stay-bill";
 import type { EpicrisisText } from "@shared/epicrisis";
 import type { ActivityEvent } from "@shared/patient-flow";
 import type { BackupRunView } from "@shared/backup";
+import type { ErrorGroupView, ErrorSource, RequestStatRow } from "@shared/monitoring";
+
+/** B8.4: one or more occurrences of an unexpected failure, already masked. */
+export type ErrorEvent = {
+  fingerprint: string;
+  source: ErrorSource;
+  where: string;
+  name: string;
+  message: string;
+  stack: string | null;
+  status: number | null;
+  role: string | null;
+  at: string;
+  count: number;
+};
 import type { EpicrisisVersion } from "@shared/schema";
 import type { AdmissionObservation, AdmissionView, AdmitInput, Bed, BedView, CaseHistoryVersion, InsertWardInput, TransferInput, UpdateBedInput, UpdateWardInput, Ward, WardView } from "@shared/schema";
 import type { CaseText, Vitals } from "@shared/case-history";
@@ -1047,6 +1062,19 @@ export interface IStorage {
   markProcedureTask(id: string, mark: { status: "done" | "missed"; note: string | null }, actor: Actor): Promise<ProcedureTaskView | undefined>;
   /** Puts a mistaken mark back to planned, with a reason. */
   revertProcedureTask(id: string, reason: string, actor: Actor): Promise<ProcedureTaskView | undefined>;
+  // ---- B8.4 monitoring
+  /** Adds a batch of per-hour, per-route counts onto what is stored (histograms add up element by element). */
+  saveRequestStats(rows: RequestStatRow[]): Promise<void>;
+  listRequestStats(sinceHour: string): Promise<RequestStatRow[]>;
+  /** Adds occurrences to their groups (made on first sight); a resolved group that happens again is reopened. */
+  recordErrors(events: ErrorEvent[]): Promise<void>;
+  listErrorGroups(query: { since?: string; includeResolved?: boolean; limit: number }): Promise<ErrorGroupView[]>;
+  resolveErrorGroup(id: string, actor: Actor): Promise<ErrorGroupView | undefined>;
+  /** Drops stats and resolved-or-quiet error groups older than `before`. */
+  pruneMonitoring(before: string): Promise<void>;
+  /** A round trip to the store, for the health check (throws when it is down). */
+  ping(): Promise<void>;
+
   // ---- B8.3 backups
   /** The latest automatic backup runs, newest first (empty where none are recorded, e.g. the file store). */
   listBackupRuns(limit: number): Promise<BackupRunView[]>;

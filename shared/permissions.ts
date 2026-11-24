@@ -373,6 +373,11 @@ export const PERMISSIONS = {
     description: "Xizmatlar (ko'rik, UZI, muolaja) va ularning narxlarini boshqarish",
   },
 
+  "system.monitor": {
+    group: "system",
+    label: "Tizim holati",
+    description: "Server xatolari jurnali, javob vaqti, baza va zaxira holati (TZ §14)",
+  },
   "settings.manage": {
     group: "system",
     label: "Klinika sozlamalari",
@@ -456,6 +461,7 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
     name: "Klinika rahbari",
     description: "Umumiy boshqaruv: barcha ma'lumotlarni ko'rish, hisobotlar, qaytarishlarni tasdiqlash",
     permissions: [
+      "system.monitor",
       "departments.manage",
       "doctors.manage",
       "services.manage",

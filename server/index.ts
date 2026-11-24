@@ -1,12 +1,15 @@
 import "./env"; // must stay first — populates process.env for every module below
 import { createServer } from "http";
 import { createApp } from "./app";
+import { flushMonitoring } from "./monitoring";
 import { log } from "./logger";
 import { serveStatic, setupVite } from "./vite";
 import { startTelegramPolling } from "./telegram";
 
 /** Local runtime: one long-lived process serving both the API and the client. */
 const app = await createApp();
+// B8.4: a long-running server writes its request stats every minute (serverless writes them as requests come).
+setInterval(() => void flushMonitoring(), 60_000).unref();
 const server = createServer(app);
 
 // Vite must come after the API routes so its catch-all does not swallow them.

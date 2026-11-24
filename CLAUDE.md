@@ -121,7 +121,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
 
 ## 3. Ish rejasi (TZ `§15` bosqichlari bo‘yicha)
 
-> Holat 2026-11-23. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 67 → ≈88%**.
+> Holat 2026-11-23. Hisoblash: `[x]` = 1, `[~]` = 0.5, `[ ]` = 0. Umumiy: **76 banddan 68 → ≈89%**.
 
 ### Bosqich 1: Loyihaning poydevori (`§3`, `§10`, `§12`, `§15.1`) 100%
 
@@ -539,7 +539,7 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Testlar: `shared/patient-flow.test.ts` (2: bir kunda bir marta, turlar, statsionar kunlari, xato va eski yotish sanalmaydi, davr bo'yicha bir marta, bugungacha), `storage-file.test.ts` (1: faoliyat manbasi — bekor qilingan buyurtma sanalmaydi), brauzerda admin va kassir yo'li (18 tekshiruv: bugun ikki bemor bir martadan, bekor qilingan buyurtma tahlillari kirmaydi, yotish har kuni, yangi kartalar, davr jami, bir yildan uzun davr 400, tab, ko'rsatkichlar, grafiklar va o'qishlar, turlar, eksport, jadval ko'rinishi, kassirga 403, telefonda to'rt tab sig'adi).
 - [~] **R.3** PDF va Excel eksport: bor. Har yangi hisobotga qo‘shiladi.
 
-### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 28%
+### Bosqich 8: Yakuniy integratsiya va texnik talablar (`§11`, `§12`, `§14`, `§15.8`) 39%
 
 - [ ] **B8.1** Real vaqt xabarlari (`§2`, `§11`): WebSocket; navbat, yangi natija, yangi yo‘llanma darhol ko‘rinadi.
 - [ ] **B8.2** Fayl ombori (`§2`, D-3): UZI rasmlari, skanlar, PDF arxiv.
@@ -553,7 +553,14 @@ Talablar manbai: [docs/TZ.md](docs/TZ.md), buyurtmachining texnik topshirig‘i 
   - Neon'da ROLLBACK qilingan tranzaksiyada `backup_runs` sinaldi (migratsiya ikki marta, skriptning aynan o'sha yozuvi, xatosiz "failed" rad, ilovaning o'qishi; 6 tekshiruv), so'ng bajarildi (2026-11-24): jadval, ikkala CHECK va indeks; qayta ishga tushirish hech narsani o'zgartirmadi; ilovaning o'qishi ishlaydi (hali yozuv yo'q — GitHub sirlari qo'shilgach birinchi kechalik zaxira yozadi).
   - Testlar: `server/backup-core.test.ts` (4: shifrlash/ochish, nom faylda ko'rinmaydi, noto'g'ri parol/buzilgan/begona fayl/zaif parol, yangiroq format, ustun DDL), `shared/backup.test.ts` (2: yaxshi ish, holatlar), brauzerda panel (7 tekshiruv).
   - **Eslatma:** Neon'ning o'z vaqt bo'yicha tiklashi (PITR) ham bor — bu zaxira undan mustaqil, boshqa provayderda.
-- [ ] **B8.4** Monitoring va xatolar jurnali (`§14`): server xatolari, modul bo‘yicha javob vaqti.
+- [x] **B8.4** Monitoring va xatolar jurnali (`§14`): server xatolari, modul bo‘yicha javob vaqti.
+  - **Javob vaqti** (`server/monitoring.ts`, qoidalar `shared/monitoring.ts`): har API so'rovi yo'l **naqshi** bo'yicha (`/api/admissions/:id` — ID'siz) soatlik jamlanadi: soni, umumiy va eng uzoq vaqt, gistogramma (p95 uchun: 50/100/250/500/1000/2500/5000 ms va undan ko'p), xatolar (5xx). Xotirada yig'ilib **daqiqada bir marta** yoziladi (`request_stats`, bir so'rovga bir yozuv emas); uzoq ishlaydigan serverda taymer bilan. Health va ping sanalmaydi.
+  - **Xatolar jurnali** (`error_groups`): serverdagi kutilmagan xatolar (5xx, ikkala xato ishlovchida) va **brauzerdagi** ilova xatolari (`POST /api/client-errors`, kirgan foydalanuvchi, daqiqada 20 tagacha; global `error`/`unhandledrejection` va yangi **ErrorBoundary**) — joy, nom va **yashirilgan** xabar bo'yicha guruhlanadi (UUID → `:id`, raqam → `:n`, telefon, email), soni, birinchi/oxirgi marta, oxirgi status va rol, server uchun stekning faqat `fayl:qator` qismi. Xato darhol yoziladi (1,5 s kutish chegarasi). "Hal qilindi" deb belgilanadi (audit), qaytsa guruh qayta ochiladi. Bemor ma'lumoti yozilmaydi: yo'llar naqsh, so'rov tanasi o'qilmaydi. 30 kundan eskisi tozalanadi. Monitoring yozolmasa — logga, so'rov buzilmaydi.
+  - **ErrorBoundary:** sahifa chizishda yiqilsa oq ekran o'rniga "Sahifada xatolik yuz berdi" (qayta urinish, bosh sahifa), menyu ishlayveradi, xato jurnalga.
+  - `GET /api/health` — hammaga ochiq, faqat `{ok}` (baza javobi; tushsa 503) — tashqi kuzatuv xizmati uchun. `GET /api/system/status` (`system.monitor`, yangi ruxsat — rahbar va super admin): baza (holat, kechikish), zaxira holati (B8.3), versiya, ishlash vaqti, 24 soat (so'rovlar, server xatolari, ulushi, o'rtacha, sekin yo'llar), soatlik grafik, yo'llar jadvali (p95 1000 ms dan oshsa — sekin), xato guruhlari. `POST /api/system/errors/:id/resolve`.
+  - UI: Sozlamalar → **"Tizim holati"**: 4 ko'rsatkich (baza, zaxira, so'rovlar, server xatolari), soatlik so'rovlar/xatolar grafigi, xatolar jurnali (manba, joy, xabar, soni, vaqtlar, rol, stek ochiladi, "Hal qilindi", hal qilinganlarni ko'rsatish), javob vaqti jadvali. Daqiqada yangilanadi, telefon o'lchamiga mos.
+  - Migratsiya: `npm run db:monitoring` (`db:upgrade` ichida): 2 jadval, rahbarga `system.monitor`. Migratsiyadan oldin deploy qilinsa ham ilova ishlaydi (yozolmaslik faqat logga). Neon'da ROLLBACK qilingan tranzaksiyada **aynan ishlab chiqarishdagi SQL** bilan sinaldi (migratsiya va ruxsat ikki marta, statistika ikki yozishda to'g'ri qo'shiladi — gistogramma elementma-element, xato guruhi ikki marta sanaladi, oxirgi vaqt siljiydi, hal qilingani qayta ochiladi, noma'lum manba rad; 7 tekshiruv).
+  - Testlar: `shared/monitoring.test.ts` (4: gistogramma va p95, yashirish va bitta guruh, stek, yo'llar/soatlar jamlanishi), brauzerda (20 tekshiruv: health faqat `{ok}`, yo'l naqshi ID'siz, brauzer xatosi bitta guruh yashirilgan, 24 soat, panel, grafik va jadval, hal qilindi, qaytganda qayta ochiladi, rahbar ko'radi, kassir 403 lekin xabar bera oladi, xabarlar oqimi cheklanadi, anonim 401, telefon).
 - [~] **B8.5** Moslashuvchan interfeys (`§14`): yangi sahifalar (rollar, xarajatlar, sozlamalar) telefon o'lchamida tekshirildi. **Qoldi:** eski sahifalarni (bemorlar, buyurtmalar, natijalar) planshet/telefonda to'liq tekshirish.
 - [ ] **B8.6** Modullararo end-to-end test: TZ `§2` dagi ikkala sxema bo‘yicha to‘liq yo‘l.
 - [x] **B8.7** Xavfsizlik sinovi (`/security-review` + qo‘lda): ruxsatlarni chetlab o‘tish, IDOR, sessiya.
@@ -614,6 +621,7 @@ Har bir tugallangan vazifadan keyin bitta qator: `YYYY-MM-DD · ID · nima qilin
 - 2026-11-06 · B4.5 · Natijalarni tasdiqlash: qator bo'yicha holat, mudiri tasdiqlaydi yoki sabab bilan qaytaradi, tasdiqlangan natija qulflanadi va versiya bilan tuzatiladi; blanka, Telegram, tibbiy karta va yo'llanma faqat tasdiqlangan natijani oladi; uch navbatli natijalar sahifasi.
 - 2026-11-06 · B3.5 · Yo'llanmalar: laboratoriya (buyurtma darhol yaratiladi), UZI va boshqa tekshiruvlar, mutaxassis konsultatsiyasi; registratura navbatga yozadi, holat buyurtma yoki qabuldan hisoblanadi; bekor qilish sabab bilan. B1.9 reyestri yangi `referrals` jadvalini darhol ushladi.
 - 2026-11-06 · B1.9, B1.10, B2.11 · Qarzlar yopildi: bemorga bog'langan jadvallar reyestri va o'chirish himoyasi, §10 umumiy ustunlari, to'lovni o'chirish o'rniga sababli bekor qilish, to'lovli yoki natijali buyurtma va ishlatilgan tahlil o'chirilmaydi, registratura bosh sahifasi. Yo'l-yo'lakay: buyurtma oynasi ro'yxatdagi qisqa nusxani ko'rsatardi, shuning uchun to'lovlar tarixi doim bo'sh chiqardi va to'lovdan keyin oyna yangilanmasdi. Endi oyna to'liq buyurtmani o'zi yuklaydi.
+- 2026-11-24 · B8.4 · Monitoring: yo'llar bo'yicha javob vaqti (p95), server va brauzer xatolari jurnali (guruhlangan, bemor ma'lumotisiz, hal qilish), ErrorBoundary (oq ekran o'rniga), `/api/health`, Sozlamalar → "Tizim holati".
 - 2026-11-23 · B8.3 · Avtomatik zaxira: har kecha barcha 59 jadvalning shifrlangan to'liq zaxirasi (GitHub Actions), fayldan tiklash sinovi har jadval soni va nazorat yig'indisi bilan, faqat bo'sh bazaga haqiqiy tiklash, Sozlamalarda holat. Topildi: eski "zaxira" faqat 5 jadvalni olardi. 16.10 yopildi.
 - 2026-11-23 · B8.7 · Xavfsizlik sinovi: Telegram webhook kalitsiz yoqilmaydi (soxta kontakt bilan natijalarni o'g'irlash yopildi), baza xatolari mijozga sizmaydi, loglarda bemor ma'lumoti yo'q, ishlab chiqarishda standart sirlar va admin paroli yo'q, xavfsizlik sarlavhalari, npm audit 23→7; takrorlanadigan `npm run security:smoke`.
 - 2026-11-23 · R.2 · Bemorlar oqimi: butun klinika bo'yicha kunlik bemorlar (har biri kuniga bir marta; qabul, laboratoriya, statsionar), yangi bemorlar, kunlik buyurilgan va tasdiqlangan tahlillar. R.2 yopildi.

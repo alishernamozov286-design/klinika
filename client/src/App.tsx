@@ -22,6 +22,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
 import { Avatar, RoleBadge } from "@/components/ui-kit";
 import { CommandPalette } from "@/components/command-palette";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { installGlobalErrorReporting } from "@/lib/error-report";
 import { SessionGuard } from "@/components/session-guard";
 import { MfaEnrollmentGate } from "@/components/mfa-panel";
 import { OrderDialog } from "@/components/order-dialog";
@@ -328,7 +330,10 @@ function Shell() {
           <main className="flex-1 overflow-auto">
             <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
               <div className="animate-fade-rise" key={location}>
-                <Router />
+                {/* B8.4: a page that crashes shows a way out, and the crash is logged. */}
+                <ErrorBoundary>
+                  <Router />
+                </ErrorBoundary>
               </div>
             </div>
           </main>
@@ -373,6 +378,7 @@ function Shell() {
 }
 
 export default function App() {
+  useEffect(() => installGlobalErrorReporting(), []);
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>

@@ -26,6 +26,8 @@ import {
   type Test,
 } from "@shared/schema";
 import { z } from "zod";
+import { Activity } from "lucide-react";
+import { SystemStatusPanel } from "@/components/system-status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +123,7 @@ const TABS: SettingsTab[] = [
   },
   { value: "tests", label: "Tahlillar", icon: FlaskConical, needs: ["tests.manage"], render: () => <TestsPanel /> },
   { value: "icd10", label: "MKB-10", icon: BookOpenText, needs: ["settings.manage"], render: () => <IcdPanel /> },
+  { value: "system", label: "Tizim holati", icon: Activity, needs: ["system.monitor"], render: () => <SystemStatusPanel /> },
   {
     value: "security",
     label: "Xavfsizlik",

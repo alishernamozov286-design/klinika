@@ -133,6 +133,8 @@ import { REFUNDS_BY_REQUEST } from "@shared/refund";
 import { consumeForOrder } from "./reagent-consumption";
 import { SEEDED_ADMIN_PASSWORD } from "./storage-types";
 import { apiErrorResponse } from "./api-errors";
+import { recordError, routeOf } from "./monitoring";
+import { registerSystemRoutes } from "./routes-system";
 import { backupHealth } from "@shared/backup";
 import { describeConsumption } from "@shared/consumption";
 
@@ -2468,6 +2470,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   registerRefundRoutes(app);
   registerFinanceRoutes(app);
   registerInpatientRoutes(app);
+  registerSystemRoutes(app);
 
   // An unknown API path is a 404 in JSON, not the client app's index.html with
   // a 200 — which is what the SPA fallback further down would otherwise serve.
@@ -2478,11 +2481,13 @@ export async function registerRoutes(app: Express): Promise<void> {
 
   // Turn validation and storage rejections into clean Uzbek API errors before
   // they reach the generic 500 handler in index.ts.
-  app.use("/api", (err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  app.use("/api", async (err: unknown, req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(err);
     const out = apiErrorResponse(err);
     if (!out) return next(err);
     if (out.log) console.error("[api]", err);
+    // B8.4: an unexpected failure goes to the error log (masked, grouped).
+    if (out.status >= 500) await recordError({ source: "server", where: `${req.method} ${routeOf(req)}`, err, status: out.status, role: req.user?.role ?? null });
     res.status(out.status).json({ message: out.message });
   });
 }

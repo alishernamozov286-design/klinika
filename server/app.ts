@@ -1,6 +1,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { registerRoutes } from "./routes";
 import { log } from "./logger";
+import { recordError, recordRequest, routeOf } from "./monitoring";
 
 /**
  * Builds the Express app with everything both runtimes share: body parsing,
@@ -42,6 +43,8 @@ export async function createApp(): Promise<Express> {
     };
 
     res.on("finish", () => {
+      // B8.4: every API request's time, by route pattern (no ids, no bodies).
+      recordRequest(req, res.statusCode, Date.now() - start);
       if (!path.startsWith("/api")) return;
       let logLine = `${req.method} ${path} ${res.statusCode} in ${Date.now() - start}ms`;
       // B8.7: a successful response carries patients' data — it does not go to the log.
@@ -58,12 +61,13 @@ export async function createApp(): Promise<Express> {
 
   // Last-resort handler. It logs rather than rethrows: rethrowing here would
   // take down the whole process (and, on serverless, the running instance).
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  app.use(async (err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const status =
       typeof err === "object" && err && "status" in err ? Number((err as { status: number }).status) : 500;
     console.error("[error]", err);
     // B8.7: an unexpected failure's own text (a stack's message, a driver's error) stays in the log.
     const code = status || 500;
+    if (code >= 500) await recordError({ source: "server", where: `${req.method} ${routeOf(req)}`, err, status: code, role: req.user?.role ?? null });
     const message = code < 500 && err instanceof Error ? err.message : "Ichki xatolik. Keyinroq urinib ko'ring";
     if (!res.headersSent) res.status(code).json({ message });
   });

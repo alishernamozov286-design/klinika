@@ -243,6 +243,8 @@ import {
 import { stayCharge, type StayCharge } from "@shared/stay-bill";
 import type { ActivityEvent } from "@shared/patient-flow";
 import type { BackupRunView } from "@shared/backup";
+import type { ErrorGroupView, RequestStatRow } from "@shared/monitoring";
+import type { ErrorEvent } from "./storage-types";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem, type TaskStatus } from "@shared/procedures";
 import type { NewInpatientOrder } from "./storage-types";
@@ -533,6 +535,31 @@ const LOCAL_TZ = sql.raw(`'${SERVER_TZ}'`);
  */
 /** R.2: how many tests the ranking lists (the report shows the top ten, the rest on request and in the export). */
 const TOP_TESTS_LIMIT = 100;
+
+/** B8.4: adds a batch of request stats onto the stored ones (histograms element by element). */
+export const saveRequestStatsSql = (rows: RequestStatRow[]) => sql`
+      INSERT INTO request_stats (hour, method, route, count, total_ms, max_ms, errors, histogram)
+      SELECT v.hour, v.method, v.route, v.count, v.total_ms, v.max_ms, v.errors, ARRAY(SELECT jsonb_array_elements_text(v.histogram)::int)
+        FROM jsonb_to_recordset(${JSON.stringify(rows.map((r) => ({ hour: r.hour, method: r.method, route: r.route, count: r.count, total_ms: r.totalMs, max_ms: r.maxMs, errors: r.errors, histogram: r.histogram })))}::jsonb)
+             AS v(hour timestamptz, method text, route text, count int, total_ms bigint, max_ms int, errors int, histogram jsonb)
+      ON CONFLICT (hour, method, route) DO UPDATE SET
+        count = request_stats.count + EXCLUDED.count,
+        total_ms = request_stats.total_ms + EXCLUDED.total_ms,
+        max_ms = greatest(request_stats.max_ms, EXCLUDED.max_ms),
+        errors = request_stats.errors + EXCLUDED.errors,
+        histogram = ARRAY(SELECT coalesce(a, 0) + coalesce(b, 0) FROM unnest(request_stats.histogram, EXCLUDED.histogram) AS t(a, b))`;
+
+/** B8.4: one occurrence onto its group (made on first sight); a resolved group that happens again is reopened. */
+export const recordErrorSql = (e: ErrorEvent) => sql`
+        INSERT INTO error_groups (fingerprint, source, location, name, message, stack, count, first_seen, last_seen, last_status, last_role)
+        VALUES (${e.fingerprint}, ${e.source}, ${e.where}, ${e.name}, ${e.message}, ${e.stack}, ${e.count}, ${e.at}, ${e.at}, ${e.status}, ${e.role})
+        ON CONFLICT (fingerprint) DO UPDATE SET
+          count = error_groups.count + EXCLUDED.count,
+          last_seen = greatest(error_groups.last_seen, EXCLUDED.last_seen),
+          last_status = EXCLUDED.last_status,
+          last_role = EXCLUDED.last_role,
+          stack = coalesce(EXCLUDED.stack, error_groups.stack),
+          resolved_at = NULL, resolved_by = NULL, resolved_by_name = NULL`;
 
 export const STAY_GROSS_SQL = sql`(
           coalesce((SELECT CASE WHEN sum(x.d) = 0 THEN (array_agg(x.price ORDER BY x.from_at))[1] ELSE sum(x.d * x.price) END
@@ -5724,6 +5751,75 @@ export class PgStorage implements IStorage {
         .returning();
       return mapObservation(row);
     });
+  }
+
+  // ------------------------------------------------------------ B8.4 monitoring
+
+  async saveRequestStats(rows: RequestStatRow[]): Promise<void> {
+    if (rows.length === 0) return;
+    await db.execute(saveRequestStatsSql(rows));
+  }
+
+  async listRequestStats(sinceHour: string): Promise<RequestStatRow[]> {
+    const res = await db.execute(sql`SELECT hour, method, route, count, total_ms, max_ms, errors, histogram FROM request_stats WHERE hour >= ${sinceHour}`);
+    return (res.rows as Record<string, unknown>[]).map((r) => ({
+      hour: iso(String(r.hour)),
+      method: String(r.method),
+      route: String(r.route),
+      count: Number(r.count),
+      totalMs: Number(r.total_ms),
+      maxMs: Number(r.max_ms),
+      errors: Number(r.errors),
+      histogram: (r.histogram as number[]).map(Number),
+    }));
+  }
+
+  async recordErrors(events: ErrorEvent[]): Promise<void> {
+    for (const e of events) await db.execute(recordErrorSql(e));
+  }
+
+  private mapErrorGroup(r: Record<string, unknown>): ErrorGroupView {
+    return {
+      id: String(r.id),
+      source: r.source as ErrorGroupView["source"],
+      where: String(r.location),
+      name: String(r.name),
+      message: String(r.message),
+      stack: r.stack === null ? null : String(r.stack),
+      count: Number(r.count),
+      firstSeen: iso(String(r.first_seen)),
+      lastSeen: iso(String(r.last_seen)),
+      lastStatus: r.last_status === null ? null : Number(r.last_status),
+      lastRole: r.last_role === null ? null : String(r.last_role),
+      resolvedAt: r.resolved_at ? iso(String(r.resolved_at)) : null,
+      resolvedByName: r.resolved_by_name === null ? null : String(r.resolved_by_name),
+    };
+  }
+
+  async listErrorGroups(query: { since?: string; includeResolved?: boolean; limit: number }): Promise<ErrorGroupView[]> {
+    const res = await db.execute(sql`
+      SELECT * FROM error_groups
+       WHERE (${query.since ?? null}::timestamptz IS NULL OR last_seen >= ${query.since ?? null}::timestamptz)
+         AND (${query.includeResolved ?? false} OR resolved_at IS NULL)
+       ORDER BY last_seen DESC LIMIT ${query.limit}`);
+    return (res.rows as Record<string, unknown>[]).map((r) => this.mapErrorGroup(r));
+  }
+
+  async resolveErrorGroup(id: string, actor: Actor): Promise<ErrorGroupView | undefined> {
+    const res = await db.execute(sql`
+      UPDATE error_groups SET resolved_at = now(), resolved_by = ${actor.id}, resolved_by_name = ${actor.name}
+       WHERE id = ${id} RETURNING *`);
+    const r = (res.rows as Record<string, unknown>[])[0];
+    return r && this.mapErrorGroup(r);
+  }
+
+  async pruneMonitoring(before: string): Promise<void> {
+    await db.execute(sql`DELETE FROM request_stats WHERE hour < ${before}`);
+    await db.execute(sql`DELETE FROM error_groups WHERE last_seen < ${before}`);
+  }
+
+  async ping(): Promise<void> {
+    await db.execute(sql`SELECT 1`);
   }
 
   // ------------------------------------------------------------ B8.3 backups

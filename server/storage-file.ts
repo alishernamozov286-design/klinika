@@ -169,6 +169,8 @@ import {
 import { stayCharge, type StayCharge } from "@shared/stay-bill";
 import type { ActivityEvent } from "@shared/patient-flow";
 import type { BackupRunView } from "@shared/backup";
+import type { ErrorGroupView, RequestStatRow } from "@shared/monitoring";
+import type { ErrorEvent } from "./storage-types";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem } from "@shared/procedures";
 import type { NewInpatientOrder } from "./storage-types";
@@ -4606,6 +4608,83 @@ export class FileStorage implements IStorage {
     Object.assign(a, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
     await this.persist();
     return this.admissionViewOf(a);
+  }
+
+  // ------------------------------------------------------------ B8.4 monitoring
+  // Kept in memory: the JSON store is a single local process, and these are operational, not records.
+
+  private requestStats = new Map<string, RequestStatRow>();
+  private errorGroups = new Map<string, ErrorGroupView & { fingerprint: string }>();
+
+  async saveRequestStats(rows: RequestStatRow[]): Promise<void> {
+    for (const r of rows) {
+      const k = `${r.hour}|${r.method}|${r.route}`;
+      const a = this.requestStats.get(k);
+      if (!a) {
+        this.requestStats.set(k, { ...r, histogram: [...r.histogram] });
+        continue;
+      }
+      a.count += r.count;
+      a.totalMs += r.totalMs;
+      a.maxMs = Math.max(a.maxMs, r.maxMs);
+      a.errors += r.errors;
+      r.histogram.forEach((n, i) => (a.histogram[i] = (a.histogram[i] ?? 0) + n));
+    }
+  }
+
+  async listRequestStats(sinceHour: string): Promise<RequestStatRow[]> {
+    return [...this.requestStats.values()].filter((r) => r.hour >= sinceHour).map((r) => ({ ...r, histogram: [...r.histogram] }));
+  }
+
+  async recordErrors(events: ErrorEvent[]): Promise<void> {
+    for (const e of events) {
+      const g = this.errorGroups.get(e.fingerprint);
+      if (!g) {
+        this.errorGroups.set(e.fingerprint, {
+          id: randomUUID(),
+          fingerprint: e.fingerprint,
+          source: e.source,
+          where: e.where,
+          name: e.name,
+          message: e.message,
+          stack: e.stack,
+          count: e.count,
+          firstSeen: e.at,
+          lastSeen: e.at,
+          lastStatus: e.status,
+          lastRole: e.role,
+          resolvedAt: null,
+          resolvedByName: null,
+        });
+        continue;
+      }
+      Object.assign(g, { count: g.count + e.count, lastSeen: e.at > g.lastSeen ? e.at : g.lastSeen, lastStatus: e.status, lastRole: e.role, stack: e.stack ?? g.stack, resolvedAt: null, resolvedByName: null });
+    }
+  }
+
+  async listErrorGroups(query: { since?: string; includeResolved?: boolean; limit: number }): Promise<ErrorGroupView[]> {
+    return [...this.errorGroups.values()]
+      .filter((g) => (!query.since || g.lastSeen >= query.since) && (query.includeResolved || !g.resolvedAt))
+      .sort((a, b) => b.lastSeen.localeCompare(a.lastSeen))
+      .slice(0, query.limit)
+      .map(({ fingerprint: _f, ...g }) => ({ ...g }));
+  }
+
+  async resolveErrorGroup(id: string, actor: Actor): Promise<ErrorGroupView | undefined> {
+    const g = [...this.errorGroups.values()].find((x) => x.id === id);
+    if (!g) return undefined;
+    Object.assign(g, { resolvedAt: new Date().toISOString(), resolvedByName: actor.name });
+    const { fingerprint: _f, ...view } = g;
+    return { ...view };
+  }
+
+  async pruneMonitoring(before: string): Promise<void> {
+    for (const [k, r] of this.requestStats) if (r.hour < before) this.requestStats.delete(k);
+    for (const [k, g] of this.errorGroups) if (g.lastSeen < before) this.errorGroups.delete(k);
+  }
+
+  async ping(): Promise<void> {
+    // The JSON store lives in this process.
   }
 
   // ------------------------------------------------------------ B8.3 backups
