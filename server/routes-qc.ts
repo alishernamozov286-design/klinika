@@ -164,7 +164,7 @@ export function registerQcRoutes(app: Express) {
     handle(async (req, res) => {
       const input = insertQcResultSchema.parse(req.body);
       if (input.measuredAt) {
-        const problem = occurredAtProblem(input.measuredAt);
+        const problem = occurredAtProblem(input.measuredAt, Date.now(), "O'lchov vaqti");
         if (problem) return res.status(400).json({ message: problem });
       }
       const target = await storage.getQcTarget(req.params.id);
@@ -242,7 +242,7 @@ export function registerQcRoutes(app: Express) {
     handle(async (req, res) => {
       const input = insertCalibrationSchema.parse(req.body);
       if (input.performedAt) {
-        const problem = occurredAtProblem(input.performedAt);
+        const problem = occurredAtProblem(input.performedAt, Date.now(), "Kalibrovka vaqti");
         if (problem) return res.status(400).json({ message: problem });
       }
       const device = await storage.getDevice(input.deviceId);
@@ -288,7 +288,7 @@ export function registerQcRoutes(app: Express) {
     handle(async (req, res) => {
       const input = insertMaintenanceSchema.parse(req.body);
       if (input.performedAt) {
-        const problem = occurredAtProblem(input.performedAt);
+        const problem = occurredAtProblem(input.performedAt, Date.now(), "Xizmat vaqti");
         if (problem) return res.status(400).json({ message: problem });
       }
       const device = await storage.getDevice(input.deviceId);

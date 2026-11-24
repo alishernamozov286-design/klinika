@@ -83,7 +83,7 @@ export function CashHomeTab({ onOpen, onOpenBill }: { onOpen: (t: CashHomeTarget
           isLoading={isLoading}
           onClick={() => onOpen("daily")}
         />
-        <StatCard index={2} label="Bugungi qarz" value={o ? money(o.bills.due) : "—"} hint={o ? `${o.bills.count} ta hisobvaraq, ${money(o.bills.amount)}` : undefined} icon={AlertTriangle} tone={o?.bills.due ? "rose" : "emerald"} isLoading={isLoading} onClick={() => onOpen("bills-due")} />
+        <StatCard index={2} label="Bugungi qarz" value={o ? money(o.bills.due) : "—"} hint={o ? `Bugun ochilgan ${o.bills.count} ta hisobvaraq jami ${money(o.bills.amount)}` : undefined} icon={AlertTriangle} tone={o?.bills.due ? "rose" : "emerald"} isLoading={isLoading} onClick={() => onOpen("bills-due")} />
         <StatCard
           index={3}
           label="Qaytarishlar"

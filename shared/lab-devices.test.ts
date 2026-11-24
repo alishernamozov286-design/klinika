@@ -28,6 +28,9 @@ describe("lab devices (B4.9)", () => {
     expect(occurredAtProblem("2026-11-07T10:00:30Z", now)).toBeNull();
     expect(occurredAtProblem("2026-11-07T10:05:00Z", now)).toMatch(/kelajakda/);
     expect(occurredAtProblem("kecha", now)).toMatch(/noto'g'ri/);
+    // Each log names its own moment (a QC measurement is not an "error time").
+    expect(occurredAtProblem("2026-11-07T10:05:00Z", now)).toMatch(/^Xato vaqti/);
+    expect(occurredAtProblem("2026-11-07T10:05:00Z", now, "O'lchov vaqti")).toBe("O'lchov vaqti kelajakda bo'lishi mumkin emas");
   });
 
   it("forms: blank optional fields become null, unknown options are refused", () => {

@@ -26,6 +26,7 @@ import {
   nationalPhoneDigits,
   saveResultsSchema,
   updateOrderSchema,
+  ORDER_CANCEL_REASON_MIN,
   updateSampleSchema,
   updateUserSchema,
   insertRoleSchema,
@@ -1027,7 +1028,7 @@ export async function registerRoutes(app: Express): Promise<void> {
     "/api/orders/:id",
     requirePermission("orders.update", "orders.cancel"),
     handle(async (req, res) => {
-      const input = updateOrderSchema.parse(req.body);
+      const { cancelReason, ...input } = updateOrderSchema.parse(req.body);
       const before = await storage.getOrder(req.params.id);
       if (!before) return res.status(404).json({ message: "Buyurtma topilmadi" });
 
@@ -1051,6 +1052,11 @@ export async function registerRoutes(app: Express): Promise<void> {
       if (editsOther && !hasPermission(req, "orders.update")) {
         return res.status(403).json({ message: "Buyurtmani tahrirlash uchun ruxsatingiz yo'q" });
       }
+      if (touchesCancel && (cancelReason?.length ?? 0) < ORDER_CANCEL_REASON_MIN) {
+        return res.status(400).json({
+          message: input.status === "cancelled" ? "Bekor qilish sababini yozing (kamida 5 belgi)" : "Qayta tiklash sababini yozing (kamida 5 belgi)",
+        });
+      }
 
       const order = await storage.updateOrder(req.params.id, input, actorOf(req));
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
@@ -1065,7 +1071,7 @@ export async function registerRoutes(app: Express): Promise<void> {
         changes.push(`chegirma ${before.discount} → ${order.discount}`);
       }
       if (input.status && before.status !== order.status) {
-        changes.push(`holat ${before.status} → ${order.status}`);
+        changes.push(`holat ${before.status} → ${order.status}${touchesCancel && cancelReason ? ` (sabab: ${cancelReason})` : ""}`);
       }
       if (input.referrer !== undefined && (before.referrer ?? "") !== (order.referrer ?? "")) {
         changes.push(`yo'naltirgan: ${order.referrer || "—"}`);

@@ -2782,7 +2782,14 @@ export const updateOrderSchema = z.object({
    * see updateOrder in the storage layer.
    */
   testIds: uniqueTestIds.optional(),
+  /**
+   * Why the order is cancelled, or brought back from cancelled — required for
+   * either (TZ §10: money and results leave or rejoin the flow, so the log
+   * must say why). Goes to the audit log; not stored on the order.
+   */
+  cancelReason: z.string().trim().max(300, "Juda uzun").optional(),
 });
+export const ORDER_CANCEL_REASON_MIN = 5;
 
 /**
  * A sample status change, as the client sends it.

@@ -69,11 +69,14 @@ export const TZ_ANALYZERS: { name: string; manufacturer: string; model: string; 
 /** Names are compared without case or surrounding space. */
 export const deviceNameKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
 
-/** A log entry may not claim to have happened in the future (a minute of clock skew is allowed). */
-export function occurredAtProblem(occurredAt: string, now = Date.now()): string | null {
+/**
+ * A log entry may not claim to have happened in the future (a minute of clock
+ * skew is allowed). `what` names the moment in the refusal ("O'lchov vaqti").
+ */
+export function occurredAtProblem(occurredAt: string, now = Date.now(), what = "Xato vaqti"): string | null {
   const t = Date.parse(occurredAt);
   if (Number.isNaN(t)) return "Vaqt noto'g'ri";
-  if (t > now + 60_000) return "Xato vaqti kelajakda bo'lishi mumkin emas";
+  if (t > now + 60_000) return `${what} kelajakda bo'lishi mumkin emas`;
   return null;
 }
 

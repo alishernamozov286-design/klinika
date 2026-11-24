@@ -11,7 +11,7 @@ import {
   XCircle,
   AlertTriangle,
 } from "lucide-react";
-import { PAYMENT_METHODS, type OrderWithDetails, type Payment, type PaymentMethod } from "@shared/schema";
+import { ORDER_CANCEL_REASON_MIN, PAYMENT_METHODS, type OrderWithDetails, type Payment, type PaymentMethod } from "@shared/schema";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -68,6 +68,9 @@ export function OrderDetailDialog({
     refetchOnMount: "always",
   });
   const order = snapshot && full?.id === snapshot.id ? full : snapshot;
+  // Cancelling takes the order out of the cash and results flow: it asks why (TZ §10), never on one click.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
 
   const mutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
@@ -75,7 +78,7 @@ export function OrderDetailDialog({
       return (await res.json()) as OrderWithDetails;
     },
     onSuccess: () => {
-      invalidateApi("/api/orders", "/api/stats", "/api/reception");
+      invalidateApi("/api/orders", "/api/stats", "/api/reception", "/api/bills", "/api/patients", "/api/lab-board");
       toast({ title: "Buyurtma yangilandi" });
     },
     onError: (err: Error) => {
@@ -106,7 +109,13 @@ export function OrderDetailDialog({
   const ready = order.items.length > 0 && order.items.every((i) => Boolean(i.result));
   const canSendTelegram = ready && order.status !== "cancelled" && can("results.send");
 
+  const closeCancel = () => {
+    setCancelOpen(false);
+    setCancelReason("");
+  };
+
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0">
         <DialogHeader className="p-6 pb-4">
@@ -263,7 +272,7 @@ export function OrderDetailDialog({
           {can("orders.cancel") && order.status !== "cancelled" && (
             <Button
               variant="outline"
-              onClick={() => mutation.mutate({ status: "cancelled" })}
+              onClick={() => setCancelOpen(true)}
               disabled={mutation.isPending}
               className="mr-auto text-destructive"
               data-testid="button-cancel-order"
@@ -291,6 +300,46 @@ export function OrderDetailDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <Dialog open={cancelOpen} onOpenChange={(o) => !o && closeCancel()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Buyurtmani bekor qilish</DialogTitle>
+          <DialogDescription>
+            #{order.orderNumber} {order.patient?.fullName}. Buyurtma o'chirilmaydi: tarixda "bekor qilingan" bo'lib qoladi, hisobvaraqdan chiqadi; to'langan summa
+            bo'lsa, kassada qaytarish uchun ko'rinadi. Sabab amallar jurnaliga yoziladi.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="order-cancel-reason">Sabab</Label>
+          <Textarea
+            id="order-cancel-reason"
+            rows={3}
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.target.value)}
+            placeholder="Masalan: takroriy buyurtma kiritilgan"
+            autoFocus
+            maxLength={300}
+            data-testid="input-order-cancel-reason"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={closeCancel}>
+            Ortga
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={cancelReason.trim().length < ORDER_CANCEL_REASON_MIN || mutation.isPending}
+            onClick={() => mutation.mutate({ status: "cancelled", cancelReason: cancelReason.trim() }, { onSuccess: closeCancel })}
+            data-testid="button-confirm-cancel-order"
+          >
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Bekor qilish
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 

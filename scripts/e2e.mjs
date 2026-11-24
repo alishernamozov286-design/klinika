@@ -225,6 +225,13 @@ try {
   const byMethod = cur.shift.totals.byMethod;
   ok("cash shift: 50 000 cash and the rest by card", byMethod.naqd.net === 50000 && byMethod.karta.net === expected - 50000, byMethod);
 
+  // A desk order cancelled by mistake: only with a reason, and only by someone allowed to.
+  const extra = await reg.must("POST", "/api/orders", { patientId: patient.id, testIds: [t2.id] });
+  ok("registrar cannot cancel an order (403)", (await reg.call("PATCH", `/api/orders/${extra.id}`, { status: "cancelled", cancelReason: "Takroriy buyurtma" })).status === 403);
+  ok("cancelling needs a reason (400)", (await mud.call("PATCH", `/api/orders/${extra.id}`, { status: "cancelled" })).status === 400);
+  const cancelled = await mud.must("PATCH", `/api/orders/${extra.id}`, { status: "cancelled", cancelReason: "Takroriy buyurtma kiritilgan" });
+  ok("cancelled with a reason, written to the audit log", cancelled.status === "cancelled" && (await auditOf(admin, extra.id)).some((e) => e.summary.includes("Takroriy buyurtma kiritilgan")));
+
   section("1-sxema · Audit");
   const auditAppt = await auditOf(admin, appt.id);
   const auditRecord = await auditOf(admin, record.id);

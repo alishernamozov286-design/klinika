@@ -78,7 +78,11 @@ export function FlowChart({
   const zeroY = y(0);
   const band = days.length ? innerW / days.length : 0;
   const barW = Math.max(2, Math.min(24, band * 0.62));
-  const ticks = [top, top / 2, 0, -bottom / 2, -bottom].filter((t, i, a) => a.indexOf(t) === i);
+  // When one side is much smaller (6 mln in, 180 ming out) its half of the axis is a few pixels
+  // tall: keep only labels at least 14px apart — zero first, then the ends, then the halves.
+  const ticks = [0, top, -bottom, top / 2, -bottom / 2]
+    .reduce<number[]>((kept, t) => (kept.every((k) => Math.abs(y(k) - y(t)) >= 14) ? [...kept, t] : kept), [])
+    .sort((a, b) => b - a);
   const labelEvery = band < 22 ? 5 : band < 34 ? 3 : 1;
 
   /** A bar from the baseline with a 4px rounded data end; square where it meets the baseline. */
