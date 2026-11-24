@@ -3262,3 +3262,12 @@ describe("patient flow source (R.2)", () => {
   });
 });
 
+
+describe("change feed versions (B8.1)", () => {
+  it("moves each topic on by one per bump, once per topic, and starts empty", async () => {
+    expect(await storage.getTopicVersions()).toEqual({});
+    await storage.bumpTopics(["lab", "cash", "lab"]);
+    await storage.bumpTopics(["lab"]);
+    expect(await storage.getTopicVersions()).toEqual({ lab: 2, cash: 1 });
+  });
+});

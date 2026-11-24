@@ -26,6 +26,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatDate, formatDateTime, money } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 const METHOD_ICON: Record<PaymentMethod, typeof Banknote> = { naqd: Banknote, karta: CreditCard, "o'tkazma": Landmark };
 const STATUS_TONE: Record<RefundStatus, string> = {
@@ -358,8 +359,8 @@ const localDay = (offset = 0) => {
 export function usePendingRefunds() {
   const { can } = useAuth();
   const visible = can("payments.create") || can("payments.refund") || can("finance.view");
-  const { data: requested = [] } = useQuery<RefundView[]>({ queryKey: ["/api/refunds?status=requested"], enabled: visible, refetchOnMount: "always", refetchInterval: 30_000 });
-  const { data: approved = [] } = useQuery<RefundView[]>({ queryKey: ["/api/refunds?status=approved"], enabled: visible, refetchOnMount: "always", refetchInterval: 30_000 });
+  const { data: requested = [] } = useQuery<RefundView[]>({ queryKey: ["/api/refunds?status=requested"], enabled: visible, refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
+  const { data: approved = [] } = useQuery<RefundView[]>({ queryKey: ["/api/refunds?status=approved"], enabled: visible, refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
   return { requested, approved, count: (can("payments.refund") ? requested.length : 0) + (can("payments.create") ? approved.length : 0) };
 }
 
@@ -376,7 +377,7 @@ export function RefundsTab() {
     params.set("from", localDay(-29));
     params.set("to", localDay());
   }
-  const { data: rows = [], isLoading } = useQuery<RefundView[]>({ queryKey: [`/api/refunds?${params.toString()}`], refetchOnMount: "always", refetchInterval: 30_000 });
+  const { data: rows = [], isLoading } = useQuery<RefundView[]>({ queryKey: [`/api/refunds?${params.toString()}`], refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
   const shown = useMemo(() => (filter === "closed" ? rows.filter((r) => r.status === "rejected" || r.status === "cancelled") : rows), [rows, filter]);
   const { data: paid = [] } = useQuery<RefundView[]>({ queryKey: [`/api/refunds?status=paid&from=${localDay(-29)}&to=${localDay()}`], refetchOnMount: "always" });
   const paidSum = paid.reduce((s, r) => s + r.amount, 0);

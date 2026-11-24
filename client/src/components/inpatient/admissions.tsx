@@ -25,6 +25,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { dayKey, formatDate, formatDateTime, money } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 export const refreshInpatient = () => invalidateApi("/api/wards", "/api/admissions", "/api/patients", "/api/inpatient");
 
@@ -446,7 +447,7 @@ export function AdmissionDialog({ admissionId, onClose }: { admissionId: string 
 // ---------------------------------------------------------------- patients in hospital
 
 export function AdmissionsTab({ onOpen }: { onOpen: (id: string) => void }) {
-  const { data: rows = [], isLoading } = useQuery<AdmissionView[]>({ queryKey: ["/api/admissions?status=active"], refetchOnMount: "always", refetchInterval: 30_000 });
+  const { data: rows = [], isLoading } = useQuery<AdmissionView[]>({ queryKey: ["/api/admissions?status=active"], refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
   const [search, setSearch] = useState("");
   const today = dayKey(new Date());
   const q = search.trim().toLowerCase();

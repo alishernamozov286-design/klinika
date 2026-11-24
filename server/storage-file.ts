@@ -170,6 +170,7 @@ import { stayCharge, type StayCharge } from "@shared/stay-bill";
 import type { ActivityEvent } from "@shared/patient-flow";
 import type { BackupRunView } from "@shared/backup";
 import type { ErrorGroupView, RequestStatRow } from "@shared/monitoring";
+import type { ChangeTopic, TopicVersions } from "@shared/realtime";
 import type { ErrorEvent } from "./storage-types";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem } from "@shared/procedures";
@@ -4685,6 +4686,20 @@ export class FileStorage implements IStorage {
 
   async ping(): Promise<void> {
     // The JSON store lives in this process.
+  }
+
+  // ------------------------------------------------------------ B8.1 change feed
+  // In memory: one local process, so its tabs only need to see versions move.
+  // After a restart they start again from zero, which the tabs read as "changed".
+
+  private topicVersions: TopicVersions = {};
+
+  async bumpTopics(topics: ChangeTopic[]): Promise<void> {
+    for (const t of new Set(topics)) this.topicVersions[t] = (this.topicVersions[t] ?? 0) + 1;
+  }
+
+  async getTopicVersions(): Promise<TopicVersions> {
+    return { ...this.topicVersions };
   }
 
   // ------------------------------------------------------------ B8.3 backups

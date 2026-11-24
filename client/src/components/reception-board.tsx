@@ -39,6 +39,7 @@ import { useAppointmentStatus } from "@/components/appointment-actions";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { elapsed, formatDayLong, formatTime, money } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 export function ReceptionBoard() {
   const { can } = useAuth();
@@ -58,7 +59,7 @@ export function ReceptionBoard() {
     queryKey: ["/api/reception"],
     // The desk keeps this open all day. Until real-time updates (B8.1) it
     // refreshes itself, and always on return from another screen.
-    refetchInterval: 20_000,
+    refetchInterval: liveInterval(20_000),
     refetchOnMount: "always",
   });
 

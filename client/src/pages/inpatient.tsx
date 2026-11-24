@@ -40,6 +40,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatDateTime, money } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 /** Status colours (reserved) each with its own icon. */
 const DISPLAY_STYLE: Record<BedDisplay, { tile: string; icon: typeof BedSingle }> = {
@@ -54,7 +55,7 @@ const refresh = () => invalidateApi("/api/wards", "/api/admissions", "/api/inpat
 export default function Inpatient() {
   const { can } = useAuth();
   const manage = can("beds.manage");
-  const { data: wards = [], isLoading } = useQuery<WardView[]>({ queryKey: ["/api/wards"], refetchOnMount: "always", refetchInterval: 30_000 });
+  const { data: wards = [], isLoading } = useQuery<WardView[]>({ queryKey: ["/api/wards"], refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
   const { data: departments = [] } = useQuery<Department[]>({ queryKey: ["/api/departments"] });
   const inpatientDepts = departments.filter((d) => d.kind === "statsionar" && d.isActive);
   const [dept, setDept] = useState<string>("all");

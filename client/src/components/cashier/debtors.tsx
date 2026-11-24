@@ -19,6 +19,7 @@ import type { ExportColumn } from "@/lib/export-types";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { formatDate, formatPhone, money, phoneMatches } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 const AGE_TONE: Record<DebtAge, string> = {
   week: "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-300",
@@ -58,7 +59,7 @@ function OwingBills({ patientId, onOpenBill }: { patientId: string; onOpenBill: 
 
 export function DebtorsTab({ onOpenBill }: { onOpenBill: (visitId: string) => void }) {
   const { can } = useAuth();
-  const { data, isLoading } = useQuery<DebtorsResponse>({ queryKey: ["/api/debtors"], refetchOnMount: "always", refetchInterval: 60_000 });
+  const { data, isLoading } = useQuery<DebtorsResponse>({ queryKey: ["/api/debtors"], refetchOnMount: "always", refetchInterval: liveInterval(60_000) });
   const [age, setAge] = useState<DebtAge | "all">("all");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<string | null>(null);

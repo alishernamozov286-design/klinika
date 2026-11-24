@@ -7,6 +7,7 @@ import {
   type SecuritySettings,
   type SessionEndCode,
 } from "@shared/schema";
+import { USER_ACTIVE_HEADER } from "@shared/realtime";
 import { storage } from "./storage";
 
 /**
@@ -23,7 +24,7 @@ declare module "express-session" {
     meta?: {
       /** When the user signed in on this device. */
       createdAt: number;
-      /** Last API request; refreshed at most every TOUCH_EVERY_MS. */
+      /** Last API request the person made (not background refreshes); refreshed at most every TOUCH_EVERY_MS. */
       lastSeen: number;
       ip: string | null;
       userAgent: string | null;
@@ -107,7 +108,10 @@ export function enforceSessionPolicy() {
       if (now - meta.lastSeen > sessionIdleMinutes * 60_000) return endSession(req, res, "SESSION_IDLE");
       if (now - meta.createdAt > sessionMaxHours * 3_600_000) return endSession(req, res, "SESSION_MAX");
 
-      if (now - meta.lastSeen > TOUCH_EVERY_MS) {
+      // B8.1: a page refreshing itself in the background ("x-user-active: 0")
+      // is not the person working — it must not keep an idle session open.
+      const passive = req.get(USER_ACTIVE_HEADER) === "0";
+      if (!passive && now - meta.lastSeen > TOUCH_EVERY_MS) {
         meta.lastSeen = now;
         meta.ip = clientIp(req);
       }

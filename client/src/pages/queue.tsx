@@ -59,6 +59,7 @@ import type { ExportColumn } from "@/lib/export-types";
 import { useAuth } from "@/hooks/use-auth";
 import { ageGender, dayKey, formatDay, formatDayLong, formatTime, shiftDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { liveInterval } from "@/lib/live-updates";
 
 const EXPORT_COLUMNS: ExportColumn<AppointmentWithDetails>[] = [
   { header: "Navbat", value: (a) => a.queueNumber, type: "number", width: 8 },
@@ -94,7 +95,7 @@ export default function Queue() {
   const { data: list = [], isLoading } = useQuery<AppointmentWithDetails[]>({
     queryKey: [`/api/appointments?date=${date}`],
     // The desk works from this screen all day; arrivals and calls change it.
-    refetchInterval: 20_000,
+    refetchInterval: liveInterval(20_000),
     refetchOnMount: "always",
   });
   const { data: doctors = [] } = useQuery<DoctorWithDetails[]>({ queryKey: ["/api/doctors?active=1"] });

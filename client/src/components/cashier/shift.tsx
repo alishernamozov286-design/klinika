@@ -36,6 +36,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatTime, money } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 const METHOD_ICON: Record<PaymentMethod, typeof Banknote> = { naqd: Banknote, karta: CreditCard, "o'tkazma": Landmark };
 const OUTCOME_TONE: Record<CountOutcome, string> = {
@@ -55,7 +56,7 @@ export function useHandlesMoney() {
 /** The person at the desk: their open shift and what the last one left. */
 export function useCashDesk() {
   const handles = useHandlesMoney();
-  return useQuery<CashDesk>({ queryKey: ["/api/cash-shifts/current"], enabled: handles, refetchOnMount: "always", refetchInterval: 30_000 });
+  return useQuery<CashDesk>({ queryKey: ["/api/cash-shifts/current"], enabled: handles, refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
 }
 
 export const refreshShifts = () => invalidateApi("/api/cash-shifts", "/api/cashier");
@@ -638,7 +639,7 @@ export function ShiftsTab() {
     params.set("to", localDay());
   }
   if (onlyOpen) params.set("status", "open");
-  const { data: shifts = [], isLoading } = useQuery<ShiftSummary[]>({ queryKey: [`/api/cash-shifts?${params.toString()}`], refetchOnMount: "always", refetchInterval: 60_000 });
+  const { data: shifts = [], isLoading } = useQuery<ShiftSummary[]>({ queryKey: [`/api/cash-shifts?${params.toString()}`], refetchOnMount: "always", refetchInterval: liveInterval(60_000) });
   const cashiers = useMemo(() => Array.from(new Map(shifts.map((s) => [s.cashierId, s.cashierName])).entries()), [shifts]);
   const rows = shifts.filter((s) => cashier === "all" || s.cashierId === cashier);
   const sums = rows.reduce(

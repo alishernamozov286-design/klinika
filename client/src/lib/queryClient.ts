@@ -1,4 +1,6 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { USER_ACTIVE_HEADER } from "@shared/realtime";
+import { isBackground } from "./activity";
 
 /**
  * A failed API call. `message` is the server's own Uzbek sentence, ready for
@@ -58,6 +60,23 @@ export async function apiRequest(
   return res;
 }
 
+/**
+ * B8.1: a read made while nobody has touched the app for a minute is the page
+ * refreshing itself. Saying so keeps such refreshes from holding an idle
+ * session open (the server skips its "last seen" for them). Writes are always
+ * the person's own.
+ */
+export function backgroundHeaders(): Record<string, string> {
+  return isBackground() ? { [USER_ACTIVE_HEADER]: "0" } : {};
+}
+
+/** A GET the app makes on its own (the change feed): same errors and sign-out handling as any query. */
+export async function getJson<T>(url: string, init?: { signal?: AbortSignal }): Promise<T> {
+  const res = await fetch(url, { credentials: "include", headers: backgroundHeaders(), signal: init?.signal });
+  await throwIfResNotOk(res);
+  return (await res.json()) as T;
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
@@ -66,6 +85,7 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      headers: backgroundHeaders(),
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

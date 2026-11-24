@@ -13,6 +13,7 @@ import { PageHeader, StatCard } from "@/components/ui-kit";
 import { QcInternal } from "@/components/qc/qc-internal";
 import { QcMaterials } from "@/components/qc/qc-materials";
 import { QcCalibrations, QcEqa, QcMaintenance } from "@/components/qc/qc-records";
+import { liveInterval } from "@/lib/live-updates";
 
 const TABS = [
   { value: "internal", label: "Ichki nazorat" },
@@ -28,7 +29,7 @@ export default function QualityControl() {
     const asked = new URLSearchParams(window.location.search).get("tab");
     return TABS.find((t) => t.value === asked)?.value ?? "internal";
   });
-  const { data: board, isLoading } = useQuery<QcBoard>({ queryKey: ["/api/qc"], refetchOnMount: "always", refetchInterval: 60_000 });
+  const { data: board, isLoading } = useQuery<QcBoard>({ queryKey: ["/api/qc"], refetchOnMount: "always", refetchInterval: liveInterval(60_000) });
 
   const today = board?.date ?? new Date().toISOString().slice(0, 10);
   const series = (board?.targets ?? []).filter((t) => t.isActive && t.materialActive);

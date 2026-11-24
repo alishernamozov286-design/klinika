@@ -19,6 +19,7 @@ import type { EpicrisisText } from "@shared/epicrisis";
 import type { ActivityEvent } from "@shared/patient-flow";
 import type { BackupRunView } from "@shared/backup";
 import type { ErrorGroupView, ErrorSource, RequestStatRow } from "@shared/monitoring";
+import type { ChangeTopic, TopicVersions } from "@shared/realtime";
 
 /** B8.4: one or more occurrences of an unexpected failure, already masked. */
 export type ErrorEvent = {
@@ -1074,6 +1075,12 @@ export interface IStorage {
   pruneMonitoring(before: string): Promise<void>;
   /** A round trip to the store, for the health check (throws when it is down). */
   ping(): Promise<void>;
+
+  // ---- B8.1 real-time change feed
+  /** Moves each topic's version on by one (made on first use). */
+  bumpTopics(topics: ChangeTopic[]): Promise<void>;
+  /** Every topic's current version (topics never written are absent). */
+  getTopicVersions(): Promise<TopicVersions>;
 
   // ---- B8.3 backups
   /** The latest automatic backup runs, newest first (empty where none are recorded, e.g. the file store). */

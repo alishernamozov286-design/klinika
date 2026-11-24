@@ -19,6 +19,7 @@ import type { ExportColumn } from "@/lib/export-types";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { formatDate, money } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 const METHOD_ICON: Record<PaymentMethod, typeof Banknote> = { naqd: Banknote, karta: CreditCard, "o'tkazma": Landmark };
 
@@ -54,7 +55,7 @@ function AttentionRow({ icon: Icon, tone, title, detail, onClick, testId }: { ic
 }
 
 export function CashHomeTab({ onOpen, onOpenBill }: { onOpen: (t: CashHomeTarget) => void; onOpenBill: (visitId: string) => void }) {
-  const { data: o, isLoading } = useQuery<CashOverview>({ queryKey: ["/api/cashier/overview"], refetchOnMount: "always", refetchInterval: 60_000 });
+  const { data: o, isLoading } = useQuery<CashOverview>({ queryKey: ["/api/cashier/overview"], refetchOnMount: "always", refetchInterval: liveInterval(60_000) });
   const shares = o ? methodShares(o.today) : [];
   const flow = useMemo(() => (o?.days ?? []).map((d) => ({ date: d.date, in: d.taken, out: d.refunded })), [o]);
   const attention = o

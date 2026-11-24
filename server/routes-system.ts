@@ -5,6 +5,7 @@
  *   system.monitor  GET  /api/system/status — database, backup, 24h load, slow routes, error groups
  *   system.monitor  POST /api/system/errors/:id/resolve
  *   (signed in)     POST /api/client-errors — a crash in the browser, rate-limited per user
+ *   (signed in)     GET  /api/changes — B8.1: each topic's version, for the live updates
  */
 import type { Express } from "express";
 import { z } from "zod";
@@ -14,6 +15,7 @@ import { requireAuth } from "./auth";
 import { requirePermission } from "./rbac";
 import { audit, actorOf, emptyIfMissing, handle } from "./route-helpers";
 import { clientReportAllowed, flushMonitoring, recordError, startedAt } from "./monitoring";
+import { currentChanges } from "./realtime";
 import { storage, usingPostgres } from "./storage";
 
 const clientErrorSchema = z.object({
@@ -40,6 +42,16 @@ export function registerSystemRoutes(app: Express) {
     res.setHeader("Cache-Control", "no-store");
     res.status(db.ok ? 200 : 503).json({ ok: db.ok });
   });
+
+  /** B8.1: which topics moved — never what moved; each topic's own routes still decide who sees its data. */
+  app.get(
+    "/api/changes",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.json(await currentChanges());
+    }),
+  );
 
   app.get(
     "/api/system/status",

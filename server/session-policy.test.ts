@@ -16,6 +16,7 @@ const START = new Date("2026-11-05T08:00:00Z").getTime();
 function fakeRequest(
   meta?: { createdAt: number; lastSeen: number },
   cookie: { expires?: Date; originalMaxAge?: number } = {},
+  headers: Record<string, string> = {},
 ) {
   const session: Record<string, unknown> = {
     meta: meta ? { ...meta, ip: null, userAgent: null } : undefined,
@@ -27,7 +28,7 @@ function fakeRequest(
     session,
     ip: "10.0.0.5",
     socket: {},
-    get: () => "test-agent",
+    get: (h: string) => headers[h.toLowerCase()] ?? "test-agent",
     logout: (cb: () => void) => cb(),
   };
   const res = {
@@ -49,8 +50,9 @@ function fakeRequest(
 async function run(
   meta?: { createdAt: number; lastSeen: number },
   cookie?: { expires?: Date; originalMaxAge?: number },
+  headers?: Record<string, string>,
 ) {
-  const { req, res, session } = fakeRequest(meta, cookie);
+  const { req, res, session } = fakeRequest(meta, cookie, headers);
   const next = vi.fn();
   await enforceSessionPolicy()(req as never, res as never, next);
   return { res, next, session };
@@ -110,6 +112,18 @@ describe("enforceSessionPolicy", () => {
     expect((recent.session.meta as { lastSeen: number }).lastSeen).toBe(START - 10_000);
     const older = await run({ createdAt: START - 10 * MIN, lastSeen: START - 2 * MIN });
     expect((older.session.meta as { lastSeen: number }).lastSeen).toBe(START);
+  });
+
+  it("B8.1: a background refresh does not keep an idle session alive, but is still held to the limits", async () => {
+    const passive = { "x-user-active": "0" };
+    const bg = await run({ createdAt: START - 10 * MIN, lastSeen: START - 2 * MIN }, undefined, passive);
+    expect(bg.next).toHaveBeenCalled();
+    expect((bg.session.meta as { lastSeen: number }).lastSeen).toBe(START - 2 * MIN);
+    const late = await run({ createdAt: START - 60 * MIN, lastSeen: START - 31 * MIN }, undefined, passive);
+    expect(late.res.body).toMatchObject({ code: "SESSION_IDLE" });
+    // Anything else in the header (or none) is the person's own request.
+    const own = await run({ createdAt: START - 10 * MIN, lastSeen: START - 2 * MIN }, undefined, { "x-user-active": "1" });
+    expect((own.session.meta as { lastSeen: number }).lastSeen).toBe(START);
   });
 });
 

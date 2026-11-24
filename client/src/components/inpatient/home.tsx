@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { MeterBar, SectionCard, StatCard } from "@/components/ui-kit";
 import { cn } from "@/lib/utils";
 import { dayKey, formatDate, formatDateTime } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 type Overview = InpatientOverview<AdmissionView>;
 
@@ -31,8 +32,8 @@ const DUE_TONE: Record<DischargeDue, string> = {
 };
 
 export function InpatientHome({ onOpenStay, onBed, onTab }: { onOpenStay: (id: string) => void; onBed: (bedId: string, ward: WardView) => void; onTab: (t: "patients" | "beds") => void }) {
-  const { data: o, isLoading } = useQuery<Overview>({ queryKey: ["/api/inpatient/overview"], refetchOnMount: "always", refetchInterval: 30_000 });
-  const { data: wards = [] } = useQuery<WardView[]>({ queryKey: ["/api/wards"], refetchOnMount: "always", refetchInterval: 30_000 });
+  const { data: o, isLoading } = useQuery<Overview>({ queryKey: ["/api/inpatient/overview"], refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
+  const { data: wards = [] } = useQuery<WardView[]>({ queryKey: ["/api/wards"], refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
   const live = wards.filter((w) => w.isActive);
   const departments = [...new Map(live.map((w) => [w.departmentId, w.departmentName])).entries()];
   const today = dayKey(new Date());

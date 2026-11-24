@@ -244,6 +244,7 @@ import { stayCharge, type StayCharge } from "@shared/stay-bill";
 import type { ActivityEvent } from "@shared/patient-flow";
 import type { BackupRunView } from "@shared/backup";
 import type { ErrorGroupView, RequestStatRow } from "@shared/monitoring";
+import { CHANGE_TOPICS, type ChangeTopic, type TopicVersions } from "@shared/realtime";
 import type { ErrorEvent } from "./storage-types";
 import { paymentSource, paymentTarget } from "@shared/invoice";
 import { DUE_WINDOW_MS, ORDER_STAY_CLOSED, ORDER_STOPPED, TASK_NOT_MARKED, markDoneProblem, type TaskStatus } from "@shared/procedures";
@@ -548,6 +549,12 @@ export const saveRequestStatsSql = (rows: RequestStatRow[]) => sql`
         max_ms = greatest(request_stats.max_ms, EXCLUDED.max_ms),
         errors = request_stats.errors + EXCLUDED.errors,
         histogram = ARRAY(SELECT coalesce(a, 0) + coalesce(b, 0) FROM unnest(request_stats.histogram, EXCLUDED.histogram) AS t(a, b))`;
+
+/** B8.1: each topic's version on by one, in one statement (a topic's row is made on first use). */
+export const bumpTopicsSql = (topics: ChangeTopic[]) => sql`
+      INSERT INTO change_topics (topic, version, changed_at)
+      SELECT t, 1, now() FROM jsonb_array_elements_text(${JSON.stringify([...new Set(topics)])}::jsonb) AS t
+      ON CONFLICT (topic) DO UPDATE SET version = change_topics.version + 1, changed_at = now()`;
 
 /** B8.4: one occurrence onto its group (made on first sight); a resolved group that happens again is reopened. */
 export const recordErrorSql = (e: ErrorEvent) => sql`
@@ -5820,6 +5827,22 @@ export class PgStorage implements IStorage {
 
   async ping(): Promise<void> {
     await db.execute(sql`SELECT 1`);
+  }
+
+  // ------------------------------------------------------------ B8.1 change feed
+
+  async bumpTopics(topics: ChangeTopic[]): Promise<void> {
+    if (topics.length === 0) return;
+    await db.execute(bumpTopicsSql(topics));
+  }
+
+  async getTopicVersions(): Promise<TopicVersions> {
+    const res = await db.execute(sql`SELECT topic, version FROM change_topics`);
+    const out: TopicVersions = {};
+    for (const r of res.rows as { topic: string; version: unknown }[]) {
+      if ((CHANGE_TOPICS as readonly string[]).includes(r.topic)) out[r.topic as ChangeTopic] = Number(r.version);
+    }
+    return out;
   }
 
   // ------------------------------------------------------------ B8.3 backups

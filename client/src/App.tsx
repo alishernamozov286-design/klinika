@@ -20,6 +20,7 @@ import {
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
+import { LiveIndicator } from "@/components/live-indicator";
 import { Avatar, RoleBadge } from "@/components/ui-kit";
 import { CommandPalette } from "@/components/command-palette";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -288,6 +289,8 @@ function Shell() {
               </span>
             </div>
 
+            {/* B8.1: runs the change feed and shows whether the screen updates by itself. */}
+            <LiveIndicator />
             <NotificationBell />
             <ThemeToggle />
 

@@ -31,6 +31,7 @@ import { EmptyState, MeterBar, SampleBadge, SectionCard, StatCard } from "@/comp
 import { TubeDot } from "@/components/lab-ui";
 import { useAuth } from "@/hooks/use-auth";
 import { elapsed, formatDayLong } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 export function LabBoard({ onOpenOrder }: { onOpenOrder: (order: OrderWithDetails) => void }) {
   const [, setLocation] = useLocation();
@@ -47,7 +48,7 @@ export function LabBoard({ onOpenOrder }: { onOpenOrder: (order: OrderWithDetail
     queryKey: ["/api/lab-board"],
     // Kept open through the shift: refreshes itself until real-time
     // updates arrive (B8.1), and always on return from another screen.
-    refetchInterval: 20_000,
+    refetchInterval: liveInterval(20_000),
     refetchOnMount: "always",
   });
 

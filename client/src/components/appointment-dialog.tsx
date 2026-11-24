@@ -40,6 +40,7 @@ import { useDebounced } from "@/hooks/use-debounced";
 import { useToast } from "@/hooks/use-toast";
 import { dayKey, formatDate, formatDay, formatDayLong, money, shiftDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { liveInterval } from "@/lib/live-updates";
 
 const DEFAULT_SERVICE = "doctor";
 
@@ -178,7 +179,7 @@ function BookingForm({
     queryKey: [slotsKey ?? "/api/doctors/none/slots"],
     enabled: Boolean(slotsKey),
     // Another registrar may be filling the same day.
-    refetchInterval: 30_000,
+    refetchInterval: liveInterval(30_000),
   });
 
   // Keep the picked time only while it is still free (or is the booking being moved).

@@ -40,6 +40,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { dayKey, formatDateTime, formatDay, formatDayLong, formatTime, money } from "@/lib/format";
 import { fmtQty } from "@shared/inventory";
+import { liveInterval } from "@/lib/live-updates";
 
 const STATE_TONE: Record<TaskState, string> = {
   overdue: "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300",
@@ -222,7 +223,7 @@ export function TaskList({ tasks, showPatient, now = new Date() }: { tasks: Proc
 export function ProceduresTab() {
   const today = dayKey(new Date());
   const [day, setDay] = useState(today);
-  const { data: tasks = [], isLoading } = useQuery<ProcedureTaskView[]>({ queryKey: [`/api/procedure-tasks?day=${day}`], refetchOnMount: "always", refetchInterval: 60_000 });
+  const { data: tasks = [], isLoading } = useQuery<ProcedureTaskView[]>({ queryKey: [`/api/procedure-tasks?day=${day}`], refetchOnMount: "always", refetchInterval: liveInterval(60_000) });
   const now = new Date();
   const counts = useMemo(() => {
     const c = { total: 0, done: 0, overdue: 0, left: 0 };

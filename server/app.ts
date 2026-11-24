@@ -2,6 +2,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { registerRoutes } from "./routes";
 import { log } from "./logger";
 import { recordError, recordRequest, routeOf } from "./monitoring";
+import { bumpTopicsOnWrite } from "./realtime";
 
 /**
  * Builds the Express app with everything both runtimes share: body parsing,
@@ -56,6 +57,9 @@ export async function createApp(): Promise<Express> {
 
     next();
   });
+
+  // B8.1: a successful write moves its topics' versions before its response goes out.
+  app.use(bumpTopicsOnWrite());
 
   await registerRoutes(app);
 

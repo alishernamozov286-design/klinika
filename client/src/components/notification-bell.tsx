@@ -1,7 +1,8 @@
 /**
  * The header bell (B3.9): the signed-in user's notices — for a doctor, the
  * lab results of the patients they referred, as soon as the lab head
- * verifies them. Polls until real-time updates arrive (B8.1).
+ * verifies them. New notices arrive through the change feed (B8.1); the
+ * timer only catches up when the feed is down.
  */
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -19,13 +20,14 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { liveInterval } from "@/lib/live-updates";
 
 export const NOTIFICATIONS_KEY = "/api/notifications?limit=20";
 
 export function useNotifications() {
   return useQuery<NotificationFeed>({
     queryKey: [NOTIFICATIONS_KEY],
-    refetchInterval: 30_000,
+    refetchInterval: liveInterval(30_000),
     refetchOnWindowFocus: true,
     refetchOnMount: "always",
   });

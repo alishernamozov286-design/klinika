@@ -21,8 +21,8 @@ let lastPrune = 0;
 let flushing: Promise<void> | null = null;
 export const startedAt = Date.now();
 
-/** Paths not worth a line: the health probe and the keep-alive. */
-const QUIET = new Set(["/api/health", "/api/session/ping"]);
+/** Paths not worth a line: the health probe, the keep-alive and the change feed (B8.1) — each tab asks every few seconds. */
+const QUIET = new Set(["/api/health", "/api/session/ping", "/api/changes"]);
 
 /** The route pattern a request matched ("/api/admissions/:id"), or its masked path. */
 export function routeOf(req: Request): string {

@@ -36,6 +36,7 @@ import { DebtorsTab } from "@/components/cashier/debtors";
 import { PriceListPanel } from "@/pages/services";
 import { OpenShiftDialog, ShiftBar, ShiftsTab, refreshShifts, useCashDesk, useHandlesMoney } from "@/components/cashier/shift";
 import { formatDate, formatDateTime, money } from "@/lib/format";
+import { liveInterval } from "@/lib/live-updates";
 
 const localDay = (offset = 0) => {
   const d = new Date();
@@ -152,7 +153,7 @@ function BillsDesk({ initialFilter = "all", initialPeriod = "today" }: { initial
   if (range[0]) params.set("from", range[0]);
   if (range[1]) params.set("to", range[1]);
   if (filter !== "all") params.set("status", filter);
-  const { data: bills = [], isLoading } = useQuery<BillSummary[]>({ queryKey: [`/api/bills?${params.toString()}`], refetchOnMount: "always", refetchInterval: 30_000 });
+  const { data: bills = [], isLoading } = useQuery<BillSummary[]>({ queryKey: [`/api/bills?${params.toString()}`], refetchOnMount: "always", refetchInterval: liveInterval(30_000) });
 
   const q = search.trim().toLowerCase();
   const rows = bills.filter((b) => !q || b.patientName.toLowerCase().includes(q) || String(b.patientNumber).includes(q.replace("#", "")));

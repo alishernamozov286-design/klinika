@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
+import { readSharedActivity as readShared, writeSharedActivity as writeShared } from "@/lib/activity";
 
 /**
  * Client half of TZ §12 "faol bo'lmagan seanslarni yopish".
@@ -26,27 +27,10 @@ import { useAuth } from "@/hooks/use-auth";
  * one tab must not be signed out by another tab they left in the background.
  */
 
-const ACTIVITY_KEY = "medlab.lastActivity";
 const WARN_BEFORE_MS = 60_000;
 /** Activity is written at most this often; the limit is counted in minutes. */
 const WRITE_EVERY_MS = 5_000;
 const EVENTS = ["mousedown", "mousemove", "keydown", "wheel", "touchstart", "scroll"] as const;
-
-function readShared(): number {
-  try {
-    return Number(localStorage.getItem(ACTIVITY_KEY)) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-function writeShared(at: number) {
-  try {
-    localStorage.setItem(ACTIVITY_KEY, String(at));
-  } catch {
-    /* private mode: this tab still tracks itself */
-  }
-}
 
 const mmss = (ms: number) => {
   const total = Math.max(0, Math.ceil(ms / 1000));

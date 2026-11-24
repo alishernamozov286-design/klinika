@@ -45,6 +45,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { ageGender, dayKey, elapsed, formatDay, formatDayLong, formatTime, shiftDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { liveInterval } from "@/lib/live-updates";
 
 /** "12 daq." since a timestamp, ticking with `now`. */
 /**
@@ -75,7 +76,7 @@ export default function Cabinet() {
     queryKey: [`/api/cabinet?${params.toString()}`],
     // Until real-time updates (B8.1) arrive, the waiting room refreshes itself —
     // and it is never shown from cache when coming back to it.
-    refetchInterval: 15_000,
+    refetchInterval: liveInterval(15_000),
     refetchOnMount: "always",
     retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 2,
   });
