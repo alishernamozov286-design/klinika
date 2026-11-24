@@ -136,6 +136,7 @@ import { SEEDED_ADMIN_PASSWORD } from "./storage-types";
 import { apiErrorResponse } from "./api-errors";
 import { recordError, routeOf } from "./monitoring";
 import { registerSystemRoutes } from "./routes-system";
+import { registerAssistantRoutes } from "./assistant";
 import { backupHealth } from "@shared/backup";
 import { describeConsumption } from "@shared/consumption";
 
@@ -2477,6 +2478,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   registerFinanceRoutes(app);
   registerInpatientRoutes(app);
   registerSystemRoutes(app);
+  registerAssistantRoutes(app);
 
   // An unknown API path is a 404 in JSON, not the client app's index.html with
   // a 200 — which is what the SPA fallback further down would otherwise serve.

@@ -21,6 +21,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
 import { LiveIndicator } from "@/components/live-indicator";
+import { AiAssistant } from "@/components/ai-assistant";
 import { Avatar, RoleBadge } from "@/components/ui-kit";
 import { CommandPalette } from "@/components/command-palette";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -345,6 +346,8 @@ function Shell() {
 
       {/* Idle sign-out (TZ §12) — only ever mounted for a signed-in user. */}
       <SessionGuard />
+      {/* AI Hospital: the floating "how do I…" assistant, bottom-right on every page. */}
+      <AiAssistant />
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}

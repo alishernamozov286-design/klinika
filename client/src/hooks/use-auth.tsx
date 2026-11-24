@@ -80,6 +80,12 @@ function signOutLocally() {
   storeUser(null);
   queryClient.setQueryData(["/api/user"], null);
   queryClient.clear();
+  // AI Hospital chats stay in this browser only while their author is signed in.
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith("medlab.ai.")) localStorage.removeItem(k);
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
