@@ -1,0 +1,61 @@
+# B8.6 — every push and pull request: types, unit tests, build, then the two
+# whole-clinic checks against a throwaway server (local JSON store, no database,
+# no Telegram): the end-to-end paths of TZ §2 and the security smoke test.
+#
+# Needs no secrets and never touches the clinic's database.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ""
+      TELEGRAM_BOT_TOKEN: ""
+      LOCAL_TZ: Asia/Tashkent
+      TZ: Asia/Tashkent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Types
+        run: npm run check
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build
+
+      - name: Start a throwaway server
+        run: |
+          mkdir -p "$RUNNER_TEMP/medlab"
+          MEDLAB_TEST_DIR="$RUNNER_TEMP/medlab" PORT=5059 NODE_ENV=development nohup npx tsx server/index.ts > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:5059/api/health > /dev/null && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+      - name: End-to-end (TZ §2, both paths)
+        run: npm run e2e
+      - name: Security smoke
+        run: npm run security:smoke
+      - name: Server log
+        if: failure()
+        run: tail -n 200 "$RUNNER_TEMP/server.log"
