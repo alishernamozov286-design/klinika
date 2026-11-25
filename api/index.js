@@ -31,6 +31,7 @@ var init_permissions = __esm({
       { key: "orders", label: "Buyurtmalar", description: "Tahlil buyurtmalari" },
       { key: "lab", label: "Laboratoriya", description: "Namunalar, natijalar va tahlillar katalogi" },
       { key: "warehouse", label: "Ombor", description: "Mahsulotlar katalogi, kirim, chiqim, qoldiq va inventarizatsiya (TZ \xA77)" },
+      { key: "inpatient", label: "Statsionar", description: "Palatalar, yotoqlar, yotqizish va kasallik tarixi (TZ \xA78)" },
       { key: "finance", label: "Kassa va moliya", description: "To'lovlar, qaytarishlar va xarajatlar" },
       { key: "reports", label: "Hisobotlar", description: "Statistika va ma'lumotlarni yuklab olish" },
       { key: "clinic", label: "Klinika tuzilmasi", description: "Bo'limlar, shifokorlar va xizmatlar" },
@@ -251,6 +252,57 @@ var init_permissions = __esm({
         label: "To'lov qabul qilish",
         description: "Buyurtma uchun to'lov qabul qilish"
       },
+      "inpatient.read": {
+        group: "inpatient",
+        label: "Statsionarni ko'rish",
+        description: "Palatalar, yotoqlar va ularning holati"
+      },
+      "beds.manage": {
+        group: "inpatient",
+        label: "Palata va yotoqlarni boshqarish",
+        description: "Palata qo'shish, yotoq-kun narxi, yotoqlar qo'shish va o'chirish (TZ \xA78)"
+      },
+      "admissions.manage": {
+        group: "inpatient",
+        label: "Yotqizish va ko'chirish",
+        description: "Bemorni statsionarga yotqizish, boshqa yotoqqa ko'chirish, xato yotqizishni bekor qilish (TZ \xA78.1.2)"
+      },
+      "beds.state": {
+        group: "inpatient",
+        label: "Yotoq holatini belgilash",
+        description: "Yotoqni tozalanmoqda, ta'mirda yoki bo'sh deb belgilash"
+      },
+      "inpatient.history": {
+        group: "inpatient",
+        label: "Kasallik tarixini yozish",
+        description: "Statsionar bemorning shikoyati, anamnezi, tashxisi va davolash rejasi; har saqlash yangi versiya (TZ \xA78.1.3)"
+      },
+      "inpatient.observe": {
+        group: "inpatient",
+        label: "Kundalik kuzatuv",
+        description: "Statsionar bemorning harorati, bosimi, pulsi va holati haqida yozuv; xatosini sabab bilan bekor qilish"
+      },
+      "inpatient.discharge": {
+        group: "inpatient",
+        label: "Bemorni chiqarish",
+        description: "Epikriz to'ldirilgach bemorni statsionardan chiqarish: yotoq bo'shaydi, tayinlovlar to'xtaydi (TZ \xA78.1.5)"
+      },
+      "procedures.prescribe": {
+        group: "inpatient",
+        label: "Muolaja tayinlash",
+        description: "Statsionar bemorga dori va muolaja tayinlash (doza, vaqt, kunlar), tayinlovni sabab bilan to'xtatish (TZ \xA78.1.4)"
+      },
+      "procedures.perform": {
+        group: "inpatient",
+        label: "Muolajani bajarish",
+        description: "Jadvaldagi muolajani bajarildi yoki bajarilmadi (sababi bilan) deb belgilash, xato belgini qaytarish"
+      },
+      "payments.discount": {
+        group: "finance",
+        label: "Chegirma berish",
+        description: "Hisobvaraqning to'lanmagan qismiga foiz yoki summa bilan chegirma, sabab bilan (TZ \xA79.2)",
+        sensitive: true
+      },
       "payments.refund": {
         group: "finance",
         label: "To'lovni qaytarish",
@@ -261,6 +313,17 @@ var init_permissions = __esm({
         group: "finance",
         label: "To'lov yozuvini bekor qilish",
         description: "Xato kiritilgan to'lovni sabab bilan bekor qilish (yozuv tarixda qoladi)",
+        sensitive: true
+      },
+      "shifts.read": {
+        group: "finance",
+        label: "Kassa smenalarini ko'rish",
+        description: "Barcha kassirlarning smenalari va smena hisobotlari (o'z smenasini har bir kassir ko'radi)"
+      },
+      "shifts.manage": {
+        group: "finance",
+        label: "Boshqa kassir smenasini yopish",
+        description: "Yopilmay qolgan smenani kassa sanog'i bilan yopish (TZ \xA79.2)",
         sensitive: true
       },
       "expenses.read": {
@@ -298,6 +361,11 @@ var init_permissions = __esm({
         group: "clinic",
         label: "Xizmatlar katalogi",
         description: "Xizmatlar (ko'rik, UZI, muolaja) va ularning narxlarini boshqarish"
+      },
+      "system.monitor": {
+        group: "system",
+        label: "Tizim holati",
+        description: "Server xatolari jurnali, javob vaqti, baza va zaxira holati (TZ \xA714)"
       },
       "settings.manage": {
         group: "system",
@@ -343,6 +411,7 @@ var init_permissions = __esm({
         name: "Klinika rahbari",
         description: "Umumiy boshqaruv: barcha ma'lumotlarni ko'rish, hisobotlar, qaytarishlarni tasdiqlash",
         permissions: [
+          "system.monitor",
           "departments.manage",
           "doctors.manage",
           "services.manage",
@@ -354,13 +423,20 @@ var init_permissions = __esm({
           "orders.cancel",
           "finance.view",
           "payments.refund",
+          "payments.discount",
+          "shifts.read",
+          "shifts.manage",
           "expenses.read",
           "reports.view",
           "data.export",
           "audit.read",
           "devices.read",
           "qc.read",
-          "inventory.read"
+          "inventory.read",
+          "inpatient.read",
+          "beds.manage",
+          "beds.state",
+          "admissions.manage"
         ]
       },
       {
@@ -381,7 +457,10 @@ var init_permissions = __esm({
           "samples.manage",
           "results.send",
           "finance.view",
-          "payments.create"
+          "payments.create",
+          "payments.discount",
+          "inpatient.read",
+          "admissions.manage"
         ]
       },
       {
@@ -397,7 +476,12 @@ var init_permissions = __esm({
           "records.sign",
           "records.amend",
           "referrals.read",
-          "referrals.create"
+          "referrals.create",
+          "inpatient.read",
+          "inpatient.history",
+          "inpatient.observe",
+          "procedures.prescribe",
+          "inpatient.discharge"
         ]
       },
       {
@@ -455,7 +539,7 @@ var init_permissions = __esm({
         key: "hamshira",
         name: "Statsionar hamshirasi",
         description: "Bemor parvarishi, muolajalar va namuna olish",
-        permissions: ["patients.read", "orders.read", "samples.manage"]
+        permissions: ["patients.read", "orders.read", "samples.manage", "inpatient.read", "beds.state", "admissions.manage", "inpatient.observe", "procedures.perform"]
       },
       {
         key: "kassir",
@@ -470,6 +554,7 @@ var init_permissions = __esm({
         permissions: [
           "orders.read",
           "finance.view",
+          "shifts.read",
           "expenses.read",
           "expenses.manage",
           "reports.view",
@@ -487,12 +572,14 @@ var init_permissions = __esm({
           "referrals.read",
           "orders.read",
           "finance.view",
+          "shifts.read",
           "expenses.read",
           "reports.view",
           "audit.read",
           "devices.read",
           "qc.read",
-          "inventory.read"
+          "inventory.read",
+          "inpatient.read"
         ]
       }
     ];
@@ -653,10 +740,10 @@ var init_lab_catalogue = __esm({
 });
 
 // shared/lab-devices.ts
-function occurredAtProblem(occurredAt, now = Date.now()) {
+function occurredAtProblem(occurredAt, now = Date.now(), what = "Xato vaqti") {
   const t2 = Date.parse(occurredAt);
   if (Number.isNaN(t2)) return "Vaqt noto'g'ri";
-  if (t2 > now + 6e4) return "Xato vaqti kelajakda bo'lishi mumkin emas";
+  if (t2 > now + 6e4) return `${what} kelajakda bo'lishi mumkin emas`;
   return null;
 }
 var DEVICE_DIRECTIONS, DEVICE_DIRECTION_LABELS, DEVICE_CONNECTIONS, DEVICE_CONNECTION_LABELS, DEVICE_STATUSES, DEVICE_STATUS_LABELS, ERROR_SEVERITIES, ERROR_SEVERITY_LABELS, deviceNameKey, DEVICE_HAS_LOG, DEVICE_ERROR_ALREADY_RESOLVED;
@@ -718,11 +805,11 @@ function evaluateWestgard(zs) {
   const rules = [];
   const n = zs.length;
   if (n === 0) return { rules, status: "ok" };
-  const z2 = zs[n - 1];
+  const z4 = zs[n - 1];
   const tail = (k) => n >= k ? zs.slice(n - k) : null;
   const sameSide = (xs, beyond) => xs.every((x) => x > beyond) || xs.every((x) => x < -beyond);
-  if (Math.abs(z2) > 2) rules.push("1-2s");
-  if (Math.abs(z2) > 3) rules.push("1-3s");
+  if (Math.abs(z4) > 2) rules.push("1-2s");
+  if (Math.abs(z4) > 3) rules.push("1-3s");
   const two = tail(2);
   if (two && sameSide(two, 2)) rules.push("2-2s");
   if (two && Math.abs(two[1] - two[0]) > 4 && Math.max(...two) > 2 && Math.min(...two) < -2) rules.push("R-4s");
@@ -733,14 +820,14 @@ function evaluateWestgard(zs) {
   const status = rules.some((r) => WESTGARD_RULE_INFO[r].reject) ? "reject" : rules.length ? "warning" : "ok";
   return { rules, status };
 }
-function eqaEvaluation(z2) {
-  const a = Math.abs(z2);
+function eqaEvaluation(z4) {
+  const a = Math.abs(z4);
   return a <= 2 ? "acceptable" : a <= 3 ? "questionable" : "unacceptable";
 }
 function judgeQcRun(previousZs, value, mean, sd) {
-  const z2 = roundZ(zScore(value, mean, sd));
-  const { rules, status } = evaluateWestgard([...previousZs.slice(-QC_LOOKBACK), z2]);
-  return { z: z2, rules, status };
+  const z4 = roundZ(zScore(value, mean, sd));
+  const { rules, status } = evaluateWestgard([...previousZs.slice(-QC_LOOKBACK), z4]);
+  return { z: z4, rules, status };
 }
 var WESTGARD_RULE_INFO, QC_STATUS_LABELS, roundZ, EQA_EVALUATION_LABELS, CALIBRATION_RESULTS, CALIBRATION_RESULT_LABELS, MAINTENANCE_KINDS, MAINTENANCE_KIND_LABELS, isExpired, QC_RESULT_ALREADY_REVIEWED, QC_RESULT_ALREADY_VOIDED, QC_TARGET_EXISTS, QC_LOOKBACK;
 var init_qc = __esm({
@@ -759,7 +846,7 @@ var init_qc = __esm({
       warning: "Ogohlantirish",
       reject: "Rad etildi"
     };
-    roundZ = (z2) => Math.round(z2 * 100) / 100;
+    roundZ = (z4) => Math.round(z4 * 100) / 100;
     EQA_EVALUATION_LABELS = {
       acceptable: "Qoniqarli",
       questionable: "Shubhali",
@@ -1098,6 +1185,587 @@ var init_prescription = __esm({
   }
 });
 
+// shared/stay-bill.ts
+function dayDiff(from, to) {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5);
+}
+function stayCharge(input) {
+  const sorted = [...input.periods].sort((a, b) => a.fromAt.localeCompare(b.fromAt));
+  const bedDays = sorted.map((p) => {
+    const from = input.dayOf(p.fromAt);
+    const to = input.dayOf(p.toAt ?? input.now);
+    const days = Math.max(0, dayDiff(from, to));
+    return { wardName: p.wardName, bedLabel: p.bedLabel, from, to, days, dayPrice: p.dayPrice, amount: days * p.dayPrice };
+  });
+  if (bedDays.length > 0 && bedDays.every((b) => b.days === 0)) {
+    bedDays[0] = { ...bedDays[0], days: 1, amount: bedDays[0].dayPrice };
+  }
+  const procedures = input.orders.filter((o) => o.done > 0 && o.unitPrice !== null).map((o) => ({ orderId: o.id, name: o.name, done: o.done, unitPrice: o.unitPrice, amount: o.done * o.unitPrice }));
+  const unpriced = input.orders.filter((o) => o.done > 0 && o.unitPrice === null).map((o) => ({ name: o.name, done: o.done }));
+  const bedAmount = bedDays.reduce((s, b) => s + b.amount, 0);
+  const procedureAmount = procedures.reduce((s, p) => s + p.amount, 0);
+  const gross = bedAmount + procedureAmount;
+  return {
+    bedDays,
+    days: bedDays.reduce((s, b) => s + b.days, 0),
+    bedAmount,
+    procedures,
+    procedureAmount,
+    unpriced,
+    gross,
+    discount: input.discount,
+    amount: input.status === "cancelled" ? 0 : Math.max(0, gross - input.discount)
+  };
+}
+function stayLineText(number, c) {
+  const doses = c.procedures.reduce((s, p) => s + p.done, 0);
+  return { title: `Statsionar karta \u2116${number}`, detail: [`${c.days} yotoq-kun`, doses ? `${doses} muolaja` : null].filter(Boolean).join(" \xB7 ") };
+}
+var init_stay_bill = __esm({
+  "shared/stay-bill.ts"() {
+    "use strict";
+  }
+});
+
+// shared/invoice.ts
+function paymentSource(p) {
+  if (p.orderId) return { source: "order", sourceId: p.orderId };
+  if (p.appointmentId) return { source: "appointment", sourceId: p.appointmentId };
+  return { source: "stay", sourceId: p.admissionId };
+}
+function paymentTarget(source, sourceId) {
+  return {
+    orderId: source === "order" ? sourceId : null,
+    appointmentId: source === "appointment" ? sourceId : null,
+    admissionId: source === "stay" ? sourceId : null
+  };
+}
+function filterBills(rows, filter) {
+  if (filter === "due") return rows.filter((r) => r.totals.due > 0);
+  if (filter === "settled") return rows.filter((r) => r.totals.due === 0 && (r.totals.status === "paid" || r.totals.status === "overpaid"));
+  return rows;
+}
+function billStatus(t2, lineCount) {
+  if (lineCount === 0 || t2.amount === 0 && t2.paid === 0) return "empty";
+  if (t2.due === 0) return t2.credit > 0 ? "overpaid" : "paid";
+  return t2.paid > 0 ? "partial" : "unpaid";
+}
+function billTotals(lines) {
+  const sums = {
+    amount: lines.reduce((s, l) => s + l.amount, 0),
+    paid: lines.reduce((s, l) => s + l.paid, 0),
+    due: lines.reduce((s, l) => s + lineDue(l), 0),
+    credit: lines.reduce((s, l) => s + lineCredit(l), 0)
+  };
+  return { ...sums, status: billStatus(sums, lines.length) };
+}
+function buildBillLines(orders2, appointments2, stays = []) {
+  const billable = new Set(BILLABLE_APPOINTMENT_STATUSES);
+  const lines = [];
+  for (const a of appointments2) {
+    const live = billable.has(a.status);
+    if (!live && a.paid === 0) continue;
+    lines.push({
+      source: "appointment",
+      sourceId: a.id,
+      title: a.serviceName ?? `${a.specialty} ko'rigi`,
+      detail: `${a.startTime} \xB7 ${a.doctorName}${a.serviceName ? ` (${a.specialty})` : ""}`,
+      createdAt: a.createdAt,
+      amount: live ? appointmentCharge(a) : 0,
+      discount: live ? a.discount ?? 0 : 0,
+      paid: a.paid,
+      cancelled: !live
+    });
+  }
+  for (const o of orders2) {
+    const live = o.status !== "cancelled";
+    if (!live && o.paidAmount === 0) continue;
+    lines.push({
+      source: "order",
+      sourceId: o.id,
+      title: `Laboratoriya #${o.orderNumber}`,
+      detail: `${o.tests} ta tahlil`,
+      createdAt: o.createdAt,
+      amount: live ? o.totalAmount : 0,
+      discount: live ? o.discount ?? 0 : 0,
+      paid: o.paidAmount,
+      cancelled: !live
+    });
+  }
+  for (const s of stays) {
+    const live = s.status !== "cancelled";
+    if (!live && s.paid === 0) continue;
+    const text2 = stayLineText(s.number, s.charge);
+    lines.push({
+      source: "stay",
+      sourceId: s.id,
+      title: text2.title,
+      detail: text2.detail,
+      createdAt: s.admittedAt,
+      amount: s.charge.amount,
+      discount: live ? s.charge.discount : 0,
+      paid: s.paid,
+      cancelled: !live
+    });
+  }
+  return lines.sort((x, y) => x.createdAt.localeCompare(y.createdAt));
+}
+function allocatePayment(lines, amount) {
+  let left = Math.max(0, Math.floor(amount));
+  const shares = [];
+  const owing = [...lines].filter((l) => lineDue(l) > 0).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.source.localeCompare(b.source));
+  for (const l of owing) {
+    if (left <= 0) break;
+    const take = Math.min(left, lineDue(l));
+    shares.push({ source: l.source, sourceId: l.sourceId, amount: take });
+    left -= take;
+  }
+  return { shares, taken: shares.reduce((s, x) => s + x.amount, 0) };
+}
+function describeShares(shares, lines) {
+  return shares.map((s) => {
+    const l = lines.find((x) => x.source === s.source && x.sourceId === s.sourceId);
+    return `${l?.title ?? s.source} ${String(s.amount).replace(/\B(?=(\d{3})+(?!\d))/g, " ")}`;
+  }).join(" + ");
+}
+var BILL_SOURCES, BILLABLE_APPOINTMENT_STATUSES, BILL_PAID, RECEIPT_ALREADY_VOIDED, PAYMENT_IS_RECEIPT_SHARE, BILL_FILTERS, lineDue, lineCredit, appointmentCharge;
+var init_invoice = __esm({
+  "shared/invoice.ts"() {
+    "use strict";
+    init_stay_bill();
+    BILL_SOURCES = ["appointment", "order", "stay"];
+    BILLABLE_APPOINTMENT_STATUSES = ["arrived", "in_progress", "completed"];
+    BILL_PAID = "Hisobvaraq to'liq to'langan \u2014 qabul qilinadigan qarz yo'q";
+    RECEIPT_ALREADY_VOIDED = "Bu kvitansiya allaqachon bekor qilingan";
+    PAYMENT_IS_RECEIPT_SHARE = "Bu to'lov hisobvaraq orqali qabul qilingan kvitansiyaning bir qismi \u2014 kvitansiyani butunligicha bekor qiling (Kassa \u2192 hisobvaraq)";
+    BILL_FILTERS = ["all", "due", "settled"];
+    lineDue = (l) => Math.max(0, l.amount - l.paid);
+    lineCredit = (l) => Math.max(0, l.paid - l.amount);
+    appointmentCharge = (a) => Math.max(0, a.price - (a.discount ?? 0));
+  }
+});
+
+// shared/discount.ts
+function planDiscount(lines, mode, value, target) {
+  const owing = lines.filter((l) => lineDue(l) > 0 && (!target || l.source === target.source && l.sourceId === target.sourceId));
+  const v = Math.max(0, Math.trunc(value));
+  let parts;
+  if (mode === "percent") {
+    const pct2 = Math.min(100, v);
+    parts = owing.map((l) => Math.min(lineDue(l), Math.round(l.amount * pct2 / 100)));
+  } else {
+    const debt = owing.reduce((s, l) => s + lineDue(l), 0);
+    const total = Math.min(v, debt);
+    const exact = owing.map((l) => debt ? total * lineDue(l) / debt : 0);
+    parts = exact.map(Math.floor);
+    let left = total - parts.reduce((s, p) => s + p, 0);
+    const order = exact.map((x, i) => ({ i, r: x - Math.floor(x) })).sort((a, b) => b.r - a.r);
+    for (const { i } of order) {
+      if (!left) break;
+      if (parts[i] < lineDue(owing[i])) {
+        parts[i]++;
+        left--;
+      }
+    }
+  }
+  const out = owing.map((l, i) => ({ source: l.source, sourceId: l.sourceId, title: l.title, amount: parts[i] })).filter((x) => x.amount > 0);
+  return { lines: out, total: out.reduce((s, x) => s + x.amount, 0) };
+}
+function describeDiscount(mode, value, total) {
+  const sum5 = (n) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
+  return mode === "percent" ? `${value}% (${sum5(total)})` : sum5(total);
+}
+var DISCOUNT_MODES, DISCOUNT_NOTHING, DISCOUNT_LINE_GONE;
+var init_discount = __esm({
+  "shared/discount.ts"() {
+    "use strict";
+    init_invoice();
+    DISCOUNT_MODES = ["percent", "amount"];
+    DISCOUNT_NOTHING = "Chegirma qilinadigan to'lanmagan summa yo'q \u2014 to'langan pulni qaytarish orqali bering (vakolatli xodim tasdig'i bilan)";
+    DISCOUNT_LINE_GONE = "Bu xizmat hisobvaraqda yo'q yoki to'liq to'langan";
+  }
+});
+
+// shared/inpatient.ts
+function nextBedLabels(existing, count) {
+  const taken = new Set(existing.map(labelKey));
+  let n = existing.reduce((max, l) => /^\d+$/.test(l.trim()) ? Math.max(max, Number(l.trim())) : max, 0);
+  const out = [];
+  while (out.length < count) {
+    n++;
+    if (!taken.has(String(n))) out.push(String(n));
+  }
+  return out;
+}
+function countBeds(beds2) {
+  const c = { total: 0, free: 0, occupied: 0, cleaning: 0, maintenance: 0 };
+  for (const b of beds2) {
+    if (!b.isActive) continue;
+    c.total++;
+    if (b.display === "ready") c.free++;
+    else c[b.display]++;
+  }
+  return c;
+}
+function occupancy(c) {
+  const usable = c.total - c.maintenance;
+  return usable > 0 ? Math.round(c.occupied / usable * 100) : null;
+}
+function sortWards(rows) {
+  return [...rows].sort((a, b) => natural(a.departmentName, b.departmentName) || (a.floor ?? 0) - (b.floor ?? 0) || natural(a.name, b.name));
+}
+function sortBeds(rows) {
+  return [...rows].sort((a, b) => natural(a.label, b.label));
+}
+function bedFreeProblem(bed, wardActive, occupied) {
+  if (!bed) return "Yotoq topilmadi";
+  if (!bed.isActive || !wardActive) return "Yotoq yoki palata faol emas";
+  if (occupied) return BED_OCCUPIED;
+  if (bed.state !== "ready") return `Yotoq ${BED_STATE_LABELS[bed.state].toLowerCase()} \u2014 avval uni bo'sh deb belgilang`;
+  return null;
+}
+function dischargeDue(planned, today) {
+  const tomorrow = /* @__PURE__ */ new Date(`${today}T12:00:00Z`);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const t2 = tomorrow.toISOString().slice(0, 10);
+  return planned < today ? "overdue" : planned === today ? "today" : planned === t2 ? "tomorrow" : "later";
+}
+function buildInpatientOverview(wards2, active, dischargedToday, today, dayOf) {
+  const live = wards2.filter((w) => w.isActive);
+  const counts = countBeds(live.flatMap((w) => w.beds));
+  const depts = /* @__PURE__ */ new Map();
+  for (const w of live) {
+    const d = depts.get(w.departmentId) ?? { id: w.departmentId, name: w.departmentName, beds: [] };
+    d.beds.push(...w.beds);
+    depts.set(w.departmentId, d);
+  }
+  const order = { overdue: 0, today: 1, tomorrow: 2, later: 3 };
+  return {
+    today,
+    counts,
+    occupancy: occupancy(counts),
+    patients: active.length,
+    byDepartment: [...depts.values()].map((d) => {
+      const c = countBeds(d.beds);
+      return { id: d.id, name: d.name, counts: c, occupancy: occupancy(c), patients: active.filter((a) => a.departmentId === d.id).length };
+    }).sort((a, b) => a.name.localeCompare(b.name, "uz")),
+    admittedToday: active.filter((a) => dayOf(a.admittedAt) === today).sort((a, b) => b.admittedAt.localeCompare(a.admittedAt)),
+    discharging: active.filter((a) => a.plannedDischargeOn).map((a) => ({ ...a, due: dischargeDue(a.plannedDischargeOn, today) })).filter((a) => a.due !== "later").sort((a, b) => order[a.due] - order[b.due] || a.plannedDischargeOn.localeCompare(b.plannedDischargeOn)),
+    dischargedToday,
+    attention: live.flatMap(
+      (w) => w.beds.filter((b) => b.isActive && (b.display === "cleaning" || b.display === "maintenance")).map((b) => ({ wardId: w.id, wardName: w.name, bedId: b.id, label: b.label, display: b.display, note: b.stateNote, since: b.stateChangedAt }))
+    )
+  };
+}
+var WARD_GENDERS, WARD_GENDER_LABELS, BED_STATES, BED_STATE_LABELS, BED_DISPLAY_LABELS, WARD_NAME_TAKEN, WARD_HAS_BEDS, WARD_DEPARTMENT, BED_LABEL_TAKEN, BED_MAINTENANCE_NOTE, MAX_BEDS_PER_WARD, DEPARTMENT_HAS_WARDS, labelKey, natural, ADMISSION_STATUSES, PATIENT_ALREADY_ADMITTED, BED_OCCUPIED, BED_HAS_HISTORY, WARD_OCCUPIED, ADMISSION_NOT_ACTIVE, ADMISSION_SAME_BED, ADMISSION_IN_FUTURE, ADMISSION_DOCTOR, VACATED_NOTE, DISCHARGE_PLAN_BEFORE_ADMISSION;
+var init_inpatient = __esm({
+  "shared/inpatient.ts"() {
+    "use strict";
+    WARD_GENDERS = ["mixed", "male", "female"];
+    WARD_GENDER_LABELS = { mixed: "Aralash", male: "Erkaklar", female: "Ayollar" };
+    BED_STATES = ["ready", "cleaning", "maintenance"];
+    BED_STATE_LABELS = { ready: "Bo'sh", cleaning: "Tozalanmoqda", maintenance: "Ta'mirda" };
+    BED_DISPLAY_LABELS = { ...BED_STATE_LABELS, occupied: "Band" };
+    WARD_NAME_TAKEN = "Bu bo'limda shu nomli palata bor";
+    WARD_HAS_BEDS = "Palatada yotoqlar bor \u2014 avval ularni o'chiring yoki palatani faolsizlantiring";
+    WARD_DEPARTMENT = "Palata faqat faol statsionar bo'limga qo'shiladi (Klinika \u2192 Bo'limlar)";
+    BED_LABEL_TAKEN = "Bu palatada shu raqamli yotoq bor";
+    BED_MAINTENANCE_NOTE = "Yotoq nega ishlatilmasligini yozing";
+    MAX_BEDS_PER_WARD = 40;
+    DEPARTMENT_HAS_WARDS = "Bo'limda palatalar bor \u2014 bo'limni o'chirish o'rniga yopib qo'ying (faolsizlantiring)";
+    labelKey = (s) => s.trim().replace(/\s+/g, " ").toLocaleLowerCase("uz");
+    natural = (a, b) => a.localeCompare(b, "uz", { numeric: true, sensitivity: "base" });
+    ADMISSION_STATUSES = ["active", "discharged", "cancelled"];
+    PATIENT_ALREADY_ADMITTED = "Bemor allaqachon statsionarda \u2014 avval chiqaring yoki boshqa yotoqqa ko'chiring";
+    BED_OCCUPIED = "Yotoqda bemor bor";
+    BED_HAS_HISTORY = "Bu yotoqda bemor yotgan \u2014 o'chirib bo'lmaydi, faolsizlantiring";
+    WARD_OCCUPIED = "Palatada bemor bor \u2014 avval ularni ko'chiring yoki chiqaring";
+    ADMISSION_NOT_ACTIVE = "Yotqizish faol emas (chiqarilgan yoki bekor qilingan)";
+    ADMISSION_SAME_BED = "Bemor shu yotoqda yotibdi";
+    ADMISSION_IN_FUTURE = "Yotqizish vaqti kelajakda bo'lishi mumkin emas";
+    ADMISSION_DOCTOR = "Qabul qiluvchi shifokorni tanlang (faol shifokor)";
+    VACATED_NOTE = "Bemor chiqqandan keyin";
+    DISCHARGE_PLAN_BEFORE_ADMISSION = "Chiqarish sanasi yotqizilgan kundan oldin bo'lishi mumkin emas";
+  }
+});
+
+// shared/case-history.ts
+function normalizeCase(input) {
+  const out = { diagnosisCode: cleanText(input.diagnosisCode)?.toUpperCase() ?? null };
+  for (const f of CASE_FIELDS) out[f] = cleanText(input[f]);
+  return out;
+}
+function caseTextOf(row) {
+  return {
+    complaints: row.complaints,
+    anamnesis: row.anamnesis,
+    examination: row.examination,
+    diagnosis: row.diagnosis,
+    diagnosisCode: row.diagnosisCode,
+    treatmentPlan: row.treatmentPlan
+  };
+}
+function caseChanges(before, after) {
+  const out = [];
+  for (const f of CASE_FIELDS) if ((before?.[f] ?? null) !== after[f]) out.push(CASE_FIELD_LABELS[f]);
+  if ((before?.diagnosisCode ?? null) !== after.diagnosisCode) out.push("MKB-10 kodi");
+  return out;
+}
+function caseSaveProblem(before, after) {
+  if (!before && CASE_FIELDS.every((f) => !after[f]) && !after.diagnosisCode) return CASE_HISTORY_EMPTY;
+  if (caseChanges(before, after).length === 0) return CASE_HISTORY_UNCHANGED;
+  return null;
+}
+function vitalsProblem(v) {
+  for (const k of VITALS) {
+    const x = v[k];
+    if (x === null) continue;
+    const s = VITAL_SPEC[k];
+    if (!Number.isFinite(x) || x < s.min || x > s.max) return `${s.label}: ${s.min}\u2013${s.max} ${s.unit} oralig'ida bo'lsin`;
+    if (s.step === 1 && !Number.isInteger(x)) return `${s.label} butun son bo'lsin`;
+  }
+  if (v.systolic === null !== (v.diastolic === null)) return "Qon bosimini ikkala raqami bilan yozing (masalan 120/80)";
+  if (v.systolic !== null && v.diastolic !== null && v.diastolic >= v.systolic) return "Diastolik bosim sistolikdan kichik bo'lsin";
+  return null;
+}
+function observationProblem(v, note) {
+  if (VITALS.every((k) => v[k] === null) && !cleanText(note)) return OBSERVATION_EMPTY;
+  return vitalsProblem(v);
+}
+function observationTimeProblem(observedAt, admittedAt, now = /* @__PURE__ */ new Date()) {
+  const t2 = Date.parse(observedAt);
+  if (t2 > now.getTime() + 6e4) return OBSERVATION_IN_FUTURE;
+  if (t2 < Date.parse(admittedAt)) return OBSERVATION_BEFORE_ADMISSION;
+  return null;
+}
+function formatVital(v, value) {
+  if (value === null) return "\u2014";
+  return v === "temperature" ? value.toFixed(1) : String(value);
+}
+var CASE_FIELDS, CASE_FIELD_LABELS, CASE_FIELD_MAX, CASE_HISTORY_STALE, CASE_HISTORY_UNCHANGED, CASE_HISTORY_EMPTY, CASE_CLOSED, OBSERVATION_EMPTY, OBSERVATION_BEFORE_ADMISSION, OBSERVATION_IN_FUTURE, OBSERVATION_VOIDED, OBSERVATION_NOT_YOURS, cleanText, VITALS, VITAL_SPEC;
+var init_case_history = __esm({
+  "shared/case-history.ts"() {
+    "use strict";
+    CASE_FIELDS = ["complaints", "anamnesis", "examination", "diagnosis", "treatmentPlan"];
+    CASE_FIELD_LABELS = {
+      complaints: "Shikoyatlar",
+      anamnesis: "Anamnez",
+      examination: "Obyektiv holat",
+      diagnosis: "Tashxis",
+      treatmentPlan: "Davolash rejasi"
+    };
+    CASE_FIELD_MAX = 4e3;
+    CASE_HISTORY_STALE = "Kasallik tarixi boshqa oynada o'zgartirildi \u2014 oxirgi holatni yuklang";
+    CASE_HISTORY_UNCHANGED = "O'zgarish yo'q \u2014 saqlanadigan narsa yo'q";
+    CASE_HISTORY_EMPTY = "Kasallik tarixining kamida bitta bo'limini to'ldiring";
+    CASE_CLOSED = "Statsionar karta yopilgan \u2014 kasallik tarixiga yozib bo'lmaydi";
+    OBSERVATION_EMPTY = "Kamida bitta ko'rsatkich yoki izoh yozing";
+    OBSERVATION_BEFORE_ADMISSION = "Kuzatuv vaqti yotqizilgan vaqtdan oldin bo'lmaydi";
+    OBSERVATION_IN_FUTURE = "Kuzatuv vaqti kelajakda bo'lmaydi";
+    OBSERVATION_VOIDED = "Kuzatuv allaqachon bekor qilingan";
+    OBSERVATION_NOT_YOURS = "Boshqa xodimning kuzatuvini faqat tuzatish huquqi bor shifokor bekor qiladi";
+    cleanText = (v) => {
+      const t2 = (v ?? "").replace(/\r\n/g, "\n").trim();
+      return t2 ? t2 : null;
+    };
+    VITALS = ["temperature", "pulse", "systolic", "diastolic", "respiration", "spo2"];
+    VITAL_SPEC = {
+      temperature: { label: "Harorat", short: "T\xB0", unit: "\xB0C", min: 30, max: 45, step: 0.1, low: 35.5, high: 37.4 },
+      pulse: { label: "Puls", short: "Puls", unit: "/min", min: 20, max: 250, step: 1, low: 50, high: 100 },
+      systolic: { label: "Sistolik bosim", short: "AQB", unit: "mm sm.ust.", min: 50, max: 300, step: 1, low: 90, high: 140 },
+      diastolic: { label: "Diastolik bosim", short: "AQB", unit: "mm sm.ust.", min: 20, max: 200, step: 1, low: 60, high: 90 },
+      respiration: { label: "Nafas soni", short: "NS", unit: "/min", min: 4, max: 80, step: 1, low: 12, high: 24 },
+      spo2: { label: "Saturatsiya", short: "SpO\u2082", unit: "%", min: 50, max: 100, step: 1, low: 94, high: 100 }
+    };
+  }
+});
+
+// shared/epicrisis.ts
+function normalizeEpicrisis(input) {
+  const out = { finalDiagnosisCode: cleanText(input.finalDiagnosisCode)?.toUpperCase() ?? null };
+  for (const f of EPICRISIS_FIELDS) out[f] = cleanText(input[f]);
+  return out;
+}
+function epicrisisTextOf(row) {
+  return {
+    finalDiagnosis: row.finalDiagnosis,
+    finalDiagnosisCode: row.finalDiagnosisCode,
+    treatmentSummary: row.treatmentSummary,
+    epicrisis: row.epicrisis,
+    recommendations: row.recommendations
+  };
+}
+function epicrisisChanges(before, after) {
+  const out = [];
+  for (const f of EPICRISIS_FIELDS) if ((before?.[f] ?? null) !== after[f]) out.push(EPICRISIS_FIELD_LABELS[f]);
+  if ((before?.finalDiagnosisCode ?? null) !== after.finalDiagnosisCode) out.push("MKB-10 kodi");
+  return out;
+}
+function epicrisisSaveProblem(before, after) {
+  if (!before && EPICRISIS_FIELDS.every((f) => !after[f]) && !after.finalDiagnosisCode) return EPICRISIS_EMPTY;
+  if (epicrisisChanges(before, after).length === 0) return EPICRISIS_UNCHANGED;
+  return null;
+}
+function dischargeProblem(t2) {
+  const missing = [];
+  if (!t2?.finalDiagnosis && !t2?.finalDiagnosisCode) missing.push(EPICRISIS_FIELD_LABELS.finalDiagnosis);
+  if (!t2?.epicrisis) missing.push(EPICRISIS_FIELD_LABELS.epicrisis);
+  if (!t2?.recommendations) missing.push(EPICRISIS_FIELD_LABELS.recommendations);
+  return missing.length ? `Chiqarishdan oldin epikrizda to'ldiring: ${missing.join(", ")} (saqlang)` : null;
+}
+function dischargeTimeProblem(at, admittedAt, now = /* @__PURE__ */ new Date()) {
+  const t2 = Date.parse(at);
+  if (t2 > now.getTime() + 6e4) return DISCHARGE_IN_FUTURE;
+  if (t2 < Date.parse(admittedAt)) return DISCHARGE_BEFORE_ADMISSION;
+  return null;
+}
+function vitalTrend(rows) {
+  const out = [];
+  for (const v of ["temperature", "pulse", "spo2"]) {
+    const a = first(rows, (r) => r[v]);
+    const b = last(rows, (r) => r[v]);
+    if (!a || !b) continue;
+    const fmt2 = (x) => v === "temperature" ? x.toFixed(1) : String(x);
+    out.push(a === b ? `${VITAL_SPEC[v].label.toLowerCase()} ${fmt2(a[v])} ${VITAL_SPEC[v].unit}` : `${VITAL_SPEC[v].label.toLowerCase()} ${fmt2(a[v])} \u2192 ${fmt2(b[v])} ${VITAL_SPEC[v].unit}`);
+  }
+  const bpA = rows.find((r) => r.systolic !== null);
+  const bpB = [...rows].reverse().find((r) => r.systolic !== null);
+  if (bpA && bpB) out.push(bpA === bpB ? `AQB ${bpA.systolic}/${bpA.diastolic}` : `AQB ${bpA.systolic}/${bpA.diastolic} \u2192 ${bpB.systolic}/${bpB.diastolic} mm sm.ust.`);
+  return out;
+}
+function buildEpicrisisDraft(d) {
+  const c = d.caseText;
+  const from = d.dayLabel(d.admittedAt);
+  const to = d.dayLabel(d.until);
+  const given = d.treatments.filter((t2) => t2.done > 0);
+  const treatmentLines = given.map((t2) => `- ${t2.name}${t2.dose ? ` ${t2.dose}` : ""}${t2.route ? `, ${t2.route.toLowerCase()}` : ""} \u2014 ${t2.done} marta${t2.stopped ? " (muddatidan oldin to'xtatilgan)" : ""}`);
+  const treatmentSummary = [
+    `Statsionarda ${d.days} kun (${from} \u2013 ${to}), ${d.departmentName}${d.places.length ? `, ${d.places.join(" \u2192 ")}` : ""}.`,
+    given.length ? `O'tkazilgan davolash:
+${treatmentLines.join("\n")}` : null,
+    c?.treatmentPlan ? `Davolash rejasi: ${c.treatmentPlan}` : null
+  ].filter(Boolean).join("\n");
+  const abnormal = d.labs.filter((l) => l.flag && l.flag !== "normal");
+  const trend = vitalTrend(d.observations);
+  const lastNote = [...d.observations].reverse().find((o) => o.note)?.note ?? null;
+  const epicrisis = [
+    `Bemor ${d.patient.name}${d.patient.age !== null ? `, ${d.patient.age} yosh` : ""}, ${from} kuni ${d.departmentName}ga ${c?.complaints ? `shikoyatlari bilan yotqizildi: ${c.complaints}` : d.reason ? `yotqizildi: ${d.reason}` : "yotqizildi"}.`,
+    c?.anamnesis ? `Anamnez: ${c.anamnesis}` : null,
+    c?.examination ? `Qabuldagi holati: ${c.examination}` : null,
+    d.labs.length ? `Laboratoriya tekshiruvlari (${d.labs.length} ta natija)${abnormal.length ? `, me'yordan tashqari: ${abnormal.map((l) => `${l.testName} ${l.result}${l.unit ? ` ${l.unit}` : ""}${l.flag === "high" ? " \u2191" : l.flag === "low" ? " \u2193" : ""} (${d.dayLabel(l.date)})`).join("; ")}.` : ", me'yor doirasida."}` : null,
+    d.exams.length ? `Tekshiruvlar va konsultatsiyalar: ${d.exams.map((e) => `${e.title} (${d.dayLabel(e.date)})${e.diagnosis ? ` \u2014 ${e.diagnosis}` : ""}`).join("; ")}.` : null,
+    trend.length ? `Dinamikada: ${trend.join(", ")}.` : null,
+    lastNote ? `Oxirgi kuzatuv: ${lastNote}` : null,
+    c?.diagnosis ? `Klinik tashxis: ${c.diagnosis}.` : null
+  ].filter(Boolean).join("\n\n");
+  return {
+    finalDiagnosis: c?.diagnosis ?? null,
+    finalDiagnosisCode: c?.diagnosisCode ?? null,
+    treatmentSummary: treatmentSummary || null,
+    epicrisis: epicrisis || null,
+    recommendations: null
+  };
+}
+var EPICRISIS_FIELDS, EPICRISIS_FIELD_LABELS, EPICRISIS_MAX, EPICRISIS_STALE, EPICRISIS_UNCHANGED, EPICRISIS_EMPTY, EPICRISIS_REASON, EPICRISIS_CANCELLED, DISCHARGE_NOT_ACTIVE, DISCHARGE_BEFORE_ADMISSION, DISCHARGE_IN_FUTURE, first, last;
+var init_epicrisis = __esm({
+  "shared/epicrisis.ts"() {
+    "use strict";
+    init_case_history();
+    EPICRISIS_FIELDS = ["finalDiagnosis", "treatmentSummary", "epicrisis", "recommendations"];
+    EPICRISIS_FIELD_LABELS = {
+      finalDiagnosis: "Yakuniy tashxis",
+      treatmentSummary: "Davolash xulosasi",
+      epicrisis: "Epikriz",
+      recommendations: "Tavsiyalar"
+    };
+    EPICRISIS_MAX = { finalDiagnosis: 2e3, treatmentSummary: 6e3, epicrisis: 1e4, recommendations: 4e3 };
+    EPICRISIS_STALE = "Epikriz boshqa oynada o'zgartirildi \u2014 oxirgi holatni yuklang";
+    EPICRISIS_UNCHANGED = "O'zgarish yo'q \u2014 saqlanadigan narsa yo'q";
+    EPICRISIS_EMPTY = "Epikrizning kamida bitta bo'limini to'ldiring";
+    EPICRISIS_REASON = "Chiqarilgan bemorning epikrizini tuzatish sababini yozing";
+    EPICRISIS_CANCELLED = "Bekor qilingan yotqizishga epikriz yozilmaydi";
+    DISCHARGE_NOT_ACTIVE = "Bemor statsionarda emas \u2014 chiqarib bo'lmaydi";
+    DISCHARGE_BEFORE_ADMISSION = "Chiqarish vaqti yotqizilgan vaqtdan oldin bo'lmaydi";
+    DISCHARGE_IN_FUTURE = "Chiqarish vaqti kelajakda bo'lmaydi";
+    first = (rows, pick) => rows.find((r) => pick(r) !== null);
+    last = (rows, pick) => [...rows].reverse().find((r) => pick(r) !== null);
+  }
+});
+
+// shared/procedures.ts
+function addDays(day, n) {
+  const d = /* @__PURE__ */ new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function orderProblem(p, today, admittedDay) {
+  if (!p.name.trim()) return p.kind === "medicine" ? "Dori nomini kiriting" : "Muolajani tanlang yoki yozing";
+  if (p.kind === "medicine" && !(p.dose ?? "").trim()) return "Dozani kiriting (masalan 500 mg, 1 tabletka)";
+  if (p.route && !ADMIN_ROUTES.includes(p.route)) return "Yuborish yo'lini tanlang";
+  if (p.times.length === 0) return "Kamida bitta vaqtni belgilang";
+  if (p.times.length > MAX_TIMES_PER_DAY) return `Kuniga ko'pi bilan ${MAX_TIMES_PER_DAY} marta`;
+  const bad = p.times.find((t2) => !TIME.test(t2));
+  if (bad) return `Vaqt noto'g'ri: ${bad} (SS:DD)`;
+  if (new Set(p.times).size !== p.times.length) return "Bir xil vaqt ikki marta yozilgan";
+  if (!Number.isInteger(p.days) || p.days < 1 || p.days > MAX_ORDER_DAYS) return `Davomiyligi 1\u2013${MAX_ORDER_DAYS} kun`;
+  if (!DAY.test(p.startOn)) return "Boshlanish kunini tanlang";
+  if (p.startOn < today) return "Kurs o'tgan kundan boshlanmaydi";
+  if (p.startOn < admittedDay) return "Kurs yotqizilgan kundan oldin boshlanmaydi";
+  if (p.startOn > addDays(today, MAX_START_AHEAD_DAYS)) return `Kurs ko'pi bilan ${MAX_START_AHEAD_DAYS} kun keyin boshlanadi`;
+  return null;
+}
+function planSlots(p, now, at) {
+  const out = [];
+  const from = now.getTime() - DUE_WINDOW_MS;
+  for (let i = 0; i < p.days; i++) {
+    const day = addDays(p.startOn, i);
+    for (const t2 of normalizeTimes(p.times)) {
+      const d = at(day, t2);
+      if (d.getTime() >= from) out.push(d);
+    }
+  }
+  return out;
+}
+function taskState(t2, now = /* @__PURE__ */ new Date()) {
+  if (t2.status !== "planned") return t2.status;
+  const diff = now.getTime() - Date.parse(t2.plannedAt);
+  if (diff > DUE_WINDOW_MS) return "overdue";
+  if (diff >= -DUE_WINDOW_MS) return "due";
+  return "upcoming";
+}
+function markDoneProblem(t2, now = /* @__PURE__ */ new Date()) {
+  if (t2.status !== "planned") return TASK_NOT_PLANNED;
+  if (Date.parse(t2.plannedAt) - now.getTime() > EARLY_MARK_MS) return TASK_TOO_EARLY;
+  return null;
+}
+function sortTasks(rows, now = /* @__PURE__ */ new Date()) {
+  return [...rows].sort((a, b) => RANK[taskState(a, now)] - RANK[taskState(b, now)] || a.plannedAt.localeCompare(b.plannedAt));
+}
+var ORDER_KINDS, TASK_STATUS_LABELS, MAX_TIMES_PER_DAY, MAX_ORDER_DAYS, MAX_START_AHEAD_DAYS, DUE_WINDOW_MS, EARLY_MARK_MS, ORDER_STOPPED, ORDER_STAY_CLOSED, TASK_NOT_PLANNED, TASK_NOT_MARKED, TASK_TOO_EARLY, ORDER_NOTHING_AHEAD, TIME, DAY, normalizeTimes, RANK;
+var init_procedures = __esm({
+  "shared/procedures.ts"() {
+    "use strict";
+    init_prescription();
+    ORDER_KINDS = ["medicine", "procedure"];
+    TASK_STATUS_LABELS = { planned: "Rejada", done: "Bajarildi", missed: "Bajarilmadi", cancelled: "Bekor qilingan" };
+    MAX_TIMES_PER_DAY = 8;
+    MAX_ORDER_DAYS = 60;
+    MAX_START_AHEAD_DAYS = 14;
+    DUE_WINDOW_MS = 60 * 6e4;
+    EARLY_MARK_MS = 2 * 60 * 6e4;
+    ORDER_STOPPED = "Tayinlov to'xtatilgan";
+    ORDER_STAY_CLOSED = "Statsionar karta yopilgan \u2014 muolaja tayinlab yoki belgilab bo'lmaydi";
+    TASK_NOT_PLANNED = "Bu muolaja allaqachon belgilangan \u2014 avval belgini qaytaring";
+    TASK_NOT_MARKED = "Muolaja hali belgilanmagan";
+    TASK_TOO_EARLY = "Muolaja vaqti hali kelmagan \u2014 vaqtidan ko'pi bilan 2 soat oldin belgilanadi";
+    ORDER_NOTHING_AHEAD = "Tanlangan kunlarda vaqtlar o'tib ketgan \u2014 jadvalda birorta ham muolaja qolmadi";
+    TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+    DAY = /^\d{4}-\d{2}-\d{2}$/;
+    normalizeTimes = (times) => [...new Set(times.map((t2) => t2.trim()))].sort();
+    RANK = { overdue: 0, due: 1, upcoming: 2, missed: 3, done: 4, cancelled: 5 };
+  }
+});
+
 // shared/consumption.ts
 function normInForce(n, at) {
   return !!n.approvedAt && n.approvedAt <= at && (!n.retiredAt || n.retiredAt > at);
@@ -1132,14 +1800,16 @@ function summarizeConsumption(entries) {
   const items = /* @__PURE__ */ new Map();
   const tests2 = /* @__PURE__ */ new Map();
   const performed = /* @__PURE__ */ new Set();
-  const out = { value: 0, performed: 0, extraEntries: 0, shortEntries: 0, byItem: [], byTest: [] };
+  const out = { value: 0, performed: 0, extraEntries: 0, inpatientEntries: 0, shortEntries: 0, byItem: [], byTest: [] };
   for (const e of entries) {
     if (e.cancelledAt) continue;
     out.value += e.value;
     if (shortOf(e) > 0) out.shortEntries += 1;
     if (e.kind === "extra") out.extraEntries += 1;
-    const it = items.get(e.itemId) ?? { itemId: e.itemId, itemName: e.itemName, unit: e.unit, norm: 0, extra: 0, total: 0, short: 0, value: 0 };
+    if (e.kind === "inpatient") out.inpatientEntries += 1;
+    const it = items.get(e.itemId) ?? { itemId: e.itemId, itemName: e.itemName, unit: e.unit, norm: 0, extra: 0, inpatient: 0, total: 0, short: 0, value: 0 };
     if (e.kind === "norm") it.norm += e.quantity;
+    else if (e.kind === "inpatient") it.inpatient += e.quantity;
     else it.extra += e.quantity;
     it.total += e.quantity;
     it.short += shortOf(e);
@@ -1157,15 +1827,16 @@ function summarizeConsumption(entries) {
   }
   const tidy2 = (n) => Number(n.toFixed(6));
   out.performed = performed.size;
-  out.byItem = Array.from(items.values()).map((r) => ({ ...r, norm: tidy2(r.norm), extra: tidy2(r.extra), total: tidy2(r.total), short: tidy2(r.short) })).sort((a, b) => b.value - a.value || a.itemName.localeCompare(b.itemName));
+  out.byItem = Array.from(items.values()).map((r) => ({ ...r, norm: tidy2(r.norm), extra: tidy2(r.extra), inpatient: tidy2(r.inpatient), total: tidy2(r.total), short: tidy2(r.short) })).sort((a, b) => b.value - a.value || a.itemName.localeCompare(b.itemName));
   out.byTest = Array.from(tests2.values()).map(({ lines, ...t2 }) => ({ ...t2, performed: lines.size })).sort((a, b) => b.value - a.value || a.testName.localeCompare(b.testName));
   return out;
 }
-var EXTRA_REASONS, EXTRA_REASON_LABELS, CONSUMABLE_KINDS, MAX_NORM_QUANTITY, MAX_CONSUME_BATCH, NORM_DRAFT_EXISTS, NORM_NOT_DRAFT, NORM_ALREADY_RETIRED, CONSUMPTION_ALREADY_CANCELLED, NORM_CONSUMPTION_FINAL, movementValue;
+var INPATIENT_CONSUMPTION_FINAL, EXTRA_REASONS, EXTRA_REASON_LABELS, CONSUMABLE_KINDS, MAX_NORM_QUANTITY, MAX_CONSUME_BATCH, NORM_DRAFT_EXISTS, NORM_NOT_DRAFT, NORM_ALREADY_RETIRED, CONSUMPTION_ALREADY_CANCELLED, NORM_CONSUMPTION_FINAL, movementValue;
 var init_consumption = __esm({
   "shared/consumption.ts"() {
     "use strict";
     init_inventory();
+    INPATIENT_CONSUMPTION_FINAL = "Statsionar dori sarfi muolaja belgisini qaytarish bilan bekor bo'ladi (kasallik tarixi yoki hamshira ro'yxati)";
     EXTRA_REASONS = ["repeat", "calibration", "qc", "spoiled", "other"];
     EXTRA_REASON_LABELS = {
       repeat: "Takroriy o'lchov",
@@ -1197,6 +1868,7 @@ __export(schema_exports, {
   EXPENSE_CATEGORIES: () => EXPENSE_CATEGORIES,
   EXPENSE_STATUSES: () => EXPENSE_STATUSES,
   NOTIFICATION_KINDS: () => NOTIFICATION_KINDS,
+  ORDER_CANCEL_REASON_MIN: () => ORDER_CANCEL_REASON_MIN,
   ORDER_STATUSES: () => ORDER_STATUSES,
   ORDER_STATUS_LABELS: () => ORDER_STATUS_LABELS,
   PAYMENT_METHODS: () => PAYMENT_METHODS,
@@ -1224,16 +1896,27 @@ __export(schema_exports, {
   WEEKDAYS: () => WEEKDAYS,
   WEEKDAY_LABELS: () => WEEKDAY_LABELS,
   WEEKDAY_SHORT: () => WEEKDAY_SHORT,
+  addBedsSchema: () => addBedsSchema,
+  admissionBeds: () => admissionBeds,
+  admissionObservations: () => admissionObservations,
+  admissions: () => admissions,
+  admitSchema: () => admitSchema,
   amendRecordSchema: () => amendRecordSchema,
   amendResultSchema: () => amendResultSchema,
   appSettings: () => appSettings,
   appointmentStatusSchema: () => appointmentStatusSchema,
   appointments: () => appointments,
   auditLog: () => auditLog,
+  bedStateSchema: () => bedStateSchema,
+  beds: () => beds,
+  billDiscounts: () => billDiscounts,
   calibrations: () => calibrations,
   cancelExpenseSchema: () => cancelExpenseSchema,
   cancelReferralSchema: () => cancelReferralSchema,
+  caseHistoryVersions: () => caseHistoryVersions,
+  cashShifts: () => cashShifts,
   changePasswordSchema: () => changePasswordSchema,
+  closeShiftSchema: () => closeShiftSchema,
   consumptionNorms: () => consumptionNorms,
   countEntrySchema: () => countEntrySchema,
   createAppointmentSchema: () => createAppointmentSchema,
@@ -1244,15 +1927,22 @@ __export(schema_exports, {
   createReceiptSchema: () => createReceiptSchema,
   createReferralSchema: () => createReferralSchema,
   daysBetween: () => daysBetween,
+  decideRefundSchema: () => decideRefundSchema,
   departments: () => departments,
   deviceMaintenance: () => deviceMaintenance,
+  dischargePlanSchema: () => dischargePlanSchema,
+  dischargeSchema: () => dischargeSchema,
+  discountBillSchema: () => discountBillSchema,
   doctors: () => doctors,
   emergencyContactSchema: () => emergencyContactSchema,
+  epicrisisVersions: () => epicrisisVersions,
   eqaResults: () => eqaResults,
   expenses: () => expenses,
   extraConsumptionSchema: () => extraConsumptionSchema,
   icd10: () => icd10,
   importIcdUzSchema: () => importIcdUzSchema,
+  inpatientOrderSchema: () => inpatientOrderSchema,
+  inpatientOrders: () => inpatientOrders,
   insertAllergySchema: () => insertAllergySchema,
   insertCalibrationSchema: () => insertCalibrationSchema,
   insertDepartmentSchema: () => insertDepartmentSchema,
@@ -1272,6 +1962,7 @@ __export(schema_exports, {
   insertServiceSchema: () => insertServiceSchema,
   insertTestSchema: () => insertTestSchema,
   insertUserSchema: () => insertUserSchema,
+  insertWardSchema: () => insertWardSchema,
   inventoryBatches: () => inventoryBatches,
   inventoryItems: () => inventoryItems,
   invoicePayments: () => invoicePayments,
@@ -1292,6 +1983,8 @@ __export(schema_exports, {
   nationalPhoneDigits: () => nationalPhoneDigits,
   normalizeUzPhone: () => normalizeUzPhone,
   notifications: () => notifications,
+  observationSchema: () => observationSchema,
+  openShiftSchema: () => openShiftSchema,
   orderTestVersions: () => orderTestVersions,
   orderTests: () => orderTests,
   orders: () => orders,
@@ -1302,20 +1995,25 @@ __export(schema_exports, {
   payments: () => payments,
   prescriptionLineSchema: () => prescriptionLineSchema,
   previousRange: () => previousRange,
+  procedureTasks: () => procedureTasks,
   qcMaterials: () => qcMaterials,
   qcResults: () => qcResults,
   qcTargets: () => qcTargets,
   receiptLineSchema: () => receiptLineSchema,
   recordFieldsSchema: () => recordFieldsSchema,
   referrals: () => referrals,
+  refunds: () => refunds,
   removeAllergySchema: () => removeAllergySchema,
+  requestRefundSchema: () => requestRefundSchema,
   rescheduleAppointmentSchema: () => rescheduleAppointmentSchema,
   resolveDeviceErrorSchema: () => resolveDeviceErrorSchema,
   returnResultsSchema: () => returnResultsSchema,
   reviewQcResultSchema: () => reviewQcResultSchema,
   roles: () => roles,
   samples: () => samples,
+  saveCaseHistorySchema: () => saveCaseHistorySchema,
   saveCountEntriesSchema: () => saveCountEntriesSchema,
+  saveEpicrisisSchema: () => saveEpicrisisSchema,
   saveRecordSchema: () => saveRecordSchema,
   saveResultsSchema: () => saveResultsSchema,
   scheduleSchema: () => scheduleSchema,
@@ -1323,13 +2021,18 @@ __export(schema_exports, {
   services: () => services,
   sessions: () => sessions,
   signRecordSchema: () => signRecordSchema,
+  stayLabOrderSchema: () => stayLabOrderSchema,
   stockCountLines: () => stockCountLines,
   stockCounts: () => stockCounts,
   stockIssues: () => stockIssues,
   stockMovements: () => stockMovements,
   stockReceipts: () => stockReceipts,
+  taskMarkSchema: () => taskMarkSchema,
+  taskReasonSchema: () => taskReasonSchema,
   telegramContacts: () => telegramContacts,
   tests: () => tests,
+  transferSchema: () => transferSchema,
+  updateBedSchema: () => updateBedSchema,
   updateDepartmentSchema: () => updateDepartmentSchema,
   updateDeviceSchema: () => updateDeviceSchema,
   updateDoctorSchema: () => updateDoctorSchema,
@@ -1344,12 +2047,14 @@ __export(schema_exports, {
   updateSampleSchema: () => updateSampleSchema,
   updateServiceSchema: () => updateServiceSchema,
   updateUserSchema: () => updateUserSchema,
+  updateWardSchema: () => updateWardSchema,
   userMfa: () => userMfa,
   users: () => users,
   verifyResultsSchema: () => verifyResultsSchema,
   visits: () => visits,
   voidPaymentSchema: () => voidPaymentSchema,
-  voidRecordSchema: () => voidRecordSchema
+  voidRecordSchema: () => voidRecordSchema,
+  wards: () => wards
 });
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, integer, timestamp, boolean, index, json, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
@@ -1390,7 +2095,7 @@ function localDayString(value) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
-var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, invoices, invoicePayments, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, consumptionNorms, labConsumptions, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, updateSampleSchema, createPaymentSchema, payBillSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, rxText, prescriptionLineSchema, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, normQuantity, insertNormSchema, updateNormSchema, extraConsumptionSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
+var money, isoTimestamp, ORDER_STATUSES, ORDER_STATUS_LABELS, RESULT_FLAGS, PAYMENT_METHODS, PAYMENT_METHOD_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SAMPLE_REJECT_REASONS, EXPENSE_CATEGORIES, EXPENSE_STATUSES, DEPARTMENT_KINDS, DEPARTMENT_KIND_LABELS, SERVICE_KINDS, SERVICE_KIND_LABELS, APPOINTMENT_STATUSES, APPOINTMENT_STATUS_LABELS, RECORD_STATUSES, RECORD_STATUS_LABELS, RECORD_FIELDS, RECORD_CODE_FIELDS, RECORD_CODE_FOR, RECORD_CODE_LABELS, RECORD_FIELD_LABELS, REFERRAL_KINDS, REFERRAL_KIND_LABELS, REFERRAL_EXAM_SERVICE_KINDS, REFERRAL_STATUSES, REFERRAL_STAGES, REFERRAL_STAGE_LABELS, WEEKDAYS, WEEKDAY_SHORT, WEEKDAY_LABELS, users, roles, userMfa, departments, wards, beds, admissions, admissionBeds, caseHistoryVersions, epicrisisVersions, admissionObservations, inpatientOrders, procedureTasks, doctors, services, appointments, medicalRecords, medicalRecordVersions, referrals, icd10, notifications, patientAllergies, patients, patientContacts, tests, visits, orders, orderTests, orderTestVersions, samples, payments, invoices, invoicePayments, cashShifts, refunds, billDiscounts, expenses, auditLog, telegramContacts, sessions, appSettings, labSettings, labDevices, labDeviceErrors, qcMaterials, qcTargets, qcResults, calibrations, deviceMaintenance, eqaResults, inventoryItems, stockReceipts, inventoryBatches, stockIssues, stockMovements, stockCounts, consumptionNorms, labConsumptions, stockCountLines, NOTIFICATION_KINDS, birthDateSchema, emergencyContactSchema, insertPatientSchema, insertTestSchema, uniqueTestIds, createOrderSchema, updateOrderSchema, ORDER_CANCEL_REASON_MIN, updateSampleSchema, createPaymentSchema, payBillSchema, shiftCash, shiftNote, openShiftSchema, closeShiftSchema, wardNote, insertWardSchema, updateWardSchema, addBedsSchema, updateBedSchema, bedStateSchema, admitSchema, transferSchema, dischargePlanSchema, caseText, saveCaseHistorySchema, vital, observationSchema, epiText, saveEpicrisisSchema, dischargeSchema, inpatientOrderSchema, stayLabOrderSchema, taskMarkSchema, taskReasonSchema, discountBillSchema, requestRefundSchema, decideRefundSchema, voidPaymentSchema, insertExpenseSchema, updateExpenseSchema, cancelExpenseSchema, changePasswordSchema, saveResultsSchema, insertUserSchema, updateUserSchema, permissionList, insertRoleSchema, updateRoleSchema, timeOfDay, scheduleSchema, insertDepartmentSchema, updateDepartmentSchema, insertDoctorSchema, updateDoctorSchema, insertServiceSchema, updateServiceSchema, dayString, createAppointmentSchema, rescheduleAppointmentSchema, appointmentStatusSchema, recordText, icdCode, rxText, prescriptionLineSchema, recordFieldsSchema, saveRecordSchema, signRecordSchema, amendRecordSchema, insertAllergySchema, referralNote, createReferralSchema, cancelReferralSchema, verifyResultsSchema, returnResultsSchema, amendResultSchema, updateIcdUzSchema, importIcdUzSchema, removeAllergySchema, securitySettingsSchema, DEFAULT_SECURITY_SETTINGS, mfaCodeSchema, mfaPasswordSchema, mfaDisableSchema, SESSION_END_CODES, loginSchema, labSettingsSchema, optionalText, insertDeviceSchema, updateDeviceSchema, insertDeviceErrorSchema, insertInventoryItemSchema, updateInventoryItemSchema, receiptLineSchema, createReceiptSchema, issueLineSchema, createIssueSchema, createCountSchema, countEntrySchema, saveCountEntriesSchema, normQuantity, insertNormSchema, updateNormSchema, extraConsumptionSchema, qcNumber, optionalDay, pastTimestamp, insertQcMaterialSchema, updateQcMaterialSchema, insertQcTargetSchema, updateQcTargetSchema, insertQcResultSchema, reviewQcResultSchema, voidRecordSchema, insertCalibrationSchema, insertMaintenanceSchema, insertEqaSchema, resolveDeviceErrorSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1401,6 +2106,12 @@ var init_schema = __esm({
     init_qc();
     init_inventory();
     init_prescription();
+    init_invoice();
+    init_discount();
+    init_inpatient();
+    init_case_history();
+    init_epicrisis();
+    init_procedures();
     init_consumption();
     money = (name) => integer(name);
     isoTimestamp = (name) => timestamp(name, { mode: "string", withTimezone: true });
@@ -1585,6 +2296,218 @@ var init_schema = __esm({
       updatedAt: isoTimestamp("updated_at"),
       updatedBy: varchar("updated_by")
     });
+    wards = pgTable(
+      "wards",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        departmentId: varchar("department_id").notNull(),
+        name: text("name").notNull(),
+        floor: integer("floor"),
+        gender: text("gender").notNull().default("mixed"),
+        dayPrice: money("day_price").notNull().default(0),
+        note: text("note"),
+        isActive: boolean("is_active").notNull().default(true),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by")
+      },
+      (t2) => [index("IDX_wards_department").on(t2.departmentId)]
+    );
+    beds = pgTable(
+      "beds",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        wardId: varchar("ward_id").notNull(),
+        label: text("label").notNull(),
+        state: text("state").notNull().default("ready"),
+        stateNote: text("state_note"),
+        stateChangedAt: isoTimestamp("state_changed_at"),
+        stateChangedBy: varchar("state_changed_by"),
+        stateChangedByName: text("state_changed_by_name"),
+        note: text("note"),
+        isActive: boolean("is_active").notNull().default(true),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by")
+      },
+      (t2) => [index("IDX_beds_ward").on(t2.wardId)]
+    );
+    admissions = pgTable(
+      "admissions",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+        patientId: varchar("patient_id").notNull(),
+        departmentId: varchar("department_id").notNull(),
+        /** The admitting (attending) doctor. */
+        doctorId: varchar("doctor_id").notNull(),
+        admittedAt: isoTimestamp("admitted_at").notNull(),
+        reason: text("reason"),
+        /** B6.3: the day the doctor plans to discharge (YYYY-MM-DD); the home page lists who leaves today and tomorrow. */
+        plannedDischargeOn: text("planned_discharge_on"),
+        /** B6.6: the visit (patient + admission day) whose bill carries the stay line and the lab orders placed from the card. */
+        visitId: varchar("visit_id"),
+        /** B6.6: discount taken off the stay line (B7.2 rules), so'm. */
+        discount: money("discount").notNull().default(0),
+        status: text("status").notNull().default("active"),
+        cancelledAt: isoTimestamp("cancelled_at"),
+        cancelledBy: varchar("cancelled_by"),
+        cancelledByName: text("cancelled_by_name"),
+        cancelReason: text("cancel_reason"),
+        dischargedAt: isoTimestamp("discharged_at"),
+        dischargedBy: varchar("discharged_by"),
+        dischargedByName: text("discharged_by_name"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        createdByName: text("created_by_name"),
+        updatedAt: isoTimestamp("updated_at"),
+        updatedBy: varchar("updated_by")
+      },
+      (t2) => [
+        uniqueIndex("UQ_admissions_active_patient").on(t2.patientId).where(sql`status = 'active'`),
+        index("IDX_admissions_status").on(t2.status)
+      ]
+    );
+    admissionBeds = pgTable(
+      "admission_beds",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        admissionId: varchar("admission_id").notNull(),
+        bedId: varchar("bed_id").notNull(),
+        wardId: varchar("ward_id").notNull(),
+        fromAt: isoTimestamp("from_at").notNull(),
+        toAt: isoTimestamp("to_at"),
+        /** B6.6: the ward's bed-day price when the period opened — a later price change does not reprice it. */
+        dayPrice: money("day_price"),
+        note: text("note"),
+        movedBy: varchar("moved_by"),
+        movedByName: text("moved_by_name")
+      },
+      (t2) => [
+        uniqueIndex("UQ_admission_beds_open_bed").on(t2.bedId).where(sql`to_at IS NULL`),
+        uniqueIndex("UQ_admission_beds_open_admission").on(t2.admissionId).where(sql`to_at IS NULL`),
+        index("IDX_admission_beds_admission").on(t2.admissionId)
+      ]
+    );
+    caseHistoryVersions = pgTable(
+      "case_history_versions",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        admissionId: varchar("admission_id").notNull(),
+        version: integer("version").notNull(),
+        complaints: text("complaints"),
+        anamnesis: text("anamnesis"),
+        examination: text("examination"),
+        diagnosis: text("diagnosis"),
+        /** MKB-10 (B3.4), optional; the text stays the diagnosis. */
+        diagnosisCode: varchar("diagnosis_code"),
+        treatmentPlan: text("treatment_plan"),
+        savedAt: isoTimestamp("saved_at").defaultNow().notNull(),
+        savedBy: varchar("saved_by"),
+        savedByName: text("saved_by_name")
+      },
+      (t2) => [uniqueIndex("UQ_case_history_versions").on(t2.admissionId, t2.version)]
+    );
+    epicrisisVersions = pgTable(
+      "epicrisis_versions",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        admissionId: varchar("admission_id").notNull(),
+        version: integer("version").notNull(),
+        finalDiagnosis: text("final_diagnosis"),
+        finalDiagnosisCode: varchar("final_diagnosis_code"),
+        treatmentSummary: text("treatment_summary"),
+        epicrisis: text("epicrisis"),
+        recommendations: text("recommendations"),
+        /** A correction after discharge says why. */
+        reason: text("reason"),
+        savedAt: isoTimestamp("saved_at").defaultNow().notNull(),
+        savedBy: varchar("saved_by"),
+        savedByName: text("saved_by_name")
+      },
+      (t2) => [uniqueIndex("UQ_epicrisis_versions").on(t2.admissionId, t2.version)]
+    );
+    admissionObservations = pgTable(
+      "admission_observations",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        admissionId: varchar("admission_id").notNull(),
+        observedAt: isoTimestamp("observed_at").notNull(),
+        temperature: doublePrecision("temperature"),
+        pulse: integer("pulse"),
+        systolic: integer("systolic"),
+        diastolic: integer("diastolic"),
+        respiration: integer("respiration"),
+        spo2: integer("spo2"),
+        note: text("note"),
+        authorId: varchar("author_id"),
+        authorName: text("author_name"),
+        /** "Shifokor", "Hamshira"… — the author's role name when written. */
+        authorRole: text("author_role"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        voidedAt: isoTimestamp("voided_at"),
+        voidedBy: varchar("voided_by"),
+        voidedByName: text("voided_by_name"),
+        voidReason: text("void_reason")
+      },
+      (t2) => [index("IDX_admission_observations_admission").on(t2.admissionId, t2.observedAt)]
+    );
+    inpatientOrders = pgTable(
+      "inpatient_orders",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        admissionId: varchar("admission_id").notNull(),
+        kind: text("kind").notNull(),
+        itemId: varchar("item_id"),
+        serviceId: varchar("service_id"),
+        name: text("name").notNull(),
+        dose: text("dose"),
+        route: text("route"),
+        /** Times of day, "HH:MM", in order. */
+        times: text("times").array().notNull(),
+        startOn: text("start_on").notNull(),
+        days: integer("days").notNull(),
+        note: text("note"),
+        /** B6.6: the catalogue price of one dose when ordered (procedures from the service list; a stocked medicine: its sale price × issueQty); null — not billed. */
+        unitPrice: money("unit_price"),
+        /** B6.6b: how much of the warehouse item one dose takes (1 flakon, 2 tabletka); null — nothing leaves the shelf. */
+        issueQty: doublePrecision("issue_qty"),
+        status: text("status").notNull().default("active"),
+        prescribedBy: varchar("prescribed_by"),
+        prescribedByName: text("prescribed_by_name"),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        stoppedAt: isoTimestamp("stopped_at"),
+        stoppedBy: varchar("stopped_by"),
+        stoppedByName: text("stopped_by_name"),
+        stopReason: text("stop_reason")
+      },
+      (t2) => [index("IDX_inpatient_orders_admission").on(t2.admissionId)]
+    );
+    procedureTasks = pgTable(
+      "procedure_tasks",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        orderId: varchar("order_id").notNull(),
+        admissionId: varchar("admission_id").notNull(),
+        plannedAt: isoTimestamp("planned_at").notNull(),
+        status: text("status").notNull().default("planned"),
+        doneAt: isoTimestamp("done_at"),
+        doneBy: varchar("done_by"),
+        doneByName: text("done_by_name"),
+        /** Done: an optional note; missed: the reason. */
+        note: text("note"),
+        revertedAt: isoTimestamp("reverted_at"),
+        revertedByName: text("reverted_by_name"),
+        revertReason: text("revert_reason")
+      },
+      (t2) => [
+        uniqueIndex("UQ_procedure_tasks_slot").on(t2.orderId, t2.plannedAt),
+        index("IDX_procedure_tasks_planned").on(t2.plannedAt),
+        index("IDX_procedure_tasks_admission").on(t2.admissionId)
+      ]
+    );
     doctors = pgTable(
       "doctors",
       {
@@ -1645,6 +2568,8 @@ var init_schema = __esm({
         status: text("status").notNull().default("scheduled"),
         /** Price at booking time — a later price change does not rewrite it. */
         price: money("price").notNull().default(0),
+        /** B7.2: discount given on the bill; the charge is price − discount (shared/invoice.ts appointmentCharge). */
+        discount: money("discount").notNull().default(0),
         /** Why the patient is coming, as told to the registrar. */
         reason: text("reason"),
         /** The referral this booking fulfils (B3.5), if any. */
@@ -1907,6 +2832,8 @@ var init_schema = __esm({
       visitId: varchar("visit_id"),
       /** The doctor's lab referral this order fulfils (B3.5); null for desk orders. UQ_orders_referral (migration). */
       referralId: varchar("referral_id"),
+      /** B6.6: the inpatient stay it was ordered for (from the case history); its visit is the stay's. */
+      admissionId: varchar("admission_id"),
       totalAmount: money("total_amount").notNull(),
       discount: money("discount").notNull().default(0),
       paidAmount: money("paid_amount").notNull().default(0),
@@ -2026,6 +2953,12 @@ var init_schema = __esm({
       appointmentId: varchar("appointment_id"),
       /** B7.1: the bill receipt this is a share of; null for a payment taken on the order itself. */
       invoicePaymentId: varchar("invoice_payment_id"),
+      /** B7.5: the cash shift it was recorded in; null for payments taken before shifts existed. */
+      shiftId: varchar("shift_id"),
+      /** B7.4: the approved refund this negative row pays out (one row per line it returns money on). */
+      refundId: varchar("refund_id"),
+      /** B6.6: the inpatient stay it pays (the bill's "stay" line). Exactly one of order / appointment / admission is set. */
+      admissionId: varchar("admission_id"),
       /** Negative for a refund, so the history reads as a ledger. */
       amount: money("amount").notNull(),
       method: text("method").notNull().default("naqd"),
@@ -2061,6 +2994,12 @@ var init_schema = __esm({
         amount: money("amount").notNull(),
         method: text("method").notNull().default("naqd"),
         note: text("note"),
+        /** B7.6: what the patient handed over (≥ amount; the rest was change). Null on receipts before B7.6. */
+        tendered: money("tendered"),
+        /** B7.6: what the bill still owed right after this receipt, as printed on the chek. */
+        dueAfter: money("due_after"),
+        /** B7.6: times its chek was printed; every print after the first is marked a copy ("NUSXA"). */
+        printCount: integer("print_count").notNull().default(0),
         createdAt: isoTimestamp("created_at").defaultNow().notNull(),
         createdBy: varchar("created_by"),
         createdByName: text("created_by_name"),
@@ -2070,6 +3009,88 @@ var init_schema = __esm({
         voidReason: text("void_reason")
       },
       (t2) => [index("IDX_invoice_payments_invoice").on(t2.invoiceId)]
+    );
+    cashShifts = pgTable(
+      "cash_shifts",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+        cashierId: varchar("cashier_id").notNull(),
+        cashierName: text("cashier_name").notNull(),
+        openedAt: isoTimestamp("opened_at").defaultNow().notNull(),
+        /** Cash in the drawer at opening (the float). */
+        openingCash: money("opening_cash").notNull().default(0),
+        openingNote: text("opening_note"),
+        closedAt: isoTimestamp("closed_at"),
+        closedBy: varchar("closed_by"),
+        closedByName: text("closed_by_name"),
+        expectedCash: money("expected_cash"),
+        countedCash: money("counted_cash"),
+        /** counted − expected: negative is a shortage. */
+        difference: money("difference"),
+        /** Left in the drawer for the next shift; the rest is handed over. */
+        carriedCash: money("carried_cash"),
+        /** The note-by-note count, when the counting aid was used. */
+        denominations: json("denominations").$type(),
+        closingNote: text("closing_note"),
+        totals: json("totals").$type()
+      },
+      (t2) => [
+        uniqueIndex("UQ_cash_shifts_open").on(t2.cashierId).where(sql`closed_at IS NULL`),
+        index("IDX_cash_shifts_opened").on(t2.openedAt)
+      ]
+    );
+    refunds = pgTable(
+      "refunds",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        number: integer("number").generatedByDefaultAsIdentity({ startWith: 1 }).notNull(),
+        patientId: varchar("patient_id").notNull(),
+        visitId: varchar("visit_id").notNull(),
+        amount: money("amount").notNull(),
+        /** How the money goes back: cash from the drawer, to the card, or by bank. */
+        method: text("method").notNull().default("naqd"),
+        reason: text("reason").notNull(),
+        status: text("status").notNull().default("requested"),
+        requestedAt: isoTimestamp("requested_at").defaultNow().notNull(),
+        requestedBy: varchar("requested_by"),
+        requestedByName: text("requested_by_name"),
+        decidedAt: isoTimestamp("decided_at"),
+        decidedBy: varchar("decided_by"),
+        decidedByName: text("decided_by_name"),
+        decisionNote: text("decision_note"),
+        paidAt: isoTimestamp("paid_at"),
+        paidBy: varchar("paid_by"),
+        paidByName: text("paid_by_name"),
+        shiftId: varchar("shift_id"),
+        /** What the payout returned on which line, frozen at payout (the lines may leave the bill after). */
+        lines: json("lines").$type(),
+        cancelledAt: isoTimestamp("cancelled_at"),
+        cancelledBy: varchar("cancelled_by"),
+        cancelledByName: text("cancelled_by_name"),
+        cancelReason: text("cancel_reason"),
+        printCount: integer("print_count").notNull().default(0)
+      },
+      (t2) => [index("IDX_refunds_visit").on(t2.visitId), index("IDX_refunds_status").on(t2.status), index("IDX_refunds_patient").on(t2.patientId)]
+    );
+    billDiscounts = pgTable(
+      "bill_discounts",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        patientId: varchar("patient_id").notNull(),
+        visitId: varchar("visit_id").notNull(),
+        mode: text("mode").notNull(),
+        /** Percent (1–100) or the sum asked for. */
+        value: integer("value").notNull(),
+        /** What was actually taken off, in so'm. */
+        total: money("total").notNull(),
+        lines: json("lines").$type().notNull(),
+        reason: text("reason").notNull(),
+        createdAt: isoTimestamp("created_at").defaultNow().notNull(),
+        createdBy: varchar("created_by"),
+        createdByName: text("created_by_name")
+      },
+      (t2) => [index("IDX_bill_discounts_visit").on(t2.visitId), index("IDX_bill_discounts_patient").on(t2.patientId)]
     );
     expenses = pgTable("expenses", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -2461,6 +3482,8 @@ var init_schema = __esm({
         normId: varchar("norm_id"),
         quantity: doublePrecision("quantity").notNull(),
         posted: doublePrecision("posted").notNull().default(0),
+        /** B6.6b: the medicine dose given on the ward (kind "inpatient"). */
+        procedureTaskId: varchar("procedure_task_id"),
         /** Extra use only. */
         reason: text("reason"),
         note: text("note"),
@@ -2477,6 +3500,7 @@ var init_schema = __esm({
       },
       (t2) => [
         uniqueIndex("UQ_lab_consumptions_norm").on(t2.orderTestId, t2.itemId).where(sql`kind = 'norm'`),
+        uniqueIndex("UQ_lab_consumptions_dose").on(t2.procedureTaskId).where(sql`kind = 'inpatient' AND cancelled_at IS NULL`),
         index("IDX_lab_consumptions_created").on(t2.createdAt)
       ]
     );
@@ -2498,7 +3522,7 @@ var init_schema = __esm({
       },
       (t2) => [uniqueIndex("UQ_stock_count_lines_batch").on(t2.countId, t2.batchId), index("IDX_stock_count_lines_batch").on(t2.batchId)]
     );
-    NOTIFICATION_KINDS = ["lab_result", "lab_result_amended"];
+    NOTIFICATION_KINDS = ["lab_result", "lab_result_amended", "refund_request", "refund_decision"];
     birthDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tug'ilgan sanani tanlang").refine((v) => !Number.isNaN(Date.parse(v)), "Sana noto'g'ri").refine((v) => v <= localDayString(/* @__PURE__ */ new Date()), "Tug'ilgan sana kelajakda bo'lishi mumkin emas").refine((v) => Number(v.slice(0, 4)) >= (/* @__PURE__ */ new Date()).getFullYear() - 130, "Tug'ilgan sanani tekshiring");
     emergencyContactSchema = z.object({
       name: z.string().trim().min(2, "Aloqa uchun shaxs ismini kiriting").max(120),
@@ -2560,8 +3584,15 @@ var init_schema = __esm({
        * silently compound. Lines already holding a result are never dropped —
        * see updateOrder in the storage layer.
        */
-      testIds: uniqueTestIds.optional()
+      testIds: uniqueTestIds.optional(),
+      /**
+       * Why the order is cancelled, or brought back from cancelled — required for
+       * either (TZ §10: money and results leave or rejoin the flow, so the log
+       * must say why). Goes to the audit log; not stored on the order.
+       */
+      cancelReason: z.string().trim().max(300, "Juda uzun").optional()
     });
+    ORDER_CANCEL_REASON_MIN = 5;
     updateSampleSchema = z.object({
       status: z.enum(SAMPLE_STATUSES),
       rejectReason: z.enum(SAMPLE_REJECT_REASONS).nullish(),
@@ -2583,6 +3614,111 @@ var init_schema = __esm({
       amount: z.coerce.number({ invalid_type_error: "Summani kiriting" }).int("Summa butun so'mda bo'lsin").positive("Summa musbat bo'lishi kerak").max(1e9, "Summa juda katta"),
       method: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: "To'lov usulini tanlang" }) }).default("naqd"),
       note: z.string().trim().max(300, "Izoh juda uzun").nullish().transform((v) => v || null)
+    });
+    shiftCash = (label) => z.coerce.number({ invalid_type_error: `${label}ni kiriting` }).int(`${label} butun so'mda bo'lsin`).min(0, `${label} manfiy bo'lishi mumkin emas`).max(2e9, `${label} juda katta`);
+    shiftNote = z.string().trim().max(500, "Izoh juda uzun").nullish().transform((v) => v || null);
+    openShiftSchema = z.object({ openingCash: shiftCash("Boshlang'ich summa").default(0), note: shiftNote });
+    closeShiftSchema = z.object({
+      countedCash: shiftCash("Sanalgan summa"),
+      carriedCash: shiftCash("Qoldiriladigan summa").default(0),
+      /** The expected cash the cashier saw; a payment recorded since makes the count stale (409). */
+      expectedCash: z.coerce.number().int(),
+      denominations: z.record(z.string().regex(/^\d+$/), z.coerce.number().int().min(0).max(1e5)).nullish(),
+      note: shiftNote
+    });
+    wardNote = z.string().trim().max(300, "Izoh juda uzun").nullish().transform((v) => v || null);
+    insertWardSchema = z.object({
+      departmentId: z.string().min(1, "Bo'limni tanlang"),
+      name: z.string().trim().min(1, "Palata raqami yoki nomini kiriting").max(40, "Juda uzun"),
+      floor: z.coerce.number().int("Qavat butun son").min(-5).max(100).nullish().transform((v) => v === void 0 ? null : v),
+      gender: z.enum(WARD_GENDERS).default("mixed"),
+      dayPrice: z.coerce.number().int("Narx butun so'mda").min(0, "Narx manfiy bo'lmasin").max(1e8, "Narx juda katta").default(0),
+      note: wardNote
+    });
+    updateWardSchema = insertWardSchema.partial().extend({ isActive: z.boolean().optional() });
+    addBedsSchema = z.object({ count: z.coerce.number().int().min(1, "Kamida bitta yotoq").max(MAX_BEDS_PER_WARD, `Ko'pi bilan ${MAX_BEDS_PER_WARD} ta`) });
+    updateBedSchema = z.object({
+      label: z.string().trim().min(1, "Yotoq raqamini kiriting").max(10, "Juda uzun").optional(),
+      note: wardNote.optional(),
+      isActive: z.boolean().optional()
+    });
+    bedStateSchema = z.object({ state: z.enum(BED_STATES), note: wardNote });
+    admitSchema = z.object({
+      patientId: z.string().min(1, "Bemorni tanlang"),
+      bedId: z.string().min(1, "Yotoqni tanlang"),
+      doctorId: z.string().min(1, "Qabul qiluvchi shifokorni tanlang"),
+      admittedAt: z.string().datetime({ offset: true, message: "Vaqtni to'g'ri kiriting" }).nullish().transform((v) => v ?? null),
+      reason: z.string().trim().max(500, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    transferSchema = z.object({
+      bedId: z.string().min(1, "Yangi yotoqni tanlang"),
+      note: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    dischargePlanSchema = z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Sanani tanlang").nullable()
+    });
+    caseText = z.string().max(CASE_FIELD_MAX, `Ko'pi bilan ${CASE_FIELD_MAX} belgi`).nullish().transform((v) => v ?? null);
+    saveCaseHistorySchema = z.object({
+      baseVersion: z.number().int().min(0),
+      complaints: caseText,
+      anamnesis: caseText,
+      examination: caseText,
+      diagnosis: caseText,
+      diagnosisCode: z.string().trim().max(10).nullish().transform((v) => v || null),
+      treatmentPlan: caseText
+    });
+    vital = (v) => z.number({ invalid_type_error: `${VITAL_SPEC[v].label}: raqam kiriting` }).nullish().transform((x) => x === void 0 ? null : x);
+    observationSchema = z.object({
+      observedAt: z.string().datetime({ offset: true, message: "Vaqtni to'g'ri kiriting" }).nullish().transform((v) => v ?? null),
+      ...Object.fromEntries(VITALS.map((v) => [v, vital(v)])),
+      note: z.string().trim().max(CASE_FIELD_MAX, `Ko'pi bilan ${CASE_FIELD_MAX} belgi`).nullish().transform((v) => v || null)
+    });
+    epiText = (max) => z.string().max(max, `Ko'pi bilan ${max} belgi`).nullish().transform((v) => v ?? null);
+    saveEpicrisisSchema = z.object({
+      baseVersion: z.number().int().min(0),
+      finalDiagnosis: epiText(EPICRISIS_MAX.finalDiagnosis),
+      finalDiagnosisCode: z.string().trim().max(10).nullish().transform((v) => v || null),
+      treatmentSummary: epiText(EPICRISIS_MAX.treatmentSummary),
+      epicrisis: epiText(EPICRISIS_MAX.epicrisis),
+      recommendations: epiText(EPICRISIS_MAX.recommendations),
+      reason: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    dischargeSchema = z.object({
+      dischargedAt: z.string().datetime({ offset: true, message: "Vaqtni to'g'ri kiriting" }).nullish().transform((v) => v ?? null)
+    });
+    inpatientOrderSchema = z.object({
+      kind: z.enum(ORDER_KINDS, { errorMap: () => ({ message: "Dori yoki muolajani tanlang" }) }),
+      itemId: z.string().min(1).nullish().transform((v) => v ?? null),
+      serviceId: z.string().min(1).nullish().transform((v) => v ?? null),
+      name: z.string().trim().max(200, "Juda uzun").default(""),
+      dose: z.string().trim().max(100, "Juda uzun").nullish().transform((v) => v || null),
+      route: z.enum(ADMIN_ROUTES).nullish().transform((v) => v ?? null),
+      times: z.array(z.string()).max(MAX_TIMES_PER_DAY, `Kuniga ko'pi bilan ${MAX_TIMES_PER_DAY} marta`),
+      /** B6.6b: units of the stocked medicine one dose takes. */
+      issueQty: z.coerce.number({ invalid_type_error: "Miqdorni kiriting" }).positive("Miqdor musbat bo'lsin").max(1e3, "Juda katta").nullish().transform((v) => v ?? null),
+      startOn: z.string(),
+      days: z.coerce.number().int("Butun son bo'lsin").min(1, "Kamida 1 kun").max(MAX_ORDER_DAYS, `Ko'pi bilan ${MAX_ORDER_DAYS} kun`),
+      note: z.string().trim().max(500, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    stayLabOrderSchema = z.object({
+      testIds: z.array(z.string().min(1)).min(1, "Kamida bitta tahlilni tanlang").max(60, "Juda ko'p tahlil"),
+      note: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null)
+    });
+    taskMarkSchema = z.object({ note: z.string().trim().max(300, "Juda uzun").nullish().transform((v) => v || null) });
+    taskReasonSchema = z.object({ reason: z.string().trim().min(3, "Sababini yozing").max(300, "Juda uzun") });
+    discountBillSchema = z.object({
+      mode: z.enum(DISCOUNT_MODES, { errorMap: () => ({ message: "Chegirma turini tanlang" }) }),
+      value: z.coerce.number({ invalid_type_error: "Qiymatni kiriting" }).int("Butun son bo'lsin").positive("Qiymat musbat bo'lishi kerak").max(1e9, "Juda katta"),
+      target: z.object({ source: z.enum(BILL_SOURCES), sourceId: z.string().min(1) }).nullish().transform((v) => v ?? null),
+      reason: z.string().trim().min(5, "Chegirma sababini yozing (kamida 5 belgi)").max(300, "Juda uzun")
+    }).refine((d) => d.mode !== "percent" || d.value <= 100, { message: "Foiz 100 dan oshmasin", path: ["value"] });
+    requestRefundSchema = z.object({
+      amount: z.coerce.number({ invalid_type_error: "Summani kiriting" }).int("Summa butun so'mda bo'lsin").positive("Summa musbat bo'lishi kerak").max(1e9, "Summa juda katta"),
+      method: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: "Qaytarish usulini tanlang" }) }).default("naqd"),
+      reason: z.string().trim().min(5, "Qaytarish sababini yozing (kamida 5 belgi)").max(500, "Juda uzun")
+    });
+    decideRefundSchema = z.object({
+      note: z.string().trim().max(500, "Juda uzun").nullish().transform((v) => v || null)
     });
     voidPaymentSchema = z.object({
       reason: z.string().trim().min(5, "Bekor qilish sababini yozing (kamida 5 belgi)").max(300, "Juda uzun")
@@ -3099,6 +4235,7 @@ var init_reference_range = __esm({
 });
 
 // server/storage-types.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
 function localDay(value) {
   const d = typeof value === "string" ? new Date(value) : value;
   const pad = (n) => String(n).padStart(2, "0");
@@ -3141,7 +4278,7 @@ function buildPatientCard(patient, orderList, visitList, payments2, appointmentL
     const date = a.visitId && visitDate.get(a.visitId) || a.date;
     const g = groups.get(key) ?? { key, date, orders: [], appointments: [], billed: 0, paid: 0 };
     g.appointments.push(a);
-    g.billed += a.price;
+    g.billed += appointmentCharge(a);
     g.paid += apptPaid.get(a.id) ?? 0;
     groups.set(key, g);
   }
@@ -3162,7 +4299,7 @@ function buildPatientCard(patient, orderList, visitList, payments2, appointmentL
     appointments: g.appointments.sort((a, b) => a.startTime.localeCompare(b.startTime))
   })).sort((a, b) => b.date.localeCompare(a.date));
   const live = orderList.filter((o) => o.status !== "cancelled");
-  const billed = live.reduce((s, o) => s + o.totalAmount, 0) + attended.reduce((s, a) => s + a.price, 0);
+  const billed = live.reduce((s, o) => s + o.totalAmount, 0) + attended.reduce((s, a) => s + appointmentCharge(a), 0);
   const paid = live.reduce((s, o) => s + o.paidAmount, 0) + attended.reduce((s, a) => s + (apptPaid.get(a.id) ?? 0), 0);
   const times = [
     ...orderList.map((o) => o.createdAt),
@@ -3198,12 +4335,13 @@ function sortRoles(list) {
   };
   return [...list].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
-var StorageConflict, DEFAULT_SETTINGS, SEED_USERS, ATTENDED_STATUSES;
+var StorageConflict, DEFAULT_SETTINGS, SEEDED_ADMIN_PASSWORD, SEED_USERS, ATTENDED_STATUSES;
 var init_storage_types = __esm({
   "server/storage-types.ts"() {
     "use strict";
     init_reference_range();
     init_permissions();
+    init_invoice();
     StorageConflict = class extends Error {
       constructor(message) {
         super(message);
@@ -3219,11 +4357,17 @@ var init_storage_types = __esm({
       director: null,
       licenseNumber: null
     };
+    SEEDED_ADMIN_PASSWORD = (() => {
+      const given = process.env.ADMIN_INITIAL_PASSWORD?.trim();
+      if (given) return given;
+      if (process.env.NODE_ENV !== "production") return "admin123";
+      return randomBytes2(12).toString("base64url");
+    })();
     SEED_USERS = [
       // A single word on purpose: the dashboard greets people by their given name,
       // which it takes to be the second word of "Familiya Ism Otasining-ismi".
       // A two-word job title would come out as "Salom, administratori".
-      { username: "admin", password: "admin123", fullName: "Administrator", role: SUPER_ADMIN }
+      { username: "admin", password: SEEDED_ADMIN_PASSWORD, fullName: "Administrator", role: SUPER_ADMIN }
     ];
     ATTENDED_STATUSES = ["arrived", "in_progress", "completed"];
   }
@@ -3662,8 +4806,8 @@ function summarizeLabBoard(orders2, day, dayOf) {
     }
     if (needsReview(o.items)) counts.review += 1;
     if (o.items.length > 0 && isOrderReleased(o)) {
-      const last = o.items.reduce((m, i) => i.verifiedAt && i.verifiedAt > m ? i.verifiedAt : m, "");
-      if (last && dayOf(last) === day) counts.readyToday += 1;
+      const last2 = o.items.reduce((m, i) => i.verifiedAt && i.verifiedAt > m ? i.verifiedAt : m, "");
+      if (last2 && dayOf(last2) === day) counts.readyToday += 1;
     }
   }
   return { counts, groupsToday };
@@ -3713,88 +4857,204 @@ var init_branding = __esm({
   }
 });
 
-// shared/invoice.ts
-function filterBills(rows, filter) {
-  if (filter === "due") return rows.filter((r) => r.totals.due > 0);
-  if (filter === "settled") return rows.filter((r) => r.totals.due === 0 && (r.totals.status === "paid" || r.totals.status === "overpaid"));
-  return rows;
+// shared/debt.ts
+function daysSince(day, today) {
+  return Math.max(0, Math.round((Date.parse(`${today}T12:00:00Z`) - Date.parse(`${day}T12:00:00Z`)) / 864e5));
 }
-function billStatus(t2, lineCount) {
-  if (lineCount === 0 || t2.amount === 0 && t2.paid === 0) return "empty";
-  if (t2.due === 0) return t2.credit > 0 ? "overpaid" : "paid";
-  return t2.paid > 0 ? "partial" : "unpaid";
+function debtAge(oldest, today) {
+  const d = daysSince(oldest, today);
+  return d <= 7 ? "week" : d <= 30 ? "month" : d <= 90 ? "quarter" : "older";
 }
-function billTotals(lines) {
-  const sums = {
-    amount: lines.reduce((s, l) => s + l.amount, 0),
-    paid: lines.reduce((s, l) => s + l.paid, 0),
-    due: lines.reduce((s, l) => s + lineDue(l), 0),
-    credit: lines.reduce((s, l) => s + lineCredit(l), 0)
-  };
-  return { ...sums, status: billStatus(sums, lines.length) };
-}
-function buildBillLines(orders2, appointments2) {
-  const billable = new Set(BILLABLE_APPOINTMENT_STATUSES);
-  const lines = [];
-  for (const a of appointments2) {
-    const live = billable.has(a.status);
-    if (!live && a.paid === 0) continue;
-    lines.push({
-      source: "appointment",
-      sourceId: a.id,
-      title: a.serviceName ?? `${a.specialty} ko'rigi`,
-      detail: `${a.startTime} \xB7 ${a.doctorName}${a.serviceName ? ` (${a.specialty})` : ""}`,
-      createdAt: a.createdAt,
-      amount: live ? a.price : 0,
-      paid: a.paid,
-      cancelled: !live
-    });
+function summarizeDebt(rows, today) {
+  const byAge = Object.fromEntries(DEBT_AGES.map((a) => [a, { debtors: 0, due: 0 }]));
+  let due = 0;
+  let bills = 0;
+  for (const r of rows) {
+    const a = byAge[debtAge(r.oldest, today)];
+    a.debtors++;
+    a.due += r.due;
+    due += r.due;
+    bills += r.bills;
   }
-  for (const o of orders2) {
-    const live = o.status !== "cancelled";
-    if (!live && o.paidAmount === 0) continue;
-    lines.push({
-      source: "order",
-      sourceId: o.id,
-      title: `Laboratoriya #${o.orderNumber}`,
-      detail: `${o.tests} ta tahlil`,
-      createdAt: o.createdAt,
-      amount: live ? o.totalAmount : 0,
-      paid: o.paidAmount,
-      cancelled: !live
-    });
-  }
-  return lines.sort((x, y) => x.createdAt.localeCompare(y.createdAt));
+  return { debtors: rows.length, due, bills, byAge };
 }
-function allocatePayment(lines, amount) {
-  let left = Math.max(0, Math.floor(amount));
-  const shares = [];
-  const owing = [...lines].filter((l) => lineDue(l) > 0).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.source.localeCompare(b.source));
-  for (const l of owing) {
-    if (left <= 0) break;
-    const take = Math.min(left, lineDue(l));
-    shares.push({ source: l.source, sourceId: l.sourceId, amount: take });
-    left -= take;
-  }
-  return { shares, taken: shares.reduce((s, x) => s + x.amount, 0) };
+function sortDebtors(rows) {
+  return [...rows].sort((a, b) => b.due - a.due || a.oldest.localeCompare(b.oldest) || a.patientName.localeCompare(b.patientName));
 }
-function describeShares(shares, lines) {
-  return shares.map((s) => {
-    const l = lines.find((x) => x.source === s.source && x.sourceId === s.sourceId);
-    return `${l?.title ?? s.source} ${String(s.amount).replace(/\B(?=(\d{3})+(?!\d))/g, " ")}`;
-  }).join(" + ");
-}
-var BILLABLE_APPOINTMENT_STATUSES, BILL_PAID, RECEIPT_ALREADY_VOIDED, PAYMENT_IS_RECEIPT_SHARE, BILL_FILTERS, lineDue, lineCredit;
-var init_invoice = __esm({
-  "shared/invoice.ts"() {
+var DEBT_AGES;
+var init_debt = __esm({
+  "shared/debt.ts"() {
     "use strict";
-    BILLABLE_APPOINTMENT_STATUSES = ["arrived", "in_progress", "completed"];
-    BILL_PAID = "Hisobvaraq to'liq to'langan \u2014 qabul qilinadigan qarz yo'q";
-    RECEIPT_ALREADY_VOIDED = "Bu kvitansiya allaqachon bekor qilingan";
-    PAYMENT_IS_RECEIPT_SHARE = "Bu to'lov hisobvaraq orqali qabul qilingan kvitansiyaning bir qismi \u2014 kvitansiyani butunligicha bekor qiling (Kassa \u2192 hisobvaraq)";
-    BILL_FILTERS = ["all", "due", "settled"];
-    lineDue = (l) => Math.max(0, l.amount - l.paid);
-    lineCredit = (l) => Math.max(0, l.paid - l.amount);
+    DEBT_AGES = ["week", "month", "quarter", "older"];
+  }
+});
+
+// shared/realtime.ts
+function topicsForWrite(method, path3) {
+  if (!WRITE_METHODS.has(method.toUpperCase())) return [];
+  const clean = path3.split("?")[0];
+  const hit = WRITE_TOPICS.find(([prefix]) => under(clean, prefix));
+  return hit ? [...hit[1]] : [];
+}
+var CHANGE_TOPICS, WRITE_TOPICS, WRITE_METHODS, under, USER_ACTIVE_HEADER, IDLE_AFTER_MS;
+var init_realtime = __esm({
+  "shared/realtime.ts"() {
+    "use strict";
+    CHANGE_TOPICS = [
+      "appointments",
+      "patients",
+      "lab",
+      "inventory",
+      "inpatient",
+      "cash",
+      "referrals",
+      "notifications",
+      "settings"
+    ];
+    WRITE_TOPICS = [
+      ["/api/appointments", ["appointments", "cash"]],
+      ["/api/cabinet", ["appointments"]],
+      ["/api/records", ["appointments", "patients"]],
+      ["/api/doctors", ["appointments", "settings"]],
+      ["/api/services", ["appointments", "cash", "settings"]],
+      ["/api/patients", ["patients", "appointments", "lab"]],
+      ["/api/allergies", ["patients"]],
+      ["/api/referrals", ["referrals", "patients"]],
+      // Verifying or amending a result notifies the ordering doctor (B3.9).
+      ["/api/orders", ["lab", "cash", "patients", "notifications"]],
+      ["/api/tests", ["lab", "settings"]],
+      ["/api/qc", ["lab"]],
+      ["/api/devices", ["lab"]],
+      ["/api/device-errors", ["lab"]],
+      ["/api/consumption", ["lab", "inventory"]],
+      ["/api/inventory", ["inventory"]],
+      ["/api/admissions", ["inpatient", "cash", "lab"]],
+      ["/api/beds", ["inpatient"]],
+      ["/api/wards", ["inpatient"]],
+      ["/api/departments", ["inpatient", "settings"]],
+      ["/api/observations", ["inpatient"]],
+      ["/api/procedure-tasks", ["inpatient", "inventory"]],
+      ["/api/inpatient-orders", ["inpatient"]],
+      ["/api/bills", ["cash", "appointments", "lab", "inpatient"]],
+      ["/api/payments", ["cash", "appointments", "lab", "inpatient"]],
+      // A refund request or decision notifies the cashier or the head (B5.5).
+      ["/api/refunds", ["cash", "appointments", "lab", "notifications"]],
+      ["/api/receipts", ["cash"]],
+      ["/api/cash-shifts", ["cash"]],
+      ["/api/expenses", ["cash"]],
+      ["/api/notifications", ["notifications"]],
+      ["/api/icd10", ["settings"]],
+      ["/api/settings", ["settings"]],
+      ["/api/users", ["settings"]],
+      ["/api/roles", ["settings"]],
+      // Telegram: a patient linking their chat changes the patient's card.
+      ["/api/telegram", ["patients"]]
+    ];
+    WRITE_METHODS = /* @__PURE__ */ new Set(["POST", "PUT", "PATCH", "DELETE"]);
+    under = (path3, prefix) => path3 === prefix || path3.startsWith(`${prefix}/`);
+    USER_ACTIVE_HEADER = "x-user-active";
+    IDLE_AFTER_MS = 2 * 6e4;
+  }
+});
+
+// shared/cash-shift.ts
+function cleanDenominations(d) {
+  if (!d) return null;
+  const out = {};
+  for (const value of UZS_DENOMINATIONS) {
+    const n = Math.max(0, Math.trunc(d[String(value)] ?? 0));
+    if (n) out[String(value)] = n;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function shiftEntries(rows) {
+  const byKey = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const key = r.receiptId ?? r.refundId ?? r.id;
+    const seen = byKey.get(key);
+    if (seen) {
+      seen.amount += r.amount;
+      continue;
+    }
+    const kind = r.receiptId ? "receipt" : r.amount < 0 ? "refund" : "payment";
+    byKey.set(key, {
+      key,
+      kind,
+      title: r.receiptId ? `Kvitansiya \u2116${r.receiptNumber ?? "\u2014"}${r.invoiceNumber ? ` \xB7 Hisobvaraq \u2116${r.invoiceNumber}` : ""}` : r.refundId ? `Qaytarish \u2116${r.refundNumber ?? "\u2014"}` : `Buyurtma #${r.orderNumber ?? "\u2014"}`,
+      patientName: r.patientName,
+      patientNumber: r.patientNumber,
+      amount: r.amount,
+      method: r.method,
+      createdAt: r.createdAt,
+      voidedAt: r.voidedAt,
+      voidReason: r.voidReason
+    });
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0);
+}
+function summarizeShift(rows, openingCash) {
+  const byMethod = Object.fromEntries(PAYMENT_METHODS.map((m) => [m, { taken: 0, refunded: 0, net: 0 }]));
+  let payments2 = 0;
+  let refunds2 = 0;
+  let voidedCount = 0;
+  let voidedAmount = 0;
+  for (const e of shiftEntries(rows)) {
+    if (e.voidedAt) {
+      voidedCount++;
+      voidedAmount += e.amount;
+      continue;
+    }
+    const m = byMethod[e.method] ?? byMethod.naqd;
+    if (e.amount >= 0) {
+      m.taken += e.amount;
+      payments2++;
+    } else {
+      m.refunded += -e.amount;
+      refunds2++;
+    }
+    m.net = m.taken - m.refunded;
+  }
+  const taken = PAYMENT_METHODS.reduce((s, m) => s + byMethod[m].taken, 0);
+  const refunded = PAYMENT_METHODS.reduce((s, m) => s + byMethod[m].refunded, 0);
+  return {
+    byMethod,
+    taken,
+    refunded,
+    net: taken - refunded,
+    payments: payments2,
+    refunds: refunds2,
+    voided: { count: voidedCount, amount: voidedAmount },
+    openingCash,
+    expectedCash: openingCash + byMethod.naqd.net
+  };
+}
+function closeProblem(input, expectedCash) {
+  if (!Number.isInteger(input.countedCash) || input.countedCash < 0) return "Kassadagi naqd pulni kiriting";
+  if (!Number.isInteger(input.carriedCash) || input.carriedCash < 0) return "Qoldiriladigan summa manfiy bo'lishi mumkin emas";
+  if (input.carriedCash > input.countedCash) return "Kassada sanalganidan ko'p pul qoldirib bo'lmaydi";
+  if (input.countedCash !== expectedCash && !input.note?.trim()) {
+    return `${COUNT_OUTCOME_LABELS[countOutcome(input.countedCash - expectedCash)]} bor \u2014 sababini yozing`;
+  }
+  return null;
+}
+function shiftHours(openedAt, closedAt, now = /* @__PURE__ */ new Date()) {
+  const end = closedAt ? new Date(closedAt) : now;
+  return Math.max(0, (end.getTime() - new Date(openedAt).getTime()) / 36e5);
+}
+var SHIFT_REQUIRED, SHIFT_ALREADY_OPEN, SHIFT_CLOSED, SHIFT_ALREADY_CLOSED, SHIFT_MOVED, paymentInClosedShift, UZS_DENOMINATIONS, COUNT_OUTCOME_LABELS, countOutcome;
+var init_cash_shift = __esm({
+  "shared/cash-shift.ts"() {
+    "use strict";
+    init_schema();
+    SHIFT_REQUIRED = "Pul bilan ishlash uchun kassa smenasini oching (Kassa \u2192 Smenani ochish)";
+    SHIFT_ALREADY_OPEN = "Sizda ochiq smena bor \u2014 yangisini ochishdan oldin uni yoping";
+    SHIFT_CLOSED = "Smena yopilgan \u2014 to'lovni qabul qilish uchun yangi smena oching";
+    SHIFT_ALREADY_CLOSED = "Bu smena allaqachon yopilgan";
+    SHIFT_MOVED = "Smena davomida yangi to'lov qayd etildi \u2014 hisobot yangilandi, kassani qayta sanang";
+    paymentInClosedShift = (n) => `Bu to'lov yopilgan Smena \u2116${n} hisobotiga kirgan \u2014 uni bekor qilib bo'lmaydi. Xatoni pulni qaytarish orqali tuzating`;
+    UZS_DENOMINATIONS = [2e5, 1e5, 5e4, 2e4, 1e4, 5e3, 2e3, 1e3, 500, 200, 100];
+    COUNT_OUTCOME_LABELS = { match: "Mos", short: "Kamomad", over: "Ortiqcha" };
+    countOutcome = (difference) => difference === 0 ? "match" : difference < 0 ? "short" : "over";
   }
 });
 
@@ -3959,7 +5219,13 @@ var init_patient_links = __esm({
       referrals: { merge: "move", delete: "block", label: "yo'llanmalar" },
       /** B7.1: a same-day pair of bills becomes the target's bill; its receipts follow. */
       invoices: { merge: "combine-same-day", delete: "block", label: "hisobvaraqlar" },
-      invoice_payments: { merge: "move", delete: "block", label: "to'lov kvitansiyalari" }
+      invoice_payments: { merge: "move", delete: "block", label: "to'lov kvitansiyalari" },
+      /** B7.4: re-pointed at the surviving visit of the day, like referrals. */
+      refunds: { merge: "move", delete: "block", label: "to'lov qaytarishlari" },
+      /** B7.2: re-pointed at the surviving visit of the day, like refunds. */
+      bill_discounts: { merge: "move", delete: "block", label: "chegirmalar" },
+      /** B6.2: stays follow the patient; two cards both in hospital are not merged. */
+      admissions: { merge: "move", delete: "block", label: "statsionar yotqizishlari" }
     };
     BLOCKING_TABLES = Object.keys(PATIENT_LINKS).filter(
       (t2) => PATIENT_LINKS[t2].delete === "block"
@@ -3978,7 +5244,7 @@ function orderDeleteProblem(paymentRows, resultLines) {
   return null;
 }
 function ledgerTotal(rows) {
-  return rows.reduce((sum2, p) => p.voidedAt ? sum2 : sum2 + p.amount, 0);
+  return rows.reduce((sum5, p) => p.voidedAt ? sum5 : sum5 + p.amount, 0);
 }
 var PAYMENT_ALREADY_VOIDED, TEST_IN_USE;
 var init_ledger = __esm({
@@ -4063,11 +5329,11 @@ function bookingProblem(opts) {
 function nextQueueNumber(existing) {
   return existing.reduce((max, n) => Math.max(max, n), 0) + 1;
 }
-function checkTransition(from, to, who) {
+function checkTransition(from, to, who2) {
   if (from === to) return { ok: false, status: 400, message: "Qabul allaqachon shu holatda" };
   const actor = TRANSITIONS2[from][to];
   if (!actor) return { ok: false, status: 400, message: TRANSITION_REFUSALS[from] ?? "Bu holatga o'tkazib bo'lmaydi" };
-  const allowed = actor === "desk" ? who.desk : actor === "doctor" ? who.ownDoctor : who.desk || who.ownDoctor;
+  const allowed = actor === "desk" ? who2.desk : actor === "doctor" ? who2.ownDoctor : who2.desk || who2.ownDoctor;
   if (!allowed) {
     return {
       ok: false,
@@ -4158,13 +5424,71 @@ var init_db_pg = __esm({
   }
 });
 
+// shared/refund.ts
+function refundAvailable(lines, open2) {
+  const credit = lines.reduce((s, l) => s + lineCredit(l), 0);
+  const held = open2.filter((r) => isOpenRefund(r.status)).reduce((s, r) => s + r.amount, 0);
+  return Math.max(0, credit - held);
+}
+function allocateRefund(lines, amount) {
+  const out = [];
+  let left = Math.max(0, Math.trunc(amount));
+  const credited = lines.filter((l) => lineCredit(l) > 0).sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0);
+  for (const l of credited) {
+    if (!left) break;
+    const take = Math.min(left, lineCredit(l));
+    out.push({ source: l.source, sourceId: l.sourceId, title: l.title, amount: take });
+    left -= take;
+  }
+  return { lines: out, taken: Math.max(0, Math.trunc(amount)) - left };
+}
+function refundActionProblem(status, action) {
+  return FROM[action].includes(status) ? null : refundNotIn(status, ACTION_WORD[action]);
+}
+var REFUND_STATUSES, REFUND_STATUS_LABELS, OPEN_REFUND_STATUSES, isOpenRefund, REFUND_NOTHING, refundTooMuch, REFUND_SELF_APPROVAL, REFUND_BILL_CHANGED, PAYMENT_IS_REFUND, REFUNDS_BY_REQUEST, refundNotIn, FROM, ACTION_WORD;
+var init_refund = __esm({
+  "shared/refund.ts"() {
+    "use strict";
+    init_invoice();
+    REFUND_STATUSES = ["requested", "approved", "paid", "rejected", "cancelled"];
+    REFUND_STATUS_LABELS = {
+      requested: "Tasdiq kutmoqda",
+      approved: "Tasdiqlangan \u2014 to'lanmagan",
+      paid: "Qaytarildi",
+      rejected: "Rad etilgan",
+      cancelled: "Bekor qilingan"
+    };
+    OPEN_REFUND_STATUSES = ["requested", "approved"];
+    isOpenRefund = (s) => OPEN_REFUND_STATUSES.includes(s);
+    REFUND_NOTHING = "Bu hisobvaraqda qaytariladigan ortiqcha to'lov yo'q \u2014 avval xizmatni bekor qiling yoki narxini o'zgartiring";
+    refundTooMuch = (available) => `Qaytarish mumkin bo'lgan summa: ${String(available).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm (ortiqcha to'lov, ochiq so'rovlarsiz)`;
+    REFUND_SELF_APPROVAL = "O'zingiz so'ragan qaytarishni tasdiqlay olmaysiz \u2014 uni boshqa vakolatli xodim tasdiqlaydi (TZ \xA79.2)";
+    REFUND_BILL_CHANGED = "Hisobvaraq o'zgargan: ortiqcha to'lov endi so'ralgan summadan kam \u2014 qaytarishni bekor qilib, yangisini so'rang";
+    PAYMENT_IS_REFUND = "Bu yozuv qaytarishning bir qismi \u2014 pul bemorga berilgan, uni bekor qilib bo'lmaydi";
+    REFUNDS_BY_REQUEST = `Pulni qaytarish Kassa orqali: hisobvaraq \u2192 "Qaytarish so'rovi", vakolatli xodim tasdiqlaydi (TZ \xA79.2)`;
+    refundNotIn = (status, action) => `Bu qaytarish "${REFUND_STATUS_LABELS[status]}" holatida \u2014 ${action} mumkin emas`;
+    FROM = {
+      approve: ["requested"],
+      reject: ["requested"],
+      pay: ["approved"],
+      cancel: ["requested", "approved"]
+    };
+    ACTION_WORD = { approve: "tasdiqlash", reject: "rad etish", pay: "pulni berish", cancel: "bekor qilish" };
+  }
+});
+
 // server/storage-pg.ts
 var storage_pg_exports = {};
 __export(storage_pg_exports, {
+  BILL_LINES_SQL: () => BILL_LINES_SQL,
   PgStorage: () => PgStorage,
+  STAY_GROSS_SQL: () => STAY_GROSS_SQL,
   appointmentSelect: () => appointmentSelect,
+  bumpTopicsSql: () => bumpTopicsSql,
   isMissingTable: () => isMissingTable,
-  referralSelect: () => referralSelect
+  recordErrorSql: () => recordErrorSql,
+  referralSelect: () => referralSelect,
+  saveRequestStatsSql: () => saveRequestStatsSql
 });
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, notInArray, or, sql as sql2 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -4182,7 +5506,7 @@ async function uniqueAsConflict(run) {
 function isMissingTable(err) {
   return err?.code === "42P01";
 }
-var iso, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, MOVEMENT_BUCKET_SQL, MOVEMENT_VALUE_SQL, mapInventoryItem, mapQcResult, mapEqa, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
+var iso, mapCaseVersion, mapEpicrisis, mapObservation, mapInpatientOrder, mapTask, mapUser, mapTest, mapPatient, mapContact, mapOrder, mapItem, mapSample, strip, SERVER_TZ, LOCAL_TZ, TOP_TESTS_LIMIT, saveRequestStatsSql, bumpTopicsSql, recordErrorSql, STAY_GROSS_SQL, BILL_LINES_SQL, dayExpr, mapIcd, mapPayment, mapRole, mapExpense, MOVEMENT_BUCKET_SQL, MOVEMENT_VALUE_SQL, mapInventoryItem, mapQcResult, mapEqa, mapDevice, mapDeviceError, mapDepartment, doctorSelect, mapService, mapAppointment, appointmentSelect, mapAppointmentRow, issuerUser, targetDoctor, targetUser, cancelUser, referralSelect, mapReferral, LIVE_BOOKING, lockDoctorDay, tableExists, appointmentsTableExists, mapRecord, signer, recordSelect, mapRecordRow, recordConflict, mapDoctor, PgStorage;
 var init_storage_pg = __esm({
   "server/storage-pg.ts"() {
     "use strict";
@@ -4196,8 +5520,18 @@ var init_storage_pg = __esm({
     init_inventory();
     init_consumption();
     init_invoice();
+    init_debt();
+    init_inpatient();
+    init_case_history();
+    init_epicrisis();
+    init_stay_bill();
+    init_realtime();
+    init_invoice();
+    init_procedures();
+    init_discount();
     init_lab_devices();
     init_qc();
+    init_cash_shift();
     init_icd10();
     init_lab_rules();
     init_patient_links();
@@ -4208,7 +5542,30 @@ var init_storage_pg = __esm({
     init_password();
     init_permissions();
     init_storage_types();
+    init_refund();
     iso = (value) => value ? new Date(value).toISOString() : value;
+    mapCaseVersion = (r) => ({ ...r, savedAt: iso(r.savedAt) });
+    mapEpicrisis = (r) => ({ ...r, savedAt: iso(r.savedAt) });
+    mapObservation = (r) => ({
+      ...r,
+      observedAt: iso(r.observedAt),
+      createdAt: iso(r.createdAt),
+      voidedAt: iso(r.voidedAt)
+    });
+    mapInpatientOrder = (r) => ({
+      ...r,
+      kind: r.kind,
+      status: r.status,
+      createdAt: iso(r.createdAt),
+      stoppedAt: iso(r.stoppedAt)
+    });
+    mapTask = (r) => ({
+      ...r,
+      status: r.status,
+      plannedAt: iso(r.plannedAt),
+      doneAt: iso(r.doneAt),
+      revertedAt: iso(r.revertedAt)
+    });
     mapUser = (row) => ({
       ...row,
       createdAt: iso(row.createdAt),
@@ -4258,7 +5615,72 @@ var init_storage_pg = __esm({
       const { password: _password, ...pub } = mapUser(user);
       return pub;
     };
-    dayExpr = sql2`(${orders.createdAt} AT TIME ZONE current_setting('TIMEZONE'))::date`;
+    SERVER_TZ = (() => {
+      const zone2 = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      return /^[A-Za-z0-9_+\-/]+$/.test(zone2) ? zone2 : "UTC";
+    })();
+    LOCAL_TZ = sql2.raw(`'${SERVER_TZ}'`);
+    TOP_TESTS_LIMIT = 100;
+    saveRequestStatsSql = (rows) => sql2`
+      INSERT INTO request_stats (hour, method, route, count, total_ms, max_ms, errors, histogram)
+      SELECT v.hour, v.method, v.route, v.count, v.total_ms, v.max_ms, v.errors, ARRAY(SELECT jsonb_array_elements_text(v.histogram)::int)
+        FROM jsonb_to_recordset(${JSON.stringify(rows.map((r) => ({ hour: r.hour, method: r.method, route: r.route, count: r.count, total_ms: r.totalMs, max_ms: r.maxMs, errors: r.errors, histogram: r.histogram })))}::jsonb)
+             AS v(hour timestamptz, method text, route text, count int, total_ms bigint, max_ms int, errors int, histogram jsonb)
+      ON CONFLICT (hour, method, route) DO UPDATE SET
+        count = request_stats.count + EXCLUDED.count,
+        total_ms = request_stats.total_ms + EXCLUDED.total_ms,
+        max_ms = greatest(request_stats.max_ms, EXCLUDED.max_ms),
+        errors = request_stats.errors + EXCLUDED.errors,
+        histogram = ARRAY(SELECT coalesce(a, 0) + coalesce(b, 0) FROM unnest(request_stats.histogram, EXCLUDED.histogram) AS t(a, b))`;
+    bumpTopicsSql = (topics) => sql2`
+      INSERT INTO change_topics (topic, version, changed_at)
+      SELECT t, 1, now() FROM jsonb_array_elements_text(${JSON.stringify([...new Set(topics)])}::jsonb) AS t
+      ON CONFLICT (topic) DO UPDATE SET version = change_topics.version + 1, changed_at = now()`;
+    recordErrorSql = (e) => sql2`
+        INSERT INTO error_groups (fingerprint, source, location, name, message, stack, count, first_seen, last_seen, last_status, last_role)
+        VALUES (${e.fingerprint}, ${e.source}, ${e.where}, ${e.name}, ${e.message}, ${e.stack}, ${e.count}, ${e.at}, ${e.at}, ${e.status}, ${e.role})
+        ON CONFLICT (fingerprint) DO UPDATE SET
+          count = error_groups.count + EXCLUDED.count,
+          last_seen = greatest(error_groups.last_seen, EXCLUDED.last_seen),
+          last_status = EXCLUDED.last_status,
+          last_role = EXCLUDED.last_role,
+          stack = coalesce(EXCLUDED.stack, error_groups.stack),
+          resolved_at = NULL, resolved_by = NULL, resolved_by_name = NULL`;
+    STAY_GROSS_SQL = sql2`(
+          coalesce((SELECT CASE WHEN sum(x.d) = 0 THEN (array_agg(x.price ORDER BY x.from_at))[1] ELSE sum(x.d * x.price) END
+                      FROM (SELECT greatest(0, (coalesce(ab.to_at, now()) AT TIME ZONE ${LOCAL_TZ})::date - (ab.from_at AT TIME ZONE ${LOCAL_TZ})::date) AS d,
+                                   coalesce(ab.day_price, 0) AS price, ab.from_at
+                              FROM admission_beds ab WHERE ab.admission_id = ad.id) x), 0)
+        + coalesce((SELECT sum(o.unit_price) FROM procedure_tasks t JOIN inpatient_orders o ON o.id = t.order_id
+                     WHERE t.admission_id = ad.id AND t.status = 'done' AND o.unit_price IS NOT NULL), 0))`;
+    BILL_LINES_SQL = sql2`
+        SELECT o.visit_id,
+               CASE WHEN o.status = 'cancelled' THEN 0 ELSE o.total_amount END AS amount,
+               o.paid_amount AS paid,
+               (o.status <> 'cancelled')::int AS live,
+               0 AS appt,
+               0 AS stay
+          FROM orders o
+         WHERE o.visit_id IS NOT NULL
+        UNION ALL
+        SELECT a.visit_id,
+               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price - a.discount ELSE 0 END,
+               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
+               (a.status IN ('arrived', 'in_progress', 'completed'))::int,
+               1,
+               0
+          FROM appointments a
+         WHERE a.visit_id IS NOT NULL
+        UNION ALL
+        SELECT ad.visit_id,
+               CASE WHEN ad.status = 'cancelled' THEN 0 ELSE greatest(0, ${STAY_GROSS_SQL} - ad.discount) END,
+               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.admission_id = ad.id AND p.voided_at IS NULL), 0),
+               (ad.status <> 'cancelled')::int,
+               0,
+               1
+          FROM admissions ad
+         WHERE ad.visit_id IS NOT NULL`;
+    dayExpr = sql2`(${orders.createdAt} AT TIME ZONE ${LOCAL_TZ})::date`;
     mapIcd = (row) => {
       const { updatedBy: _by, ...rest } = row;
       return { ...rest, kind: row.kind, updatedAt: iso(row.updatedAt) };
@@ -4585,6 +6007,10 @@ var init_storage_pg = __esm({
         return row && mapDepartment(row);
       }
       async deleteDepartment(id) {
+        if (await tableExists(db, "wards")) {
+          const [w] = await db.select({ id: wards.id }).from(wards).where(eq(wards.departmentId, id)).limit(1);
+          if (w) throw new StorageConflict(DEPARTMENT_HAS_WARDS);
+        }
         const rows = await db.delete(departments).where(eq(departments.id, id)).returning({ id: departments.id });
         return rows.length > 0;
       }
@@ -5333,13 +6759,13 @@ var init_storage_pg = __esm({
           ) x)` : sql2`(SELECT max(o.created_at) FROM ${orders} o
           WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`;
         const visitCount = withAppointments ? sql2`(SELECT count(DISTINCT k)::int FROM (
-            SELECT coalesce(o.visit_id, ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text) AS k
+            SELECT coalesce(o.visit_id, ((o.created_at AT TIME ZONE ${LOCAL_TZ})::date)::text) AS k
               FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled'
             UNION ALL
             SELECT ap.visit_id FROM appointments ap WHERE ap.patient_id = "patients"."id"
               AND ap.visit_id IS NOT NULL AND ap.status IN ('arrived', 'in_progress', 'completed')
           ) x)` : sql2`(SELECT count(DISTINCT coalesce(o.visit_id,
-            ((o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date)::text))::int
+            ((o.created_at AT TIME ZONE ${LOCAL_TZ})::date)::text))::int
           FROM ${orders} o WHERE o.patient_id = "patients"."id" AND o.status <> 'cancelled')`;
         let q = db.select({ patient: patients, lastVisitAt, visitCount }).from(patients).where(where).orderBy(desc(patients.createdAt), desc(patients.patientNumber)).$dynamic();
         if (query.limit !== void 0) q = q.limit(query.limit);
@@ -5370,7 +6796,7 @@ var init_storage_pg = __esm({
           this.listOrders({ patientId: id }),
           db.select().from(visits).where(eq(visits.patientId, id)),
           // B7.1: the ledger holds lab orders and appointments alike.
-          db.select({ payment: payments }).from(payments).leftJoin(orders, eq(orders.id, payments.orderId)).leftJoin(appointments, eq(appointments.id, payments.appointmentId)).where(or(eq(orders.patientId, id), eq(appointments.patientId, id))),
+          db.select({ payment: payments }).from(payments).leftJoin(orders, eq(orders.id, payments.orderId)).leftJoin(appointments, eq(appointments.id, payments.appointmentId)).leftJoin(admissions, eq(admissions.id, payments.admissionId)).where(or(eq(orders.patientId, id), eq(appointments.patientId, id), eq(admissions.patientId, id))),
           await this.hasAppointmentsTable() ? this.listAppointments({ patientId: id }) : Promise.resolve([])
         ]);
         if (!details) return void 0;
@@ -5485,6 +6911,25 @@ var init_storage_pg = __esm({
           WHERE sv.patient_id = ${sourceId} AND si.visit_id = sv.id`);
             await tx.update(invoices).set({ patientId: targetId }).where(eq(invoices.patientId, sourceId));
             await tx.update(invoicePayments).set({ patientId: targetId }).where(eq(invoicePayments.patientId, sourceId));
+          }
+          if (await tableExists(tx, "admissions")) {
+            const active = await tx.select({ patientId: admissions.patientId }).from(admissions).where(and(inArray(admissions.patientId, [sourceId, targetId]), eq(admissions.status, "active")));
+            if (active.length > 1) throw new StorageConflict("Ikkala kartada ham faol yotqizish bor \u2014 avval bittasini chiqaring yoki bekor qiling");
+            await tx.update(admissions).set({ patientId: targetId }).where(eq(admissions.patientId, sourceId));
+          }
+          if (await tableExists(tx, "bill_discounts")) {
+            await tx.execute(sql2`
+          UPDATE bill_discounts bd SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND bd.visit_id = sv.id`);
+            await tx.update(billDiscounts).set({ patientId: targetId }).where(eq(billDiscounts.patientId, sourceId));
+          }
+          if (await tableExists(tx, "refunds")) {
+            await tx.execute(sql2`
+          UPDATE refunds rf SET visit_id = tv.id
+          FROM ${visits} sv JOIN ${visits} tv ON tv.visit_date = sv.visit_date AND tv.patient_id = ${targetId}
+          WHERE sv.patient_id = ${sourceId} AND rf.visit_id = sv.id`);
+            await tx.update(refunds).set({ patientId: targetId }).where(eq(refunds.patientId, sourceId));
           }
           await tx.execute(sql2`
         DELETE FROM ${visits} sv USING ${visits} tv
@@ -5736,7 +7181,7 @@ var init_storage_pg = __esm({
           counts.all += row.count;
           if (row.status in counts) counts[row.status] = row.count;
         }
-        const sum2 = totalsRow?.sum ?? 0;
+        const sum5 = totalsRow?.sum ?? 0;
         const paid = totalsRow?.paid ?? 0;
         return {
           items: await this.hydrate(rows),
@@ -5744,7 +7189,7 @@ var init_storage_pg = __esm({
           summary: {
             counts,
             results: { waiting: queueRow?.waiting ?? 0, review: queueRow?.review ?? 0, ready: queueRow?.ready ?? 0 },
-            totals: { sum: sum2, paid, debt: Math.max(0, sum2 - paid) },
+            totals: { sum: sum5, paid, debt: Math.max(0, sum5 - paid) },
             groups
           }
         };
@@ -5787,12 +7232,12 @@ var init_storage_pg = __esm({
        * lab referral (createReferrals), so both make exactly the same order.
        */
       async insertOrderTx(tx, input, selected, referralId) {
-        const subtotal = selected.reduce((sum2, t2) => sum2 + t2.price, 0);
+        const subtotal = selected.reduce((sum5, t2) => sum5 + t2.price, 0);
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
         const opening = Math.min(input.paidAmount, total);
         {
-          const [visit] = await tx.insert(visits).values({ patientId: input.patientId, visitDate: todayKey(), createdBy: input.createdBy ?? null }).onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql2`excluded.patient_id` } }).returning({ id: visits.id });
+          const [visit] = input.visitId ? [{ id: input.visitId }] : await tx.insert(visits).values({ patientId: input.patientId, visitDate: todayKey(), createdBy: input.createdBy ?? null }).onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql2`excluded.patient_id` } }).returning({ id: visits.id });
           const [order] = await tx.insert(orders).values({
             patientId: input.patientId,
             visitId: visit.id,
@@ -5803,6 +7248,7 @@ var init_storage_pg = __esm({
             notes: input.notes ?? null,
             referrer: input.referrer ?? null,
             referralId,
+            admissionId: input.admissionId ?? null,
             createdBy: input.createdBy ?? null
           }).returning({ id: orders.id, orderNumber: orders.orderNumber });
           await tx.insert(orderTests).values(
@@ -5828,7 +7274,8 @@ var init_storage_pg = __esm({
               amount: opening,
               method: "naqd",
               createdBy: input.createdBy ?? null,
-              createdByName: staff?.fullName ?? "\u2014"
+              createdByName: staff?.fullName ?? "\u2014",
+              shiftId: await this.lockShift(tx, { id: input.createdBy ?? null, shiftId: input.shiftId })
             });
           }
           return order.id;
@@ -6104,7 +7551,8 @@ var init_storage_pg = __esm({
             method: input.method,
             note: input.note?.trim() || null,
             createdBy: actor.id,
-            createdByName: actor.name
+            createdByName: actor.name,
+            shiftId: await this.lockShift(tx, actor)
           });
           await this.syncPaid(tx, orderId, actor);
         });
@@ -6112,17 +7560,19 @@ var init_storage_pg = __esm({
       }
       async voidPayment(paymentId, reason, actor) {
         const orderId = await db.transaction(async (tx) => {
+          await this.refuseClosedShift(tx, eq(payments.id, paymentId));
           const [row] = await tx.update(payments).set({
             voidedAt: (/* @__PURE__ */ new Date()).toISOString(),
             voidedBy: actor.id,
             voidedByName: actor.name,
             voidReason: reason
-          }).where(and(eq(payments.id, paymentId), isNull(payments.voidedAt))).returning({ orderId: payments.orderId, invoicePaymentId: payments.invoicePaymentId });
+          }).where(and(eq(payments.id, paymentId), isNull(payments.voidedAt))).returning({ orderId: payments.orderId, invoicePaymentId: payments.invoicePaymentId, refundId: payments.refundId });
           if (!row) {
             const [exists] = await tx.select({ id: payments.id }).from(payments).where(eq(payments.id, paymentId)).limit(1);
             if (exists) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
             return void 0;
           }
+          if (row.refundId) throw new StorageConflict(PAYMENT_IS_REFUND);
           if (row.invoicePaymentId || !row.orderId) throw new StorageConflict(PAYMENT_IS_RECEIPT_SHARE);
           await this.syncPaid(tx, row.orderId, actor);
           return row.orderId;
@@ -6324,7 +7774,7 @@ var init_storage_pg = __esm({
         SELECT * FROM ${orders} WHERE status <> 'cancelled'
       ), today AS (
         SELECT * FROM active
-        WHERE (created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${today}::date
+        WHERE (created_at AT TIME ZONE ${LOCAL_TZ})::date = ${today}::date
       )
       SELECT
         (SELECT count(DISTINCT patient_id) FROM today)::int                                   AS today_patients,
@@ -6460,7 +7910,7 @@ var init_storage_pg = __esm({
             runs: sql2`(SELECT count(*)::int FROM qc_results r WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL)`,
             runsToday: sql2`(SELECT count(*)::int FROM qc_results r
                                    WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
-                                     AND (r.measured_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date)`,
+                                     AND (r.measured_at AT TIME ZONE ${LOCAL_TZ})::date = ${day}::date)`,
             openRejections: sql2`(SELECT count(*)::int FROM qc_results r
                                         WHERE r.target_id = "qc_targets"."id" AND r.voided_at IS NULL
                                           AND r.status = 'reject' AND r.reviewed_at IS NULL)`
@@ -6633,7 +8083,7 @@ var init_storage_pg = __esm({
         return rows.map((r) => ({ ...mapEqa(r.e), testName: r.testName ?? "\u2014", deviceName: r.deviceName ?? null }));
       }
       async addEqa(input, actor) {
-        const z2 = roundZ(zScore(input.reportedValue, input.assignedValue, input.sdpa));
+        const z4 = roundZ(zScore(input.reportedValue, input.assignedValue, input.sdpa));
         const [row] = await db.insert(eqaResults).values({
           provider: input.provider,
           cycle: input.cycle,
@@ -6644,8 +8094,8 @@ var init_storage_pg = __esm({
           reportedValue: input.reportedValue,
           assignedValue: input.assignedValue,
           sdpa: input.sdpa,
-          z: z2,
-          evaluation: eqaEvaluation(z2),
+          z: z4,
+          evaluation: eqaEvaluation(z4),
           notes: input.notes ?? null,
           enteredBy: actor.id,
           enteredByName: actor.name
@@ -6936,8 +8386,8 @@ var init_storage_pg = __esm({
       }
       async createCount(input, actor) {
         return db.transaction(async (tx) => {
-          const [open] = await tx.select({ id: stockCounts.id }).from(stockCounts).where(eq(stockCounts.status, "open")).limit(1);
-          if (open) throw new StorageConflict(COUNT_ALREADY_OPEN);
+          const [open2] = await tx.select({ id: stockCounts.id }).from(stockCounts).where(eq(stockCounts.status, "open")).limit(1);
+          if (open2) throw new StorageConflict(COUNT_ALREADY_OPEN);
           const where = [isNull(inventoryBatches.cancelledAt), sql2`${inventoryBatches.remaining} > ${QTY_EPSILON}`];
           if (input.kinds) where.push(inArray(inventoryItems.kind, input.kinds));
           const batches = await tx.select({ id: inventoryBatches.id, itemId: inventoryBatches.itemId, remaining: inventoryBatches.remaining }).from(inventoryBatches).innerJoin(inventoryItems, eq(inventoryItems.id, inventoryBatches.itemId)).where(and(...where));
@@ -7163,6 +8613,7 @@ var init_storage_pg = __esm({
             kind: "consumption",
             quantity: -m.quantity,
             consumptionId: m.consumptionId,
+            note: entries.find((e) => e.id === m.consumptionId)?.note ?? null,
             createdBy: actor.id,
             createdByName: actor.name
           }))
@@ -7265,35 +8716,45 @@ var init_storage_pg = __esm({
           const exec = tx;
           const [c] = await tx.select().from(labConsumptions).where(eq(labConsumptions.id, id)).for("update");
           if (!c) return void 0;
+          if (c.kind === "inpatient") throw new StorageConflict(INPATIENT_CONSUMPTION_FINAL);
           if (c.kind !== "extra") throw new StorageConflict(NORM_CONSUMPTION_FINAL);
-          if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
-          const out = await tx.select().from(stockMovements).where(and(eq(stockMovements.consumptionId, id), eq(stockMovements.kind, "consumption")));
-          if (await this.countedSince(exec, out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
-          if (out.length) {
-            const batches = await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, Array.from(new Set(out.map((m) => m.batchId))))).orderBy(asc(inventoryBatches.id)).for("update");
-            const byId = new Map(batches.map((b) => [b.id, b]));
-            for (const m of out) {
-              const b = byId.get(m.batchId);
-              if (!b) continue;
-              b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
-              await tx.update(inventoryBatches).set({ remaining: b.remaining }).where(eq(inventoryBatches.id, b.id));
-            }
-            await tx.insert(stockMovements).values(
-              out.map((m) => ({
-                itemId: m.itemId,
-                batchId: m.batchId,
-                kind: "consumption_cancel",
-                quantity: -m.quantity,
-                consumptionId: id,
-                note: reason,
-                createdBy: actor.id,
-                createdByName: actor.name
-              }))
-            );
-          }
-          await tx.update(labConsumptions).set({ cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason }).where(eq(labConsumptions.id, id));
+          await this.returnConsumption(exec, c, reason, actor);
           return (await this.consumptionsByIds(exec, [id]))[0];
         });
+      }
+      /**
+       * Puts what a consumption took back on its batches (the caller holds the row
+       * FOR UPDATE) and marks it cancelled. Refused once the batches were counted
+       * since — the count already settled them.
+       */
+      async returnConsumption(tx, c, reason, actor) {
+        if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
+        const id = c.id;
+        const out = await tx.select().from(stockMovements).where(and(eq(stockMovements.consumptionId, id), eq(stockMovements.kind, "consumption")));
+        if (await this.countedSince(tx, out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
+        if (out.length) {
+          const batches = await tx.select().from(inventoryBatches).where(inArray(inventoryBatches.id, Array.from(new Set(out.map((m) => m.batchId))))).orderBy(asc(inventoryBatches.id)).for("update");
+          const byId = new Map(batches.map((b) => [b.id, b]));
+          for (const m of out) {
+            const b = byId.get(m.batchId);
+            if (!b) continue;
+            b.remaining = Math.min(b.quantity, b.remaining - m.quantity);
+            await tx.update(inventoryBatches).set({ remaining: b.remaining }).where(eq(inventoryBatches.id, b.id));
+          }
+          await tx.insert(stockMovements).values(
+            out.map((m) => ({
+              itemId: m.itemId,
+              batchId: m.batchId,
+              kind: "consumption_cancel",
+              quantity: -m.quantity,
+              consumptionId: id,
+              note: reason,
+              createdBy: actor.id,
+              createdByName: actor.name
+            }))
+          );
+        }
+        await tx.update(labConsumptions).set({ cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason }).where(eq(labConsumptions.id, id));
       }
       // ------------------------------------------------------- reports (B5.7)
       // ------------------------------------------------------------ bills (B7.1)
@@ -7305,6 +8766,7 @@ var init_storage_pg = __esm({
           status: orders.status,
           totalAmount: orders.totalAmount,
           paidAmount: orders.paidAmount,
+          discount: orders.discount,
           createdAt: orders.createdAt,
           tests: sql2`(SELECT count(*)::int FROM order_tests ot WHERE ot.order_id = "orders"."id")`
         }).from(orders).where(eq(orders.visitId, visitId)).orderBy(asc(orders.id));
@@ -7313,6 +8775,7 @@ var init_storage_pg = __esm({
           id: appointments.id,
           status: appointments.status,
           price: appointments.price,
+          discount: appointments.discount,
           startTime: appointments.startTime,
           createdAt: appointments.createdAt,
           serviceName: services.name,
@@ -7321,6 +8784,7 @@ var init_storage_pg = __esm({
           paid: sql2`(SELECT coalesce(sum(p.amount), 0)::int FROM payments p
                             WHERE p.appointment_id = "appointments"."id" AND p.voided_at IS NULL)`
         }).from(appointments).leftJoin(services, eq(services.id, appointments.serviceId)).leftJoin(doctors, eq(doctors.id, appointments.doctorId)).leftJoin(users, eq(users.id, doctors.userId)).where(eq(appointments.visitId, visitId));
+        const stayRows = await this.stayBills(exec, eq(admissions.visitId, visitId), lock);
         return buildBillLines(
           orderRows.map((o) => ({ ...o, createdAt: iso(o.createdAt) ?? o.createdAt, tests: Number(o.tests) })),
           apptRows.map((a) => ({
@@ -7329,13 +8793,66 @@ var init_storage_pg = __esm({
             paid: Number(a.paid),
             doctorName: a.doctorName ?? "\u2014",
             specialty: a.specialty ?? "Shifokor"
-          }))
+          })),
+          stayRows
         );
+      }
+      /**
+       * B6.6: stays as bill lines — the admission, its bed periods, the procedures
+       * done, what was paid on it — with the charge worked out by stayCharge.
+       */
+      async stayBills(exec, where, lock = false) {
+        const q = exec.select().from(admissions).where(where);
+        const rows = lock ? await q.for("update") : await q;
+        if (rows.length === 0) return [];
+        const ids = rows.map((r) => r.id);
+        const [periods, orderRows, done, paidRows] = await Promise.all([
+          exec.select({ p: admissionBeds, wardName: wards.name, bedLabel: beds.label, wardPrice: wards.dayPrice }).from(admissionBeds).innerJoin(beds, eq(beds.id, admissionBeds.bedId)).innerJoin(wards, eq(wards.id, admissionBeds.wardId)).where(inArray(admissionBeds.admissionId, ids)),
+          exec.select().from(inpatientOrders).where(inArray(inpatientOrders.admissionId, ids)),
+          exec.select({ orderId: procedureTasks.orderId, n: sql2`count(*)::int` }).from(procedureTasks).where(and(inArray(procedureTasks.admissionId, ids), eq(procedureTasks.status, "done"))).groupBy(procedureTasks.orderId),
+          exec.select({ admissionId: payments.admissionId, paid: sql2`coalesce(sum(${payments.amount}), 0)::int` }).from(payments).where(and(inArray(payments.admissionId, ids), isNull(payments.voidedAt))).groupBy(payments.admissionId)
+        ]);
+        const doneBy = new Map(done.map((d) => [d.orderId, Number(d.n)]));
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        return rows.map((a) => {
+          const charge = stayCharge({
+            status: a.status,
+            periods: periods.filter((x) => x.p.admissionId === a.id).map((x) => ({ fromAt: iso(x.p.fromAt), toAt: iso(x.p.toAt), dayPrice: x.p.dayPrice ?? 0, wardName: x.wardName, bedLabel: x.bedLabel })),
+            orders: orderRows.filter((o) => o.admissionId === a.id).map((o) => ({ id: o.id, name: o.name, unitPrice: o.unitPrice, done: doneBy.get(o.id) ?? 0 })),
+            discount: a.discount,
+            now,
+            dayOf: localDay
+          });
+          return {
+            id: a.id,
+            number: a.number,
+            status: a.status,
+            admittedAt: iso(a.admittedAt),
+            visitId: a.visitId,
+            charge,
+            paid: Number(paidRows.find((x) => x.admissionId === a.id)?.paid ?? 0)
+          };
+        });
+      }
+      async getStayCharge(admissionId) {
+        const [s] = await this.stayBills(db, eq(admissions.id, admissionId));
+        return s && { visitId: s.visitId, charge: s.charge, paid: s.paid };
       }
       async getBill(visitId) {
         const [v] = await db.select({ visit: visits, patientNumber: patients.patientNumber, fullName: patients.fullName, phone: patients.phone }).from(visits).innerJoin(patients, eq(patients.id, visits.patientId)).where(eq(visits.id, visitId)).limit(1);
         if (!v) return void 0;
-        const [lines, [invoice]] = await Promise.all([this.billLines(db, visitId), db.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1)]);
+        const [lines, [invoice], billRefunds, discountRows] = await Promise.all([
+          this.billLines(db, visitId),
+          db.select().from(invoices).where(eq(invoices.visitId, visitId)).limit(1),
+          this.listRefunds({ visitId }).catch((e) => {
+            if (e?.code === "42P01") return [];
+            throw e;
+          }),
+          db.select().from(billDiscounts).where(eq(billDiscounts.visitId, visitId)).orderBy(desc(billDiscounts.createdAt)).catch((e) => {
+            if (e?.code === "42P01") return [];
+            throw e;
+          })
+        ]);
         let receipts = [];
         if (invoice) {
           const recs = await db.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoice.id)).orderBy(desc(invoicePayments.number));
@@ -7346,8 +8863,7 @@ var init_storage_pg = __esm({
             voidedAt: iso(r.voidedAt),
             method: r.method,
             shares: shares.filter((x) => x.p.invoicePaymentId === r.id).map((x) => {
-              const source = x.p.orderId ? "order" : "appointment";
-              const sourceId = x.p.orderId ?? x.p.appointmentId;
+              const { source, sourceId } = paymentSource(x.p);
               return { source, sourceId, title: lines.find((l) => l.source === source && l.sourceId === sourceId)?.title ?? "\u2014", amount: x.p.amount };
             })
           }));
@@ -7359,6 +8875,8 @@ var init_storage_pg = __esm({
           invoice: invoice ? { ...invoice, createdAt: iso(invoice.createdAt) ?? invoice.createdAt } : null,
           lines,
           receipts,
+          refunds: billRefunds,
+          discounts: discountRows.map((d) => ({ ...d, mode: d.mode, createdAt: iso(d.createdAt) ?? d.createdAt })),
           totals: billTotals(lines)
         };
       }
@@ -7378,21 +8896,32 @@ var init_storage_pg = __esm({
           const exec = tx;
           const [v] = await tx.select().from(visits).where(eq(visits.id, visitId)).for("update");
           if (!v) return void 0;
+          const shiftId = await this.lockShift(exec, actor);
           const lines = await this.billLines(exec, visitId, true);
           const { shares, taken } = allocatePayment(lines, input.amount);
           if (taken === 0) throw new StorageConflict(BILL_PAID);
           const invoice = await this.ensureInvoice(exec, visitId, v.patientId, actor);
-          const [receipt] = await tx.insert(invoicePayments).values({ invoiceId: invoice.id, patientId: v.patientId, amount: taken, method: input.method, note: input.note ?? null, createdBy: actor.id, createdByName: actor.name }).returning();
+          const [receipt] = await tx.insert(invoicePayments).values({
+            invoiceId: invoice.id,
+            patientId: v.patientId,
+            amount: taken,
+            method: input.method,
+            note: input.note ?? null,
+            tendered: input.amount,
+            dueAfter: billTotals(lines).due - taken,
+            createdBy: actor.id,
+            createdByName: actor.name
+          }).returning();
           await tx.insert(payments).values(
             shares.map((s) => ({
-              orderId: s.source === "order" ? s.sourceId : null,
-              appointmentId: s.source === "appointment" ? s.sourceId : null,
+              ...paymentTarget(s.source, s.sourceId),
               invoicePaymentId: receipt.id,
               amount: s.amount,
               method: input.method,
               note: `Hisobvaraq \u2116${invoice.number}, kvitansiya \u2116${receipt.number}`,
               createdBy: actor.id,
-              createdByName: actor.name
+              createdByName: actor.name,
+              shiftId
             }))
           );
           for (const s of shares) if (s.source === "order") await this.syncPaid(exec, s.sourceId, actor);
@@ -7403,6 +8932,7 @@ var init_storage_pg = __esm({
       }
       async voidReceipt(receiptId, reason, actor) {
         const visitId = await db.transaction(async (tx) => {
+          await this.refuseClosedShift(tx, eq(payments.invoicePaymentId, receiptId));
           const now = (/* @__PURE__ */ new Date()).toISOString();
           const [rec] = await tx.update(invoicePayments).set({ voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason }).where(and(eq(invoicePayments.id, receiptId), isNull(invoicePayments.voidedAt))).returning({ invoiceId: invoicePayments.invoiceId });
           if (!rec) {
@@ -7424,29 +8954,14 @@ var init_storage_pg = __esm({
         const to = query.to ?? "9999-12-31";
         const patientFilter = query.patientId ? sql2`AND v.patient_id = ${query.patientId}` : sql2``;
         const res = await db.execute(sql2`
-      WITH lines AS (
-        SELECT o.visit_id,
-               CASE WHEN o.status = 'cancelled' THEN 0 ELSE o.total_amount END AS amount,
-               o.paid_amount AS paid,
-               (o.status <> 'cancelled')::int AS live,
-               0 AS appt
-          FROM orders o
-         WHERE o.visit_id IS NOT NULL
-        UNION ALL
-        SELECT a.visit_id,
-               CASE WHEN a.status IN ('arrived', 'in_progress', 'completed') THEN a.price ELSE 0 END,
-               coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0),
-               (a.status IN ('arrived', 'in_progress', 'completed'))::int,
-               1
-          FROM appointments a
-         WHERE a.visit_id IS NOT NULL
-      )
+      WITH lines AS (${BILL_LINES_SQL})
       SELECT v.id AS visit_id, v.visit_date, v.patient_id, pt.patient_number, pt.full_name, i.number AS invoice_number,
              sum(l.amount)::int AS amount, sum(l.paid)::int AS paid,
              sum(greatest(0, l.amount - l.paid))::int AS due, sum(greatest(0, l.paid - l.amount))::int AS credit,
              count(*)::int AS lines,
              sum(CASE WHEN l.appt = 1 THEN l.live ELSE 0 END)::int AS appointments,
-             sum(CASE WHEN l.appt = 0 THEN l.live ELSE 0 END)::int AS orders
+             sum(CASE WHEN l.appt = 0 AND l.stay = 0 THEN l.live ELSE 0 END)::int AS orders,
+             sum(CASE WHEN l.stay = 1 THEN l.live ELSE 0 END)::int AS stays
         FROM visits v
         JOIN patients pt ON pt.id = v.patient_id
         JOIN lines l ON l.visit_id = v.id AND (l.live = 1 OR l.paid <> 0)
@@ -7467,10 +8982,1018 @@ var init_storage_pg = __esm({
             invoiceNumber: r.invoice_number === null ? null : Number(r.invoice_number),
             appointments: Number(r.appointments),
             orders: Number(r.orders),
+            stays: Number(r.stays),
             totals: { ...sums, status: billStatus(sums, Number(r.lines)) }
           };
         });
         return filterBills(rows, query.status);
+      }
+      async discountBill(visitId, input, actor) {
+        const row = await db.transaction(async (tx) => {
+          const exec = tx;
+          const [v] = await tx.select().from(visits).where(eq(visits.id, visitId)).for("update");
+          if (!v) return void 0;
+          const lines = await this.billLines(exec, visitId, true);
+          if (input.target && !lines.some((l) => l.source === input.target.source && l.sourceId === input.target.sourceId && l.amount > l.paid)) {
+            throw new StorageConflict(DISCOUNT_LINE_GONE);
+          }
+          const plan = planDiscount(lines, input.mode, input.value, input.target);
+          if (!plan.total) throw new StorageConflict(DISCOUNT_NOTHING);
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          for (const l of plan.lines) {
+            if (l.source === "order") {
+              await tx.update(orders).set({ discount: sql2`discount + ${l.amount}`, totalAmount: sql2`total_amount - ${l.amount}`, updatedAt: now, updatedBy: actor.id }).where(eq(orders.id, l.sourceId));
+            } else if (l.source === "stay") {
+              await tx.update(admissions).set({ discount: sql2`discount + ${l.amount}`, updatedAt: now, updatedBy: actor.id }).where(eq(admissions.id, l.sourceId));
+            } else {
+              await tx.update(appointments).set({ discount: sql2`discount + ${l.amount}`, updatedAt: now, updatedBy: actor.id }).where(eq(appointments.id, l.sourceId));
+            }
+          }
+          const [d] = await tx.insert(billDiscounts).values({ patientId: v.patientId, visitId, mode: input.mode, value: input.value, total: plan.total, lines: plan.lines, reason: input.reason, createdBy: actor.id, createdByName: actor.name }).returning();
+          return d;
+        });
+        if (!row) return void 0;
+        return { bill: await this.getBill(visitId), discount: { ...row, mode: row.mode, createdAt: iso(row.createdAt) ?? row.createdAt } };
+      }
+      // ------------------------------------------------------------ B6.1 wards and beds
+      /** A bed shows "occupied" while an admission's bed period on it is open (B6.2); otherwise its own state. */
+      bedView(b, occupant = null) {
+        return {
+          ...b,
+          state: b.state,
+          display: occupant ? "occupied" : b.state,
+          occupant,
+          createdAt: iso(b.createdAt) ?? b.createdAt,
+          stateChangedAt: iso(b.stateChangedAt),
+          updatedAt: iso(b.updatedAt)
+        };
+      }
+      /** Who lies where now: the open bed periods, by bed. */
+      async occupants(exec = db) {
+        const rows = await exec.select({ bedId: admissionBeds.bedId, since: admissionBeds.fromAt, admissionId: admissions.id, number: admissions.number, patientId: patients.id, patientName: patients.fullName, patientNumber: patients.patientNumber }).from(admissionBeds).innerJoin(admissions, eq(admissions.id, admissionBeds.admissionId)).innerJoin(patients, eq(patients.id, admissions.patientId)).where(isNull(admissionBeds.toAt)).catch((e) => {
+          if (e?.code === "42P01") return [];
+          throw e;
+        });
+        return new Map(rows.map(({ bedId, since, ...o }) => [bedId, { ...o, since: iso(since) ?? since }]));
+      }
+      async listWards() {
+        const [rows, bedRows, occ] = await Promise.all([
+          db.select({ w: wards, departmentName: departments.name }).from(wards).innerJoin(departments, eq(departments.id, wards.departmentId)),
+          db.select().from(beds),
+          this.occupants()
+        ]);
+        return sortWards(
+          rows.map(({ w, departmentName }) => ({
+            ...w,
+            gender: w.gender,
+            createdAt: iso(w.createdAt) ?? w.createdAt,
+            updatedAt: iso(w.updatedAt),
+            departmentName,
+            beds: sortBeds(bedRows.filter((b) => b.wardId === w.id).map((b) => this.bedView(b, occ.get(b.id) ?? null)))
+          }))
+        );
+      }
+      async getWard(id) {
+        return (await this.listWards()).find((w) => w.id === id);
+      }
+      async wardDepartmentProblem(departmentId) {
+        const [d] = await db.select().from(departments).where(eq(departments.id, departmentId)).limit(1);
+        return d && d.isActive && d.kind === "statsionar" ? null : WARD_DEPARTMENT;
+      }
+      async wardNameTaken(departmentId, name, exceptId) {
+        const rows = await db.select({ id: wards.id, name: wards.name }).from(wards).where(eq(wards.departmentId, departmentId));
+        return rows.some((r) => r.id !== exceptId && labelKey(r.name) === labelKey(name));
+      }
+      async createWard(input, actor) {
+        const problem = await this.wardDepartmentProblem(input.departmentId);
+        if (problem) throw new Error(problem);
+        if (await this.wardNameTaken(input.departmentId, input.name)) throw new StorageConflict(WARD_NAME_TAKEN);
+        try {
+          const [row] = await db.insert(wards).values({ departmentId: input.departmentId, name: input.name.trim(), floor: input.floor ?? null, gender: input.gender, dayPrice: input.dayPrice, note: input.note ?? null, createdBy: actor.id }).returning();
+          return await this.getWard(row.id);
+        } catch (err) {
+          if (err?.code === "23505") throw new StorageConflict(WARD_NAME_TAKEN);
+          throw err;
+        }
+      }
+      async updateWard(id, patch, actor) {
+        const [cur] = await db.select().from(wards).where(eq(wards.id, id)).limit(1);
+        if (!cur) return void 0;
+        const departmentId = patch.departmentId ?? cur.departmentId;
+        if (patch.departmentId && patch.departmentId !== cur.departmentId) {
+          const problem = await this.wardDepartmentProblem(patch.departmentId);
+          if (problem) throw new Error(problem);
+        }
+        if ((patch.name !== void 0 || patch.departmentId) && await this.wardNameTaken(departmentId, patch.name ?? cur.name, id)) throw new StorageConflict(WARD_NAME_TAKEN);
+        if (patch.isActive === false || patch.departmentId && patch.departmentId !== cur.departmentId) {
+          const occ = await this.occupants();
+          const wardBeds = await db.select({ id: beds.id }).from(beds).where(eq(beds.wardId, id));
+          if (wardBeds.some((b) => occ.has(b.id))) throw new StorageConflict(WARD_OCCUPIED);
+        }
+        try {
+          await db.update(wards).set({
+            ...patch.departmentId !== void 0 && { departmentId: patch.departmentId },
+            ...patch.name !== void 0 && { name: patch.name.trim() },
+            ...patch.floor !== void 0 && { floor: patch.floor },
+            ...patch.gender !== void 0 && { gender: patch.gender },
+            ...patch.dayPrice !== void 0 && { dayPrice: patch.dayPrice },
+            ...patch.note !== void 0 && { note: patch.note },
+            ...patch.isActive !== void 0 && { isActive: patch.isActive },
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            updatedBy: actor.id
+          }).where(eq(wards.id, id));
+        } catch (err) {
+          if (err?.code === "23505") throw new StorageConflict(WARD_NAME_TAKEN);
+          throw err;
+        }
+        return this.getWard(id);
+      }
+      async deleteWard(id) {
+        return db.transaction(async (tx) => {
+          const [w] = await tx.select({ id: wards.id }).from(wards).where(eq(wards.id, id)).for("update");
+          if (!w) return false;
+          const [b] = await tx.select({ id: beds.id }).from(beds).where(eq(beds.wardId, id)).limit(1);
+          if (b) throw new StorageConflict(WARD_HAS_BEDS);
+          await tx.delete(wards).where(eq(wards.id, id));
+          return true;
+        });
+      }
+      async addBeds(wardId, count, actor) {
+        const ok = await db.transaction(async (tx) => {
+          const [w] = await tx.select({ id: wards.id }).from(wards).where(eq(wards.id, wardId)).for("update");
+          if (!w) return false;
+          const existing = await tx.select({ label: beds.label }).from(beds).where(eq(beds.wardId, wardId));
+          if (existing.length + count > MAX_BEDS_PER_WARD) throw new Error(`Palatada ko'pi bilan ${MAX_BEDS_PER_WARD} ta yotoq bo'ladi`);
+          const labels = nextBedLabels(existing.map((e) => e.label), count);
+          await tx.insert(beds).values(labels.map((label) => ({ wardId, label, createdBy: actor.id })));
+          return true;
+        });
+        return ok ? this.getWard(wardId) : void 0;
+      }
+      async updateBed(id, patch, actor) {
+        const [cur] = await db.select().from(beds).where(eq(beds.id, id)).limit(1);
+        if (!cur) return void 0;
+        if (patch.isActive === false && (await this.occupants()).has(id)) throw new StorageConflict(BED_OCCUPIED);
+        if (patch.label !== void 0) {
+          const siblings = await db.select({ id: beds.id, label: beds.label }).from(beds).where(eq(beds.wardId, cur.wardId));
+          if (siblings.some((s) => s.id !== id && labelKey(s.label) === labelKey(patch.label))) throw new StorageConflict(BED_LABEL_TAKEN);
+        }
+        try {
+          const [row] = await db.update(beds).set({
+            ...patch.label !== void 0 && { label: patch.label.trim() },
+            ...patch.note !== void 0 && { note: patch.note },
+            ...patch.isActive !== void 0 && { isActive: patch.isActive },
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            updatedBy: actor.id
+          }).where(eq(beds.id, id)).returning();
+          return this.bedView(row, (await this.occupants()).get(id) ?? null);
+        } catch (err) {
+          if (err?.code === "23505") throw new StorageConflict(BED_LABEL_TAKEN);
+          throw err;
+        }
+      }
+      async setBedState(id, state, note, actor) {
+        if (state === "maintenance" && !note) throw new Error(BED_MAINTENANCE_NOTE);
+        if ((await this.occupants()).has(id)) throw new StorageConflict(BED_OCCUPIED);
+        const [row] = await db.update(beds).set({ state, stateNote: note, stateChangedAt: (/* @__PURE__ */ new Date()).toISOString(), stateChangedBy: actor.id, stateChangedByName: actor.name }).where(eq(beds.id, id)).returning();
+        return row ? this.bedView(row) : void 0;
+      }
+      async deleteBed(id) {
+        if (await tableExists(db, "admission_beds")) {
+          const [used] = await db.select({ id: admissionBeds.id }).from(admissionBeds).where(eq(admissionBeds.bedId, id)).limit(1);
+          if (used) throw new StorageConflict(BED_HAS_HISTORY);
+        }
+        const rows = await db.delete(beds).where(eq(beds.id, id)).returning({ id: beds.id });
+        return rows.length > 0;
+      }
+      // ------------------------------------------------------------ B6.2 admissions
+      async listAdmissions(query = {}) {
+        const span = query.inHospitalBetween;
+        const where = and(
+          query.status ? eq(admissions.status, query.status) : void 0,
+          query.patientId ? eq(admissions.patientId, query.patientId) : void 0,
+          query.id ? eq(admissions.id, query.id) : void 0,
+          span ? and(lte(admissions.admittedAt, span.to), ne(admissions.status, "cancelled"), or(isNull(admissions.dischargedAt), gte(admissions.dischargedAt, span.from))) : void 0
+        );
+        const [rows, periods] = await Promise.all([
+          db.select({ a: admissions, patientName: patients.fullName, patientNumber: patients.patientNumber, patientGender: patients.gender, doctorName: users.fullName, doctorSpecialty: doctors.specialty, departmentName: departments.name }).from(admissions).innerJoin(patients, eq(patients.id, admissions.patientId)).leftJoin(doctors, eq(doctors.id, admissions.doctorId)).leftJoin(users, eq(users.id, doctors.userId)).leftJoin(departments, eq(departments.id, admissions.departmentId)).where(where).orderBy(desc(admissions.admittedAt)).limit(query.limit ?? 500),
+          db.select({ p: admissionBeds, wardName: wards.name, bedLabel: beds.label, dayPrice: sql2`coalesce(${admissionBeds.dayPrice}, ${wards.dayPrice})::int` }).from(admissionBeds).innerJoin(admissions, eq(admissions.id, admissionBeds.admissionId)).innerJoin(beds, eq(beds.id, admissionBeds.bedId)).innerJoin(wards, eq(wards.id, admissionBeds.wardId)).where(where).orderBy(asc(admissionBeds.fromAt))
+        ]);
+        return rows.map(({ a, ...x }) => {
+          const stays = periods.filter((p) => p.p.admissionId === a.id).map(({ p, ...y }) => ({ ...p, fromAt: iso(p.fromAt) ?? p.fromAt, toAt: iso(p.toAt), ...y }));
+          const open2 = stays.find((s) => !s.toAt);
+          return {
+            ...a,
+            status: a.status,
+            admittedAt: iso(a.admittedAt) ?? a.admittedAt,
+            cancelledAt: iso(a.cancelledAt),
+            dischargedAt: iso(a.dischargedAt),
+            createdAt: iso(a.createdAt) ?? a.createdAt,
+            updatedAt: iso(a.updatedAt),
+            patientName: x.patientName,
+            patientNumber: x.patientNumber,
+            patientGender: x.patientGender ?? null,
+            doctorName: x.doctorName ?? "\u2014",
+            doctorSpecialty: x.doctorSpecialty ?? null,
+            departmentName: x.departmentName ?? "\u2014",
+            stays,
+            current: open2 ? { bedId: open2.bedId, bedLabel: open2.bedLabel, wardId: open2.wardId, wardName: open2.wardName, since: open2.fromAt } : null
+          };
+        });
+      }
+      async getAdmission(id) {
+        return (await this.listAdmissions({ id }))[0];
+      }
+      /** Locks a bed and says whether it can take a patient (FOR UPDATE; the open-period index is the last guard). */
+      async lockFreeBed(tx, bedId) {
+        const [row] = await tx.select({ bed: beds, wardActive: wards.isActive, departmentId: wards.departmentId, dayPrice: wards.dayPrice }).from(beds).innerJoin(wards, eq(wards.id, beds.wardId)).where(eq(beds.id, bedId)).for("update", { of: beds });
+        const [taken] = row ? await tx.select({ id: admissionBeds.id }).from(admissionBeds).where(and(eq(admissionBeds.bedId, bedId), isNull(admissionBeds.toAt))).limit(1) : [];
+        const problem = bedFreeProblem(row && { isActive: row.bed.isActive, state: row.bed.state }, row?.wardActive ?? false, Boolean(taken));
+        if (problem) throw new StorageConflict(problem);
+        return { wardId: row.bed.wardId, departmentId: row.departmentId, dayPrice: row.dayPrice };
+      }
+      openPeriodConflict(err) {
+        const e = err;
+        if (e?.code === "23505" && e.constraint === "UQ_admissions_active_patient") throw new StorageConflict(PATIENT_ALREADY_ADMITTED);
+        if (e?.code === "23505" && e.constraint === "UQ_admission_beds_open_bed") throw new StorageConflict(BED_OCCUPIED);
+        throw err;
+      }
+      async admitPatient(input, actor) {
+        const now = /* @__PURE__ */ new Date();
+        const admittedAt = input.admittedAt ? new Date(input.admittedAt) : now;
+        if (admittedAt.getTime() > now.getTime() + 6e4) throw new Error(ADMISSION_IN_FUTURE);
+        const [doc] = await db.select({ id: doctors.id }).from(doctors).where(and(eq(doctors.id, input.doctorId), eq(doctors.isActive, true))).limit(1);
+        if (!doc) throw new Error(ADMISSION_DOCTOR);
+        const id = await db.transaction(async (tx) => {
+          const exec = tx;
+          const [p] = await tx.select({ id: patients.id }).from(patients).where(eq(patients.id, input.patientId)).for("update");
+          if (!p) throw new Error("Bemor topilmadi");
+          const [already] = await tx.select({ id: admissions.id }).from(admissions).where(and(eq(admissions.patientId, input.patientId), eq(admissions.status, "active"))).limit(1);
+          if (already) throw new StorageConflict(PATIENT_ALREADY_ADMITTED);
+          const place = await this.lockFreeBed(exec, input.bedId);
+          const [visit] = await tx.insert(visits).values({ patientId: input.patientId, visitDate: localDay(admittedAt.toISOString()), createdBy: actor.id }).onConflictDoUpdate({ target: [visits.patientId, visits.visitDate], set: { patientId: sql2`excluded.patient_id` } }).returning({ id: visits.id });
+          const [a] = await tx.insert(admissions).values({
+            patientId: input.patientId,
+            departmentId: place.departmentId,
+            doctorId: input.doctorId,
+            admittedAt: admittedAt.toISOString(),
+            reason: input.reason,
+            visitId: visit.id,
+            createdBy: actor.id,
+            createdByName: actor.name
+          }).returning({ id: admissions.id });
+          await tx.insert(admissionBeds).values({ admissionId: a.id, bedId: input.bedId, wardId: place.wardId, fromAt: admittedAt.toISOString(), dayPrice: place.dayPrice, movedBy: actor.id, movedByName: actor.name });
+          return a.id;
+        }).catch((e) => this.openPeriodConflict(e));
+        return await this.getAdmission(id);
+      }
+      async transferAdmission(id, input, actor) {
+        const found = await db.transaction(async (tx) => {
+          const exec = tx;
+          const [a] = await tx.select().from(admissions).where(eq(admissions.id, id)).for("update");
+          if (!a) return false;
+          if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+          const [open2] = await tx.select().from(admissionBeds).where(and(eq(admissionBeds.admissionId, id), isNull(admissionBeds.toAt))).for("update");
+          if (open2?.bedId === input.bedId) throw new StorageConflict(ADMISSION_SAME_BED);
+          const place = await this.lockFreeBed(exec, input.bedId);
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          if (open2) {
+            await tx.update(admissionBeds).set({ toAt: now }).where(eq(admissionBeds.id, open2.id));
+            await tx.update(beds).set({ state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name }).where(eq(beds.id, open2.bedId));
+          }
+          await tx.insert(admissionBeds).values({ admissionId: id, bedId: input.bedId, wardId: place.wardId, fromAt: now, dayPrice: place.dayPrice, note: input.note, movedBy: actor.id, movedByName: actor.name });
+          await tx.update(admissions).set({ departmentId: place.departmentId, updatedAt: now, updatedBy: actor.id }).where(eq(admissions.id, id));
+          return true;
+        }).catch((e) => this.openPeriodConflict(e));
+        return found ? this.getAdmission(id) : void 0;
+      }
+      async planDischarge(id, date, actor) {
+        const [a] = await db.select().from(admissions).where(eq(admissions.id, id)).limit(1);
+        if (!a) return void 0;
+        if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+        if (date && date < localDay(iso(a.admittedAt) ?? a.admittedAt)) throw new Error(DISCHARGE_PLAN_BEFORE_ADMISSION);
+        await db.update(admissions).set({ plannedDischargeOn: date, updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id }).where(and(eq(admissions.id, id), eq(admissions.status, "active")));
+        return this.getAdmission(id);
+      }
+      async cancelAdmission(id, reason, actor) {
+        const found = await db.transaction(async (tx) => {
+          const [a] = await tx.select().from(admissions).where(eq(admissions.id, id)).for("update");
+          if (!a) return false;
+          if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          await tx.update(admissionBeds).set({ toAt: now }).where(and(eq(admissionBeds.admissionId, id), isNull(admissionBeds.toAt)));
+          if (await tableExists(tx, "inpatient_orders")) {
+            await tx.update(inpatientOrders).set({ status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: `Yotqizish bekor qilindi: ${reason}` }).where(and(eq(inpatientOrders.admissionId, id), eq(inpatientOrders.status, "active")));
+            await tx.update(procedureTasks).set({ status: "cancelled" }).where(and(eq(procedureTasks.admissionId, id), eq(procedureTasks.status, "planned")));
+          }
+          await tx.update(admissions).set({ status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id }).where(eq(admissions.id, id));
+          return true;
+        });
+        return found ? this.getAdmission(id) : void 0;
+      }
+      // ------------------------------------------------------------ B6.4 case history
+      async listCaseHistory(admissionId) {
+        const rows = await db.select().from(caseHistoryVersions).where(eq(caseHistoryVersions.admissionId, admissionId)).orderBy(desc(caseHistoryVersions.version));
+        return rows.map(mapCaseVersion);
+      }
+      /** The stay, held FOR SHARE so it cannot be closed while it is written to. */
+      async openStay(tx, admissionId) {
+        const [a] = await tx.select({ status: admissions.status, admittedAt: admissions.admittedAt }).from(admissions).where(eq(admissions.id, admissionId)).for("share");
+        if (a && a.status !== "active") throw new StorageConflict(CASE_CLOSED);
+        return a;
+      }
+      async saveCaseHistory(admissionId, baseVersion, text2, actor) {
+        try {
+          return await db.transaction(async (tx) => {
+            if (!await this.openStay(tx, admissionId)) return void 0;
+            const [latest] = await tx.select().from(caseHistoryVersions).where(eq(caseHistoryVersions.admissionId, admissionId)).orderBy(desc(caseHistoryVersions.version)).limit(1);
+            if ((latest?.version ?? 0) !== baseVersion) throw new StorageConflict(CASE_HISTORY_STALE);
+            const problem = caseSaveProblem(latest ? caseTextOf(latest) : null, text2);
+            if (problem) throw new Error(problem);
+            const [row] = await tx.insert(caseHistoryVersions).values({ admissionId, version: baseVersion + 1, ...text2, savedAt: (/* @__PURE__ */ new Date()).toISOString(), savedBy: actor.id, savedByName: actor.name }).returning();
+            return mapCaseVersion(row);
+          });
+        } catch (err) {
+          const e = err;
+          if (e?.code === "23505" && e.constraint === "UQ_case_history_versions") throw new StorageConflict(CASE_HISTORY_STALE);
+          throw err;
+        }
+      }
+      async listObservations(admissionId) {
+        const rows = await db.select().from(admissionObservations).where(eq(admissionObservations.admissionId, admissionId)).orderBy(desc(admissionObservations.observedAt), desc(admissionObservations.createdAt));
+        return rows.map(mapObservation);
+      }
+      async getObservation(id) {
+        const [o] = await db.select().from(admissionObservations).where(eq(admissionObservations.id, id)).limit(1);
+        return o && mapObservation(o);
+      }
+      async addObservation(admissionId, input, actor) {
+        const problem = observationProblem(input.vitals, input.note);
+        if (problem) throw new Error(problem);
+        return db.transaction(async (tx) => {
+          const a = await this.openStay(tx, admissionId);
+          if (!a) return void 0;
+          const late = observationTimeProblem(input.observedAt, iso(a.admittedAt) ?? a.admittedAt);
+          if (late) throw new Error(late);
+          const [row] = await tx.insert(admissionObservations).values({
+            admissionId,
+            observedAt: new Date(input.observedAt).toISOString(),
+            ...input.vitals,
+            note: input.note,
+            authorId: actor.id,
+            authorName: actor.name,
+            authorRole: input.authorRole,
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).returning();
+          return mapObservation(row);
+        });
+      }
+      async voidObservation(id, reason, any, actor) {
+        return db.transaction(async (tx) => {
+          const [o] = await tx.select().from(admissionObservations).where(eq(admissionObservations.id, id)).for("update");
+          if (!o) return void 0;
+          if (o.voidedAt) throw new StorageConflict(OBSERVATION_VOIDED);
+          if (!any && o.authorId !== actor.id) throw new StorageConflict(OBSERVATION_NOT_YOURS);
+          await this.openStay(tx, o.admissionId);
+          const [row] = await tx.update(admissionObservations).set({ voidedAt: (/* @__PURE__ */ new Date()).toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason }).where(eq(admissionObservations.id, id)).returning();
+          return mapObservation(row);
+        });
+      }
+      // ------------------------------------------------------------ B8.4 monitoring
+      async saveRequestStats(rows) {
+        if (rows.length === 0) return;
+        await db.execute(saveRequestStatsSql(rows));
+      }
+      async listRequestStats(sinceHour) {
+        const res = await db.execute(sql2`SELECT hour, method, route, count, total_ms, max_ms, errors, histogram FROM request_stats WHERE hour >= ${sinceHour}`);
+        return res.rows.map((r) => ({
+          hour: iso(String(r.hour)),
+          method: String(r.method),
+          route: String(r.route),
+          count: Number(r.count),
+          totalMs: Number(r.total_ms),
+          maxMs: Number(r.max_ms),
+          errors: Number(r.errors),
+          histogram: r.histogram.map(Number)
+        }));
+      }
+      async recordErrors(events) {
+        for (const e of events) await db.execute(recordErrorSql(e));
+      }
+      mapErrorGroup(r) {
+        return {
+          id: String(r.id),
+          source: r.source,
+          where: String(r.location),
+          name: String(r.name),
+          message: String(r.message),
+          stack: r.stack === null ? null : String(r.stack),
+          count: Number(r.count),
+          firstSeen: iso(String(r.first_seen)),
+          lastSeen: iso(String(r.last_seen)),
+          lastStatus: r.last_status === null ? null : Number(r.last_status),
+          lastRole: r.last_role === null ? null : String(r.last_role),
+          resolvedAt: r.resolved_at ? iso(String(r.resolved_at)) : null,
+          resolvedByName: r.resolved_by_name === null ? null : String(r.resolved_by_name)
+        };
+      }
+      async listErrorGroups(query) {
+        const res = await db.execute(sql2`
+      SELECT * FROM error_groups
+       WHERE (${query.since ?? null}::timestamptz IS NULL OR last_seen >= ${query.since ?? null}::timestamptz)
+         AND (${query.includeResolved ?? false} OR resolved_at IS NULL)
+       ORDER BY last_seen DESC LIMIT ${query.limit}`);
+        return res.rows.map((r) => this.mapErrorGroup(r));
+      }
+      async resolveErrorGroup(id, actor) {
+        const res = await db.execute(sql2`
+      UPDATE error_groups SET resolved_at = now(), resolved_by = ${actor.id}, resolved_by_name = ${actor.name}
+       WHERE id = ${id} RETURNING *`);
+        const r = res.rows[0];
+        return r && this.mapErrorGroup(r);
+      }
+      async pruneMonitoring(before) {
+        await db.execute(sql2`DELETE FROM request_stats WHERE hour < ${before}`);
+        await db.execute(sql2`DELETE FROM error_groups WHERE last_seen < ${before}`);
+      }
+      async ping() {
+        await db.execute(sql2`SELECT 1`);
+      }
+      // ------------------------------------------------------------ B8.1 change feed
+      async bumpTopics(topics) {
+        if (topics.length === 0) return;
+        await db.execute(bumpTopicsSql(topics));
+      }
+      async getTopicVersions() {
+        const res = await db.execute(sql2`SELECT topic, version FROM change_topics`);
+        const out = {};
+        for (const r of res.rows) {
+          if (CHANGE_TOPICS.includes(r.topic)) out[r.topic] = Number(r.version);
+        }
+        return out;
+      }
+      // ------------------------------------------------------------ B8.3 backups
+      async listBackupRuns(limit) {
+        const res = await db.execute(sql2`
+      SELECT id, started_at, finished_at, status, location, file_name, size_bytes, tables, rows, restore_checked, restore_ok, error
+        FROM backup_runs ORDER BY started_at DESC LIMIT ${limit}`);
+        return res.rows.map((r) => ({
+          id: String(r.id),
+          startedAt: iso(String(r.started_at)),
+          finishedAt: r.finished_at ? iso(String(r.finished_at)) : null,
+          status: r.status,
+          location: r.location === null ? null : String(r.location),
+          fileName: r.file_name === null ? null : String(r.file_name),
+          sizeBytes: r.size_bytes === null ? null : Number(r.size_bytes),
+          tables: r.tables === null ? null : Number(r.tables),
+          rows: r.rows === null ? null : Number(r.rows),
+          restoreChecked: Boolean(r.restore_checked),
+          restoreOk: r.restore_ok === null ? null : Boolean(r.restore_ok),
+          error: r.error === null ? null : String(r.error)
+        }));
+      }
+      // ------------------------------------------------------------ R.2 patient flow
+      async listActivity(from, to) {
+        const localDate = (col) => sql2`(${col} AT TIME ZONE ${LOCAL_TZ})::date`;
+        const [events, fresh, ordered, verified] = await Promise.all([
+          db.execute(sql2`
+        SELECT DISTINCT to_char(${localDate(sql2`o.created_at`)}, 'YYYY-MM-DD') AS day, o.patient_id, 'lab' AS kind
+          FROM orders o
+         WHERE o.status <> 'cancelled' AND ${localDate(sql2`o.created_at`)} BETWEEN ${from}::date AND ${to}::date
+        UNION
+        SELECT DISTINCT a.date, a.patient_id, 'visit'
+          FROM appointments a
+         WHERE a.status IN ('arrived', 'in_progress', 'completed') AND a.date >= ${from} AND a.date <= ${to}`),
+          db.execute(sql2`
+        SELECT to_char(${localDate(sql2`p.created_at`)}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+          FROM patients p
+         WHERE ${localDate(sql2`p.created_at`)} BETWEEN ${from}::date AND ${to}::date
+         GROUP BY 1`),
+          db.execute(sql2`
+        SELECT to_char(${localDate(sql2`o.created_at`)}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+          FROM order_tests ot JOIN orders o ON o.id = ot.order_id
+         WHERE o.status <> 'cancelled' AND ${localDate(sql2`o.created_at`)} BETWEEN ${from}::date AND ${to}::date
+         GROUP BY 1`),
+          db.execute(sql2`
+        SELECT to_char(${localDate(sql2`ot.verified_at`)}, 'YYYY-MM-DD') AS day, count(*)::int AS n
+          FROM order_tests ot JOIN orders o ON o.id = ot.order_id
+         WHERE o.status <> 'cancelled' AND ot.verified_at IS NOT NULL AND ${localDate(sql2`ot.verified_at`)} BETWEEN ${from}::date AND ${to}::date
+         GROUP BY 1`)
+        ]);
+        const tests2 = /* @__PURE__ */ new Map();
+        const put = (rows, key) => {
+          for (const r of rows) {
+            const day = String(r.day);
+            const t2 = tests2.get(day) ?? { day, ordered: 0, verified: 0 };
+            t2[key] = Number(r.n);
+            tests2.set(day, t2);
+          }
+        };
+        put(ordered.rows, "ordered");
+        put(verified.rows, "verified");
+        return {
+          events: events.rows.map((r) => ({ day: String(r.day), patientId: String(r.patient_id), kind: r.kind })),
+          newPatients: fresh.rows.map((r) => ({ day: String(r.day), count: Number(r.n) })),
+          tests: [...tests2.values()]
+        };
+      }
+      // ------------------------------------------------------------ B6.7 discharge and epicrisis
+      async listEpicrisis(admissionId) {
+        const rows = await db.select().from(epicrisisVersions).where(eq(epicrisisVersions.admissionId, admissionId)).orderBy(desc(epicrisisVersions.version));
+        return rows.map(mapEpicrisis);
+      }
+      async saveEpicrisis(admissionId, baseVersion, text2, reason, actor) {
+        try {
+          return await db.transaction(async (tx) => {
+            const [a] = await tx.select({ status: admissions.status }).from(admissions).where(eq(admissions.id, admissionId)).for("share");
+            if (!a) return void 0;
+            if (a.status === "cancelled") throw new StorageConflict(EPICRISIS_CANCELLED);
+            if (a.status === "discharged" && !reason) throw new Error(EPICRISIS_REASON);
+            const [latest] = await tx.select().from(epicrisisVersions).where(eq(epicrisisVersions.admissionId, admissionId)).orderBy(desc(epicrisisVersions.version)).limit(1);
+            if ((latest?.version ?? 0) !== baseVersion) throw new StorageConflict(EPICRISIS_STALE);
+            const problem = epicrisisSaveProblem(latest ? epicrisisTextOf(latest) : null, text2);
+            if (problem) throw new Error(problem);
+            const [row] = await tx.insert(epicrisisVersions).values({ admissionId, version: baseVersion + 1, ...text2, reason: a.status === "discharged" ? reason : null, savedAt: (/* @__PURE__ */ new Date()).toISOString(), savedBy: actor.id, savedByName: actor.name }).returning();
+            return mapEpicrisis(row);
+          });
+        } catch (err) {
+          const e = err;
+          if (e?.code === "23505" && e.constraint === "UQ_epicrisis_versions") throw new StorageConflict(EPICRISIS_STALE);
+          throw err;
+        }
+      }
+      async dischargeAdmission(id, at, actor) {
+        const found = await db.transaction(async (tx) => {
+          const [a] = await tx.select().from(admissions).where(eq(admissions.id, id)).for("update");
+          if (!a) return false;
+          if (a.status !== "active") throw new StorageConflict(DISCHARGE_NOT_ACTIVE);
+          const late = dischargeTimeProblem(at, iso(a.admittedAt) ?? a.admittedAt);
+          if (late) throw new Error(late);
+          const [latest] = await tx.select().from(epicrisisVersions).where(eq(epicrisisVersions.admissionId, id)).orderBy(desc(epicrisisVersions.version)).limit(1);
+          const missing = dischargeProblem(latest ? epicrisisTextOf(latest) : null);
+          if (missing) throw new Error(missing);
+          const when2 = new Date(at).toISOString();
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          const [open2] = await tx.select().from(admissionBeds).where(and(eq(admissionBeds.admissionId, id), isNull(admissionBeds.toAt))).for("update");
+          if (open2) {
+            await tx.update(admissionBeds).set({ toAt: when2 < (iso(open2.fromAt) ?? open2.fromAt) ? iso(open2.fromAt) ?? open2.fromAt : when2 }).where(eq(admissionBeds.id, open2.id));
+            await tx.update(beds).set({ state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name }).where(eq(beds.id, open2.bedId));
+          }
+          await tx.update(inpatientOrders).set({ status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: "Bemor chiqarildi" }).where(and(eq(inpatientOrders.admissionId, id), eq(inpatientOrders.status, "active")));
+          await tx.update(procedureTasks).set({ status: "cancelled" }).where(and(eq(procedureTasks.admissionId, id), eq(procedureTasks.status, "planned")));
+          await tx.update(admissions).set({ status: "discharged", dischargedAt: when2, dischargedBy: actor.id, dischargedByName: actor.name, updatedAt: now, updatedBy: actor.id }).where(eq(admissions.id, id));
+          return true;
+        });
+        return found ? this.getAdmission(id) : void 0;
+      }
+      // ------------------------------------------------------------ B6.5 orders and procedures
+      async listInpatientOrders(admissionId) {
+        const [orders2, tasks] = await Promise.all([
+          db.select().from(inpatientOrders).where(eq(inpatientOrders.admissionId, admissionId)).orderBy(desc(inpatientOrders.createdAt)),
+          db.select().from(procedureTasks).where(eq(procedureTasks.admissionId, admissionId)).orderBy(asc(procedureTasks.plannedAt))
+        ]);
+        const mapped = tasks.map(mapTask);
+        return orders2.map((o) => ({ ...mapInpatientOrder(o), tasks: mapped.filter((t2) => t2.orderId === o.id) }));
+      }
+      async getInpatientOrder(id) {
+        const [o] = await db.select().from(inpatientOrders).where(eq(inpatientOrders.id, id)).limit(1);
+        if (!o) return void 0;
+        const tasks = await db.select().from(procedureTasks).where(eq(procedureTasks.orderId, id)).orderBy(asc(procedureTasks.plannedAt));
+        return { ...mapInpatientOrder(o), tasks: tasks.map(mapTask) };
+      }
+      async createInpatientOrder(admissionId, order, slots, actor) {
+        const id = await db.transaction(async (tx) => {
+          const [a] = await tx.select({ status: admissions.status }).from(admissions).where(eq(admissions.id, admissionId)).for("share");
+          if (!a) return void 0;
+          if (a.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+          const [row] = await tx.insert(inpatientOrders).values({ admissionId, ...order, prescribedBy: actor.id, prescribedByName: actor.name, createdAt: (/* @__PURE__ */ new Date()).toISOString() }).returning({ id: inpatientOrders.id });
+          await tx.insert(procedureTasks).values(slots.map((plannedAt) => ({ orderId: row.id, admissionId, plannedAt })));
+          return row.id;
+        });
+        return id ? this.getInpatientOrder(id) : void 0;
+      }
+      async stopInpatientOrder(id, reason, actor) {
+        const found = await db.transaction(async (tx) => {
+          const [o] = await tx.select().from(inpatientOrders).where(eq(inpatientOrders.id, id)).for("update");
+          if (!o) return false;
+          if (o.status !== "active") throw new StorageConflict(ORDER_STOPPED);
+          const [a] = await tx.select({ status: admissions.status }).from(admissions).where(eq(admissions.id, o.admissionId)).for("share");
+          if (a?.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+          const now = /* @__PURE__ */ new Date();
+          await tx.update(inpatientOrders).set({ status: "stopped", stoppedAt: now.toISOString(), stoppedBy: actor.id, stoppedByName: actor.name, stopReason: reason }).where(eq(inpatientOrders.id, id));
+          await tx.update(procedureTasks).set({ status: "cancelled" }).where(and(eq(procedureTasks.orderId, id), eq(procedureTasks.status, "planned"), gte(procedureTasks.plannedAt, new Date(now.getTime() - DUE_WINDOW_MS).toISOString())));
+          return true;
+        });
+        return found ? this.getInpatientOrder(id) : void 0;
+      }
+      async taskViews(where) {
+        const openBed = alias(admissionBeds, "open_bed");
+        const dose = alias(labConsumptions, "dose");
+        const rows = await db.select({
+          t: procedureTasks,
+          kind: inpatientOrders.kind,
+          name: inpatientOrders.name,
+          dose: inpatientOrders.dose,
+          route: inpatientOrders.route,
+          orderNote: inpatientOrders.note,
+          orderStatus: inpatientOrders.status,
+          prescribedByName: inpatientOrders.prescribedByName,
+          admissionNumber: admissions.number,
+          patientId: patients.id,
+          patientName: patients.fullName,
+          patientNumber: patients.patientNumber,
+          wardName: wards.name,
+          bedLabel: beds.label,
+          stockQty: dose.quantity,
+          stockPosted: dose.posted,
+          stockUnit: inventoryItems.unit,
+          stockItem: inventoryItems.name
+        }).from(procedureTasks).innerJoin(inpatientOrders, eq(inpatientOrders.id, procedureTasks.orderId)).innerJoin(admissions, eq(admissions.id, procedureTasks.admissionId)).innerJoin(patients, eq(patients.id, admissions.patientId)).leftJoin(openBed, and(eq(openBed.admissionId, admissions.id), isNull(openBed.toAt))).leftJoin(beds, eq(beds.id, openBed.bedId)).leftJoin(wards, eq(wards.id, openBed.wardId)).leftJoin(dose, and(eq(dose.procedureTaskId, procedureTasks.id), eq(dose.kind, "inpatient"), isNull(dose.cancelledAt))).leftJoin(inventoryItems, eq(inventoryItems.id, dose.itemId)).where(where).orderBy(asc(procedureTasks.plannedAt));
+        return rows.map(({ t: t2, stockQty, stockPosted, stockUnit, stockItem, ...r }) => ({
+          ...mapTask(t2),
+          ...r,
+          stock: stockQty === null ? null : { quantity: stockQty, posted: stockPosted ?? 0, unit: stockUnit ?? "", itemName: stockItem ?? "" },
+          kind: r.kind,
+          orderStatus: r.orderStatus
+        }));
+      }
+      async listProcedureTasks(query) {
+        return this.taskViews(
+          and(
+            gte(procedureTasks.plannedAt, query.from),
+            sql2`${procedureTasks.plannedAt} < ${query.to}`,
+            eq(admissions.status, "active"),
+            query.admissionId ? eq(procedureTasks.admissionId, query.admissionId) : void 0
+          )
+        );
+      }
+      async getProcedureTask(id) {
+        return (await this.taskViews(eq(procedureTasks.id, id)))[0];
+      }
+      /** The task row locked, its stay held open. */
+      async lockTask(tx, id) {
+        const [t2] = await tx.select().from(procedureTasks).where(eq(procedureTasks.id, id)).for("update");
+        if (!t2) return void 0;
+        const [a] = await tx.select({ status: admissions.status }).from(admissions).where(eq(admissions.id, t2.admissionId)).for("share");
+        if (a?.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+        return mapTask(t2);
+      }
+      async markProcedureTask(id, mark, actor) {
+        const found = await db.transaction(async (tx) => {
+          const t2 = await this.lockTask(tx, id);
+          if (!t2) return false;
+          const problem = markDoneProblem(t2);
+          if (problem) throw new StorageConflict(problem);
+          await tx.update(procedureTasks).set({ status: mark.status, doneAt: (/* @__PURE__ */ new Date()).toISOString(), doneBy: actor.id, doneByName: actor.name, note: mark.note }).where(eq(procedureTasks.id, id));
+          if (mark.status === "done") await this.issueDose(tx, t2, actor);
+          return true;
+        });
+        return found ? this.getProcedureTask(id) : void 0;
+      }
+      /**
+       * B6.6b: a stocked medicine's dose, given, leaves the warehouse — FEFO from
+       * usable batches; what the shelf cannot cover stays a shortage for the
+       * storekeeper (B5.6). The dose is never held back by the warehouse.
+       */
+      async issueDose(tx, t2, actor) {
+        const [o] = await tx.select().from(inpatientOrders).where(eq(inpatientOrders.id, t2.orderId)).limit(1);
+        if (!o || o.kind !== "medicine" || !o.itemId || !o.issueQty) return;
+        const [a] = await tx.select({ number: admissions.number }).from(admissions).where(eq(admissions.id, t2.admissionId)).limit(1);
+        const note = `Statsionar karta \u2116${a?.number ?? "?"}: ${o.name}${o.dose ? ` ${o.dose}` : ""}`;
+        const batches = await this.lockLiveBatches(tx, [o.itemId]);
+        const [c] = await tx.insert(labConsumptions).values({ kind: "inpatient", procedureTaskId: t2.id, itemId: o.itemId, quantity: o.issueQty, posted: 0, note, createdBy: actor.id, createdByName: actor.name }).returning();
+        await this.postConsumptions(tx, [{ id: c.id, itemId: c.itemId, need: c.quantity, posted: 0, note }], batches, todayKey(), actor);
+      }
+      async revertProcedureTask(id, reason, actor) {
+        const found = await db.transaction(async (tx) => {
+          const t2 = await this.lockTask(tx, id);
+          if (!t2) return false;
+          if (t2.status !== "done" && t2.status !== "missed") throw new StorageConflict(TASK_NOT_MARKED);
+          const [given] = await tx.select().from(labConsumptions).where(and(eq(labConsumptions.procedureTaskId, id), eq(labConsumptions.kind, "inpatient"), isNull(labConsumptions.cancelledAt))).for("update");
+          if (given) await this.returnConsumption(tx, given, `Muolaja belgisi qaytarildi: ${reason}`, actor);
+          await tx.update(procedureTasks).set({ status: "planned", doneAt: null, doneBy: null, doneByName: null, note: null, revertedAt: (/* @__PURE__ */ new Date()).toISOString(), revertedByName: actor.name, revertReason: reason }).where(eq(procedureTasks.id, id));
+          return true;
+        });
+        return found ? this.getProcedureTask(id) : void 0;
+      }
+      async financeServices(days) {
+        const res = await db.execute(sql2`
+      SELECT coalesce(s.kind, 'konsultatsiya') AS kind,
+             coalesce(s.name, coalesce(d.specialty, 'Shifokor') || ' ko''rigi') AS name,
+             u.full_name AS doctor,
+             count(*)::int AS count, sum(a.price)::bigint AS gross, sum(a.discount)::bigint AS discount,
+             sum(coalesce((SELECT sum(p.amount) FROM payments p WHERE p.appointment_id = a.id AND p.voided_at IS NULL), 0))::bigint AS paid
+        FROM appointments a
+        LEFT JOIN services s ON s.id = a.service_id
+        LEFT JOIN doctors d ON d.id = a.doctor_id
+        LEFT JOIN users u ON u.id = d.user_id
+       WHERE a.status IN ('arrived', 'in_progress', 'completed') AND a.date >= ${days.from} AND a.date <= ${days.to}
+       GROUP BY 1, 2, 3
+      UNION ALL
+      SELECT 'laboratoriya', 'Laboratoriya tahlillari', NULL,
+             count(*)::int, sum(o.total_amount + o.discount)::bigint, sum(o.discount)::bigint, sum(o.paid_amount)::bigint
+        FROM orders o
+       WHERE o.status <> 'cancelled'
+         AND (o.created_at AT TIME ZONE ${LOCAL_TZ})::date BETWEEN ${days.from}::date AND ${days.to}::date
+      HAVING count(*) > 0
+      UNION ALL
+      SELECT 'statsionar', 'Statsionar: yotoq-kun va muolajalar', NULL,
+             count(*)::int, sum(${STAY_GROSS_SQL})::bigint, sum(least(ad.discount, ${STAY_GROSS_SQL}))::bigint,
+             sum(coalesce((SELECT sum(p.amount) FROM payments p WHERE p.admission_id = ad.id AND p.voided_at IS NULL), 0))::bigint
+        FROM admissions ad
+       WHERE ad.status <> 'cancelled'
+         AND (ad.admitted_at AT TIME ZONE ${LOCAL_TZ})::date BETWEEN ${days.from}::date AND ${days.to}::date
+      HAVING count(*) > 0`);
+        return res.rows.map((r) => {
+          const gross = Number(r.gross);
+          const discount = Number(r.discount);
+          return {
+            kind: String(r.kind),
+            name: String(r.name),
+            doctorName: r.doctor === null ? null : String(r.doctor),
+            count: Number(r.count),
+            gross,
+            discount,
+            net: gross - discount,
+            paid: Number(r.paid)
+          };
+        });
+      }
+      async countBillDiscounts(range) {
+        const [row] = await db.select({ n: sql2`count(*)::int` }).from(billDiscounts).where(and(gte(billDiscounts.createdAt, range.from), sql2`${billDiscounts.createdAt} < ${range.to}`));
+        return Number(row?.n ?? 0);
+      }
+      async listDebtors() {
+        const res = await db.execute(sql2`
+      WITH lines AS (${BILL_LINES_SQL}),
+      owing AS (
+        SELECT v.id, v.patient_id, v.visit_date, sum(greatest(0, l.amount - l.paid))::int AS due
+          FROM visits v
+          JOIN lines l ON l.visit_id = v.id AND (l.live = 1 OR l.paid <> 0)
+         GROUP BY v.id, v.patient_id, v.visit_date
+        HAVING sum(greatest(0, l.amount - l.paid)) > 0
+      )
+      SELECT pt.id AS patient_id, pt.patient_number, pt.full_name, pt.phone,
+             count(*)::int AS bills, sum(w.due)::int AS due, min(w.visit_date) AS oldest, max(w.visit_date) AS latest
+        FROM owing w
+        JOIN patients pt ON pt.id = w.patient_id
+       GROUP BY pt.id, pt.patient_number, pt.full_name, pt.phone
+       ORDER BY due DESC
+       LIMIT 2000`);
+        return sortDebtors(
+          res.rows.map((r) => ({
+            patientId: String(r.patient_id),
+            patientNumber: Number(r.patient_number),
+            patientName: String(r.full_name),
+            phone: r.phone === null ? null : String(r.phone),
+            bills: Number(r.bills),
+            due: Number(r.due),
+            oldest: String(r.oldest),
+            latest: String(r.latest)
+          }))
+        );
+      }
+      // ------------------------------------------------------------ B7.4 refunds
+      refundViewQuery() {
+        return db.select({ r: refunds, patientNumber: patients.patientNumber, patientName: patients.fullName, visitDate: visits.visitDate, shiftNumber: cashShifts.number }).from(refunds).innerJoin(patients, eq(patients.id, refunds.patientId)).innerJoin(visits, eq(visits.id, refunds.visitId)).leftJoin(cashShifts, eq(cashShifts.id, refunds.shiftId));
+      }
+      mapRefundView(x) {
+        const r = x.r;
+        return {
+          ...r,
+          method: r.method,
+          status: r.status,
+          requestedAt: iso(r.requestedAt),
+          decidedAt: iso(r.decidedAt),
+          paidAt: iso(r.paidAt),
+          cancelledAt: iso(r.cancelledAt),
+          patientNumber: x.patientNumber,
+          patientName: x.patientName,
+          visitDate: x.visitDate,
+          shiftNumber: x.shiftNumber ?? null
+        };
+      }
+      async getRefund(id) {
+        const [row] = await this.refundViewQuery().where(eq(refunds.id, id)).limit(1);
+        return row && this.mapRefundView(row);
+      }
+      async listRefunds(query) {
+        const dated = query.status && isOpenRefund(query.status) ? void 0 : and(query.from ? gte(refunds.requestedAt, query.from) : void 0, query.to ? sql2`${refunds.requestedAt} < ${query.to}` : void 0);
+        const rows = await this.refundViewQuery().where(and(query.visitId ? eq(refunds.visitId, query.visitId) : void 0, query.status ? eq(refunds.status, query.status) : void 0, dated)).orderBy(desc(refunds.requestedAt)).limit(query.limit ?? 300);
+        return rows.map((x) => this.mapRefundView(x));
+      }
+      async requestRefund(visitId, input, actor) {
+        const id = await db.transaction(async (tx) => {
+          const exec = tx;
+          const [v] = await tx.select().from(visits).where(eq(visits.id, visitId)).for("update");
+          if (!v) return void 0;
+          const [lines, held] = await Promise.all([
+            this.billLines(exec, visitId, true),
+            tx.select({ amount: refunds.amount, status: refunds.status }).from(refunds).where(eq(refunds.visitId, visitId))
+          ]);
+          const available = refundAvailable(lines, held.map((h) => ({ amount: h.amount, status: h.status })));
+          if (!available) throw new StorageConflict(REFUND_NOTHING);
+          if (input.amount > available) throw new StorageConflict(refundTooMuch(available));
+          const [row] = await tx.insert(refunds).values({ patientId: v.patientId, visitId, amount: input.amount, method: input.method, reason: input.reason, requestedBy: actor.id, requestedByName: actor.name }).returning({ id: refunds.id });
+          return row.id;
+        });
+        return id ? this.getRefund(id) : void 0;
+      }
+      async decideRefund(id, approve, note, actor) {
+        const found = await db.transaction(async (tx) => {
+          const [r] = await tx.select().from(refunds).where(eq(refunds.id, id)).for("update");
+          if (!r) return false;
+          if (r.requestedBy && r.requestedBy === actor.id) throw new StorageConflict(REFUND_SELF_APPROVAL);
+          const problem = refundActionProblem(r.status, approve ? "approve" : "reject");
+          if (problem) throw new StorageConflict(problem);
+          await tx.update(refunds).set({ status: approve ? "approved" : "rejected", decidedAt: (/* @__PURE__ */ new Date()).toISOString(), decidedBy: actor.id, decidedByName: actor.name, decisionNote: note }).where(eq(refunds.id, id));
+          return true;
+        });
+        return found ? this.getRefund(id) : void 0;
+      }
+      async payRefund(id, actor) {
+        const found = await db.transaction(async (tx) => {
+          const exec = tx;
+          const [r] = await tx.select().from(refunds).where(eq(refunds.id, id)).for("update");
+          if (!r) return false;
+          const problem = refundActionProblem(r.status, "pay");
+          if (problem) throw new StorageConflict(problem);
+          const shiftId = await this.lockShift(exec, actor);
+          await tx.select({ id: visits.id }).from(visits).where(eq(visits.id, r.visitId)).for("update");
+          const lines = await this.billLines(exec, r.visitId, true);
+          const plan = allocateRefund(lines, r.amount);
+          if (plan.taken < r.amount) throw new StorageConflict(REFUND_BILL_CHANGED);
+          await tx.insert(payments).values(
+            plan.lines.map((l) => ({
+              ...paymentTarget(l.source, l.sourceId),
+              refundId: r.id,
+              amount: -l.amount,
+              method: r.method,
+              note: `Qaytarish \u2116${r.number}`,
+              createdBy: actor.id,
+              createdByName: actor.name,
+              shiftId
+            }))
+          );
+          for (const l of plan.lines) if (l.source === "order") await this.syncPaid(exec, l.sourceId, actor);
+          await tx.update(refunds).set({ status: "paid", paidAt: (/* @__PURE__ */ new Date()).toISOString(), paidBy: actor.id, paidByName: actor.name, shiftId, lines: plan.lines }).where(eq(refunds.id, id));
+          return true;
+        });
+        return found ? this.getRefund(id) : void 0;
+      }
+      async cancelRefund(id, reason, actor) {
+        const found = await db.transaction(async (tx) => {
+          const [r] = await tx.select().from(refunds).where(eq(refunds.id, id)).for("update");
+          if (!r) return false;
+          const problem = refundActionProblem(r.status, "cancel");
+          if (problem) throw new StorageConflict(problem);
+          await tx.update(refunds).set({ status: "cancelled", cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason }).where(eq(refunds.id, id));
+          return true;
+        });
+        return found ? this.getRefund(id) : void 0;
+      }
+      async markRefundPrinted(id) {
+        const [row] = await db.update(refunds).set({ printCount: sql2`print_count + 1` }).where(eq(refunds.id, id)).returning({ printCount: refunds.printCount });
+        return row?.printCount;
+      }
+      async getReceiptSlip(receiptId) {
+        const [row] = await db.select({
+          visitId: invoices.visitId,
+          shiftNumber: sql2`(SELECT s.number FROM payments p JOIN cash_shifts s ON s.id = p.shift_id WHERE p.invoice_payment_id = "invoice_payments"."id" LIMIT 1)`
+        }).from(invoicePayments).innerJoin(invoices, eq(invoices.id, invoicePayments.invoiceId)).where(eq(invoicePayments.id, receiptId)).limit(1);
+        if (!row) return void 0;
+        const bill = await this.getBill(row.visitId);
+        const receipt = bill?.receipts.find((r) => r.id === receiptId);
+        if (!bill || !receipt || !bill.invoice) return void 0;
+        const { phone: _phone, ...patient } = bill.patient;
+        return { receipt, invoiceNumber: bill.invoice.number, visitDate: bill.visitDate, patient, shiftNumber: row.shiftNumber === null ? null : Number(row.shiftNumber) };
+      }
+      async markReceiptPrinted(receiptId) {
+        const [row] = await db.update(invoicePayments).set({ printCount: sql2`print_count + 1` }).where(eq(invoicePayments.id, receiptId)).returning({ printCount: invoicePayments.printCount });
+        return row?.printCount;
+      }
+      // ------------------------------------------------------------ B7.5 cash shifts
+      /**
+       * The shift a money write lands in. FOR SHARE: a closing (FOR UPDATE) waits
+       * for this payment to commit and counts it; a payment that comes after the
+       * closing finds the shift closed and is refused.
+       */
+      async lockShift(exec, actor) {
+        if (!actor.shiftId) return null;
+        const [row] = await exec.select({ id: cashShifts.id }).from(cashShifts).where(and(eq(cashShifts.id, actor.shiftId), eq(cashShifts.cashierId, actor.id ?? ""), isNull(cashShifts.closedAt))).for("share");
+        if (!row) throw new StorageConflict(SHIFT_CLOSED);
+        return row.id;
+      }
+      /** A payment counted in a closed shift's report is never voided (shared/cash-shift.ts). */
+      async refuseClosedShift(exec, which) {
+        const [row] = await exec.select({ number: cashShifts.number, closedAt: cashShifts.closedAt }).from(payments).innerJoin(cashShifts, eq(cashShifts.id, payments.shiftId)).where(which).limit(1).for("share", { of: cashShifts });
+        if (row?.closedAt) throw new StorageConflict(paymentInClosedShift(row.number));
+      }
+      /** Every payments row of the shifts `where` selects, with what each one paid. */
+      async shiftRows(exec, where) {
+        const rows = await exec.select({
+          shiftId: cashShifts.id,
+          id: payments.id,
+          amount: payments.amount,
+          method: payments.method,
+          createdAt: payments.createdAt,
+          voidedAt: payments.voidedAt,
+          voidReason: payments.voidReason,
+          receiptId: payments.invoicePaymentId,
+          refundId: payments.refundId,
+          refundNumber: refunds.number,
+          receiptNumber: invoicePayments.number,
+          invoiceNumber: invoices.number,
+          orderNumber: orders.orderNumber,
+          patientName: patients.fullName,
+          patientNumber: patients.patientNumber
+        }).from(payments).innerJoin(cashShifts, eq(cashShifts.id, payments.shiftId)).leftJoin(invoicePayments, eq(invoicePayments.id, payments.invoicePaymentId)).leftJoin(invoices, eq(invoices.id, invoicePayments.invoiceId)).leftJoin(refunds, eq(refunds.id, payments.refundId)).leftJoin(orders, eq(orders.id, payments.orderId)).leftJoin(patients, sql2`${patients.id} = coalesce(${invoicePayments.patientId}, ${refunds.patientId}, ${orders.patientId})`).where(where).orderBy(asc(payments.createdAt));
+        const out = /* @__PURE__ */ new Map();
+        for (const { shiftId, ...r } of rows) {
+          const list = out.get(shiftId) ?? [];
+          list.push({ ...r, method: r.method, createdAt: iso(r.createdAt), voidedAt: iso(r.voidedAt) });
+          out.set(shiftId, list);
+        }
+        return out;
+      }
+      shiftSummary(row, rows) {
+        const shift = { ...row, openedAt: iso(row.openedAt), closedAt: iso(row.closedAt) };
+        return {
+          ...shift,
+          // Closed: the report as it was signed off. Open: live.
+          totals: shift.closedAt && row.totals ? row.totals : summarizeShift(rows, row.openingCash),
+          hours: shiftHours(shift.openedAt, shift.closedAt)
+        };
+      }
+      shiftReport(row, rows) {
+        return { ...this.shiftSummary(row, rows), entries: shiftEntries(rows) };
+      }
+      async getOpenShift(cashierId) {
+        const [row] = await db.select().from(cashShifts).where(and(eq(cashShifts.cashierId, cashierId), isNull(cashShifts.closedAt))).limit(1);
+        return row;
+      }
+      async getCashDesk(cashierId) {
+        const [open2, rows, last2] = await Promise.all([
+          this.getOpenShift(cashierId),
+          this.shiftRows(db, and(eq(cashShifts.cashierId, cashierId), isNull(cashShifts.closedAt))),
+          db.select({ id: cashShifts.id, number: cashShifts.number, closedAt: cashShifts.closedAt, carriedCash: cashShifts.carriedCash }).from(cashShifts).where(and(eq(cashShifts.cashierId, cashierId), sql2`${cashShifts.closedAt} IS NOT NULL`)).orderBy(desc(cashShifts.closedAt)).limit(1)
+        ]);
+        return {
+          shift: open2 ? this.shiftReport(open2, rows.get(open2.id) ?? []) : null,
+          last: last2[0] ? { id: last2[0].id, number: last2[0].number, closedAt: iso(last2[0].closedAt), carriedCash: last2[0].carriedCash ?? 0 } : null
+        };
+      }
+      async openShift(input, actor) {
+        try {
+          const [row] = await db.insert(cashShifts).values({ cashierId: actor.id, cashierName: actor.name, openingCash: input.openingCash, openingNote: input.note ?? null }).returning();
+          return this.shiftReport(row, []);
+        } catch (err) {
+          const e = err;
+          if (e?.code === "23505" && e.constraint === "UQ_cash_shifts_open") throw new StorageConflict(SHIFT_ALREADY_OPEN);
+          throw err;
+        }
+      }
+      async getShift(id) {
+        const [[row], rows] = await Promise.all([db.select().from(cashShifts).where(eq(cashShifts.id, id)).limit(1), this.shiftRows(db, eq(cashShifts.id, id))]);
+        return row ? this.shiftReport(row, rows.get(id) ?? []) : void 0;
+      }
+      async closeShift(id, input, actor) {
+        const found = await db.transaction(async (tx) => {
+          const exec = tx;
+          const [row] = await tx.select().from(cashShifts).where(eq(cashShifts.id, id)).for("update");
+          if (!row) return false;
+          if (row.closedAt) throw new StorageConflict(SHIFT_ALREADY_CLOSED);
+          const rows = (await this.shiftRows(exec, eq(cashShifts.id, id))).get(id) ?? [];
+          const totals = summarizeShift(rows, row.openingCash);
+          if (totals.expectedCash !== input.expectedCash) throw new StorageConflict(SHIFT_MOVED);
+          const problem = closeProblem(input, totals.expectedCash);
+          if (problem) throw new Error(problem);
+          await tx.update(cashShifts).set({
+            closedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            closedBy: actor.id,
+            closedByName: actor.name,
+            expectedCash: totals.expectedCash,
+            countedCash: input.countedCash,
+            difference: input.countedCash - totals.expectedCash,
+            carriedCash: input.carriedCash,
+            denominations: cleanDenominations(input.denominations),
+            closingNote: input.note ?? null,
+            totals
+          }).where(and(eq(cashShifts.id, id), isNull(cashShifts.closedAt)));
+          return true;
+        });
+        return found ? this.getShift(id) : void 0;
+      }
+      async listShifts(query) {
+        const cashier = query.cashierId ? eq(cashShifts.cashierId, query.cashierId) : void 0;
+        const range = and(query.from ? gte(cashShifts.openedAt, query.from) : void 0, query.to ? sql2`${cashShifts.openedAt} < ${query.to}` : void 0);
+        const when2 = query.open ? isNull(cashShifts.closedAt) : query.from || query.to ? or(range, isNull(cashShifts.closedAt)) : void 0;
+        const [list, live] = await Promise.all([
+          db.select().from(cashShifts).where(and(cashier, when2)).orderBy(sql2`${cashShifts.closedAt} IS NULL DESC`, desc(cashShifts.openedAt)).limit(query.limit ?? 200),
+          // Only open shifts need their rows: a closed one carries its frozen report.
+          this.shiftRows(db, and(cashier, isNull(cashShifts.closedAt)))
+        ]);
+        return list.map((row) => this.shiftSummary(row, live.get(row.id) ?? []));
       }
       async movementTotals(range) {
         const { from, to } = range;
@@ -7497,7 +10020,7 @@ var init_storage_pg = __esm({
       SELECT day,
              sum(CASE WHEN bucket = 'receipt' THEN v ELSE 0 END)::float AS inflow,
              sum(CASE WHEN bucket IN ('department', 'writeoff', 'consumption') THEN -v ELSE 0 END)::float AS outflow
-        FROM (SELECT (m.created_at AT TIME ZONE current_setting('TIMEZONE'))::date::text AS day,
+        FROM (SELECT (m.created_at AT TIME ZONE ${LOCAL_TZ})::date::text AS day,
                      ${MOVEMENT_BUCKET_SQL} AS bucket, ${MOVEMENT_VALUE_SQL} AS v
                 FROM stock_movements m
                 JOIN inventory_batches b ON b.id = m.batch_id
@@ -7506,6 +10029,26 @@ var init_storage_pg = __esm({
        GROUP BY day
        ORDER BY day`);
         return res.rows.map((r) => ({ date: r.day, in: Number(r.inflow), out: Number(r.outflow) }));
+      }
+      async cashDayTotals(range) {
+        const res = await db.execute(sql2`
+      SELECT (p.created_at AT TIME ZONE ${LOCAL_TZ})::date::text AS day, p.method,
+             coalesce(sum(p.amount) FILTER (WHERE p.amount > 0), 0)::bigint AS taken,
+             coalesce(-sum(p.amount) FILTER (WHERE p.amount < 0), 0)::bigint AS refunded,
+             count(DISTINCT coalesce(p.invoice_payment_id, p.id)) FILTER (WHERE p.amount > 0)::int AS payments,
+             count(DISTINCT coalesce(p.refund_id, p.id)) FILTER (WHERE p.amount < 0)::int AS refunds
+        FROM payments p
+       WHERE p.voided_at IS NULL AND p.created_at >= ${range.from} AND p.created_at < ${range.to}
+       GROUP BY 1, 2
+       ORDER BY 1, 2`);
+        return res.rows.map((r) => ({
+          date: String(r.day),
+          method: String(r.method),
+          taken: Number(r.taken),
+          refunded: Number(r.refunded),
+          payments: Number(r.payments),
+          refunds: Number(r.refunds)
+        }));
       }
       async departmentLines(range) {
         const { from, to } = range;
@@ -7611,7 +10154,7 @@ var init_storage_pg = __esm({
         });
       }
       async getLabBoard(day) {
-        const local = (col) => sql2.raw(`(${col} AT TIME ZONE current_setting('TIMEZONE'))::date`);
+        const local = (col) => sql2.raw(`(${col} AT TIME ZONE '${SERVER_TZ}')::date`);
         const countsQuery = db.execute(sql2`
       WITH o AS (
         SELECT
@@ -7679,10 +10222,10 @@ var init_storage_pg = __esm({
       WITH today_orders AS (
         SELECT o.total_amount, o.paid_amount FROM orders o
         WHERE o.status <> 'cancelled'
-          AND (o.created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date
+          AND (o.created_at AT TIME ZONE ${LOCAL_TZ})::date = ${day}::date
       ), new_patients AS (
         SELECT p.id, p.patient_number, p.full_name, p.phone, p.created_at FROM patients p
-        WHERE (p.created_at AT TIME ZONE current_setting('TIMEZONE'))::date = ${day}::date
+        WHERE (p.created_at AT TIME ZONE ${LOCAL_TZ})::date = ${day}::date
       )
       SELECT
         (SELECT count(DISTINCT v.patient_id) FROM visits v WHERE v.visit_date = ${day}::text)::int AS patients_today,
@@ -7753,7 +10296,7 @@ var init_storage_pg = __esm({
             name: orderTests.testName,
             count: sql2`count(*)::int`,
             revenue: sql2`coalesce(sum(${orderTests.price}), 0)::int`
-          }).from(orderTests).innerJoin(orders, eq(orders.id, orderTests.orderId)).where(inRange).groupBy(orderTests.testName).orderBy(desc(sql2`sum(${orderTests.price})`)).limit(8),
+          }).from(orderTests).innerJoin(orders, eq(orders.id, orderTests.orderId)).where(inRange).groupBy(orderTests.testName).orderBy(desc(sql2`count(*)`), desc(sql2`sum(${orderTests.price})`)).limit(TOP_TESTS_LIMIT),
           db.select({
             category: sql2`coalesce(${tests.category}, 'Boshqa')`,
             count: sql2`count(*)::int`,
@@ -7772,8 +10315,8 @@ var init_storage_pg = __esm({
             revenue: sql2`coalesce(sum(${orders.totalAmount}), 0)::int`
           }).from(orders).where(inRange).groupBy(sql2`coalesce(nullif(btrim(${orders.referrer}), ''), '—')`).orderBy(desc(sql2`sum(${orders.totalAmount})`)).limit(10)
         ]);
-        const totalTests = byCategory.reduce((sum2, c) => sum2 + c.count, 0);
-        const totalExpenses = expensesByCategory.reduce((sum2, e) => sum2 + e.amount, 0);
+        const totalTests = byCategory.reduce((sum5, c) => sum5 + c.count, 0);
+        const totalExpenses = expensesByCategory.reduce((sum5, e) => sum5 + e.amount, 0);
         const totalPaid = totals?.totalPaid ?? 0;
         return {
           range: { from, to },
@@ -7902,7 +10445,7 @@ function buildTurnover(items, totals) {
     r[t2.bucket].qty += sign * t2.quantity;
     r[t2.bucket].value += sign * t2.value;
   }
-  const sum2 = { opening: 0, receipt: 0, department: 0, writeoff: 0, consumption: 0, count: 0, closing: 0 };
+  const sum5 = { opening: 0, receipt: 0, department: 0, writeoff: 0, consumption: 0, count: 0, closing: 0 };
   const rows = [];
   for (const r of Array.from(byItem.values())) {
     for (const k of ["opening", ...TURNOVER_BUCKETS]) r[k] = { qty: tidy(r[k].qty), value: Math.round(r[k].value) };
@@ -7913,10 +10456,10 @@ function buildTurnover(items, totals) {
     const moved = TURNOVER_BUCKETS.some((k) => r[k].qty !== 0 || r[k].value !== 0);
     if (!moved && r.opening.qty === 0 && r.opening.value === 0) continue;
     rows.push(r);
-    for (const k of ["opening", ...TURNOVER_BUCKETS, "closing"]) sum2[k] += r[k].value;
+    for (const k of ["opening", ...TURNOVER_BUCKETS, "closing"]) sum5[k] += r[k].value;
   }
   rows.sort((a, b) => a.itemName.localeCompare(b.itemName));
-  return { rows, totals: sum2 };
+  return { rows, totals: sum5 };
 }
 function fillDays(from, to, rows) {
   const byDay = new Map(rows.map((r) => [r.date, r]));
@@ -8021,6 +10564,18 @@ var init_db = __esm({
       consumptionNorms: [],
       invoices: [],
       invoicePayments: [],
+      cashShifts: [],
+      refunds: [],
+      billDiscounts: [],
+      wards: [],
+      beds: [],
+      admissions: [],
+      admissionBeds: [],
+      caseHistoryVersions: [],
+      epicrisisVersions: [],
+      admissionObservations: [],
+      inpatientOrders: [],
+      procedureTasks: [],
       labConsumptions: [],
       icdUzNames: {},
       security: null,
@@ -8045,7 +10600,7 @@ var init_db = __esm({
         director: null,
         licenseNumber: null
       },
-      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0, invoiceNumber: 0, invoiceReceiptNumber: 0 }
+      counters: { orderNumber: 1e3, patientNumber: 0, referralNumber: 0, receiptNumber: 0, issueNumber: 0, countNumber: 0, invoiceNumber: 0, invoiceReceiptNumber: 0, shiftNumber: 0, refundNumber: 0, admissionNumber: 0 }
     });
     queue = Promise.resolve();
   }
@@ -8088,7 +10643,17 @@ var init_storage_file = __esm({
     init_inventory();
     init_consumption();
     init_invoice();
+    init_cash_shift();
+    init_refund();
     init_inventory_reports();
+    init_debt();
+    init_epicrisis();
+    init_stay_bill();
+    init_invoice();
+    init_procedures();
+    init_case_history();
+    init_inpatient();
+    init_discount();
     init_icd10();
     init_lab_verification();
     init_lab_rules();
@@ -8307,6 +10872,7 @@ var init_storage_file = __esm({
         return { ...d };
       }
       async deleteDepartment(id) {
+        if (this.db.wards.some((w) => w.departmentId === id)) throw new StorageConflict(DEPARTMENT_HAS_WARDS);
         const before = this.db.departments.length;
         this.db.departments = this.db.departments.filter((d) => d.id !== id);
         if (this.db.departments.length === before) return false;
@@ -8495,6 +11061,7 @@ var init_storage_file = __esm({
           queueNumber: nextQueueNumber(day.map((x) => x.queueNumber)),
           status: "scheduled",
           price: input.price,
+          discount: 0,
           reason: input.reason ?? null,
           referralId: input.referralId ?? null,
           arrivedAt: null,
@@ -9156,12 +11723,12 @@ var init_storage_file = __esm({
             (a) => a.patientId === p.id && a.arrivedAt && ATTENDED_STATUSES.includes(a.status)
           );
           const times = [...live.map((o) => o.createdAt), ...attended.map((a) => a.arrivedAt)];
-          const last = times.reduce((m, t2) => !m || t2 > m ? t2 : m, null);
+          const last2 = times.reduce((m, t2) => !m || t2 > m ? t2 : m, null);
           const days = /* @__PURE__ */ new Set([
             ...live.map((o) => o.visitId ?? localDay(o.createdAt)),
             ...attended.map((a) => a.visitId ?? `day:${a.date}`)
           ]);
-          return { ...p, lastVisitAt: last, visitCount: days.size };
+          return { ...p, lastVisitAt: last2, visitCount: days.size };
         });
         return { items: page, total };
       }
@@ -9182,7 +11749,10 @@ var init_storage_file = __esm({
         const appointments2 = await this.listAppointments({ patientId: id });
         const orderIds = new Set(items.map((o) => o.id));
         const apptIds = new Set(appointments2.map((a) => a.id));
-        const payments2 = this.db.payments.filter((p) => p.orderId && orderIds.has(p.orderId) || p.appointmentId && apptIds.has(p.appointmentId));
+        const stayIds = new Set(this.db.admissions.filter((a) => a.patientId === id).map((a) => a.id));
+        const payments2 = this.db.payments.filter(
+          (p) => p.orderId && orderIds.has(p.orderId) || p.appointmentId && apptIds.has(p.appointmentId) || p.admissionId && stayIds.has(p.admissionId)
+        );
         const visits2 = this.db.visits.filter((v) => v.patientId === id);
         return buildPatientCard(details, items, visits2, payments2, appointments2);
       }
@@ -9212,6 +11782,9 @@ var init_storage_file = __esm({
         const source = this.db.patients.find((p) => p.id === sourceId);
         const target = this.db.patients.find((p) => p.id === targetId);
         if (!source || !target || source.id === target.id) return void 0;
+        if (this.db.admissions.filter((a) => (a.patientId === sourceId || a.patientId === targetId) && a.status === "active").length > 1) {
+          throw new StorageConflict("Ikkala kartada ham faol yotqizish bor \u2014 avval bittasini chiqaring yoki bekor qiling");
+        }
         const stamp2 = { updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor?.id ?? null };
         let orders2 = 0;
         for (const o of this.db.orders) {
@@ -9235,6 +11808,8 @@ var init_storage_file = __esm({
             for (const a of this.db.appointments) if (a.visitId === v.id) a.visitId = same.id;
             for (const r of this.db.medicalRecords) if (r.visitId === v.id) r.visitId = same.id;
             for (const r of this.db.referrals) if (r.visitId === v.id) r.visitId = same.id;
+            for (const r of this.db.refunds) if (r.visitId === v.id) r.visitId = same.id;
+            for (const d of this.db.billDiscounts) if (d.visitId === v.id) d.visitId = same.id;
             const theirs = this.db.invoices.find((i) => i.visitId === v.id);
             const ours = this.db.invoices.find((i) => i.visitId === same.id);
             if (theirs && ours) {
@@ -9260,6 +11835,9 @@ var init_storage_file = __esm({
         for (const r of this.db.referrals) if (r.patientId === sourceId) r.patientId = targetId;
         for (const i of this.db.invoices) if (i.patientId === sourceId) i.patientId = targetId;
         for (const r of this.db.invoicePayments) if (r.patientId === sourceId) r.patientId = targetId;
+        for (const r of this.db.refunds) if (r.patientId === sourceId) r.patientId = targetId;
+        for (const d of this.db.billDiscounts) if (d.patientId === sourceId) d.patientId = targetId;
+        for (const a of this.db.admissions) if (a.patientId === sourceId) a.patientId = targetId;
         this.db.patients = this.db.patients.filter((p) => p.id !== sourceId);
         await this.persist();
         return { orders: orders2, contacts, appointments: appointments2 };
@@ -9325,7 +11903,10 @@ var init_storage_file = __esm({
           patient_allergies: mine(this.db.patientAllergies),
           referrals: mine(this.db.referrals),
           invoices: mine(this.db.invoices),
-          invoice_payments: mine(this.db.invoicePayments)
+          invoice_payments: mine(this.db.invoicePayments),
+          refunds: mine(this.db.refunds),
+          bill_discounts: mine(this.db.billDiscounts),
+          admissions: mine(this.db.admissions)
         });
         if (problem) throw new StorageConflict(problem);
         const before = this.db.patients.length;
@@ -9450,7 +12031,7 @@ var init_storage_file = __esm({
           rows = rows.filter((o) => o.status !== "cancelled" && match(o));
         }
         const billable = rows.filter((o) => o.status !== "cancelled");
-        const sum2 = billable.reduce((acc, o) => acc + o.totalAmount, 0);
+        const sum5 = billable.reduce((acc, o) => acc + o.totalAmount, 0);
         const paid = billable.reduce((acc, o) => acc + o.paidAmount, 0);
         rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         const total = rows.length;
@@ -9459,7 +12040,7 @@ var init_storage_file = __esm({
         return {
           items: rows.slice(offset, offset + limit),
           total,
-          summary: { counts, results, totals: { sum: sum2, paid, debt: Math.max(0, sum2 - paid) }, groups }
+          summary: { counts, results, totals: { sum: sum5, paid, debt: Math.max(0, sum5 - paid) }, groups }
         };
       }
       async getOrder(id) {
@@ -9476,7 +12057,7 @@ var init_storage_file = __esm({
         }
         const selected = input.testIds.map((id) => this.db.tests.find((t2) => t2.id === id)).filter((t2) => Boolean(t2));
         if (selected.length === 0) throw new Error("Tanlangan tahlillar topilmadi");
-        const subtotal = selected.reduce((sum2, t2) => sum2 + t2.price, 0);
+        const subtotal = selected.reduce((sum5, t2) => sum5 + t2.price, 0);
         const discount = Math.min(input.discount, subtotal);
         const total = subtotal - discount;
         this.db.counters.orderNumber += 1;
@@ -9485,8 +12066,9 @@ var init_storage_file = __esm({
           id: randomUUID(),
           orderNumber: this.db.counters.orderNumber,
           patientId: input.patientId,
-          visitId: this.ensureVisit(input.patientId, todayKey(), input.createdBy ?? null).id,
+          visitId: input.visitId ?? this.ensureVisit(input.patientId, todayKey(), input.createdBy ?? null).id,
           referralId,
+          admissionId: input.admissionId ?? null,
           totalAmount: total,
           discount,
           paidAmount: 0,
@@ -9528,7 +12110,10 @@ var init_storage_file = __esm({
             id: randomUUID(),
             orderId: order.id,
             appointmentId: null,
+            admissionId: null,
             invoicePaymentId: null,
+            refundId: null,
+            shiftId: this.shiftFor({ id: input.createdBy ?? null, shiftId: input.shiftId }),
             amount: opening,
             method: "naqd",
             note: null,
@@ -9820,11 +12405,15 @@ var init_storage_file = __esm({
             input.amount > 0 ? "Buyurtma allaqachon to'liq to'langan" : "Qaytariladigan to'lov yo'q"
           );
         }
+        const shiftId = this.shiftFor(actor);
         this.db.payments.push({
           id: randomUUID(),
           orderId,
           appointmentId: null,
+          admissionId: null,
           invoicePaymentId: null,
+          refundId: null,
+          shiftId,
           amount,
           method: input.method,
           note: input.note?.trim() || null,
@@ -9841,7 +12430,9 @@ var init_storage_file = __esm({
       async voidPayment(paymentId, reason, actor) {
         const row = this.db.payments.find((p) => p.id === paymentId);
         if (!row) return void 0;
+        this.refuseClosedShift(row.shiftId);
         if (row.voidedAt) throw new StorageConflict(PAYMENT_ALREADY_VOIDED);
+        if (row.refundId) throw new StorageConflict(PAYMENT_IS_REFUND);
         if (row.invoicePaymentId || !row.orderId) throw new StorageConflict(PAYMENT_IS_RECEIPT_SHARE);
         row.voidedAt = (/* @__PURE__ */ new Date()).toISOString();
         row.voidedBy = actor.id;
@@ -10066,17 +12657,17 @@ var init_storage_file = __esm({
           pendingTests: activeItems.filter((i) => !i.result).length,
           readyTests: activeItems.filter((i) => lineState(i) === "verified").length,
           reviewTests: activeItems.filter((i) => lineState(i) === "review").length,
-          todayRevenue: todayOrders.reduce((sum2, o) => sum2 + o.paidAmount, 0),
+          todayRevenue: todayOrders.reduce((sum5, o) => sum5 + o.paidAmount, 0),
           totalPatients: this.db.patients.length,
-          unpaidAmount: this.db.orders.filter((o) => o.status !== "cancelled").reduce((sum2, o) => sum2 + Math.max(0, o.totalAmount - o.paidAmount), 0)
+          unpaidAmount: this.db.orders.filter((o) => o.status !== "cancelled").reduce((sum5, o) => sum5 + Math.max(0, o.totalAmount - o.paidAmount), 0)
         };
       }
       // ------------------------------------------------------ lab devices (B4.9)
       async listDevices() {
         return this.db.labDevices.map((d) => {
           const log2 = this.db.labDeviceErrors.filter((e) => e.deviceId === d.id);
-          const last = log2.reduce((m, e) => !m || e.occurredAt > m ? e.occurredAt : m, null);
-          return { ...d, errorCount: log2.length, openErrors: log2.filter((e) => !e.resolvedAt).length, lastErrorAt: last };
+          const last2 = log2.reduce((m, e) => !m || e.occurredAt > m ? e.occurredAt : m, null);
+          return { ...d, errorCount: log2.length, openErrors: log2.filter((e) => !e.resolvedAt).length, lastErrorAt: last2 };
         }).sort((a, b) => a.name.localeCompare(b.name));
       }
       async getDevice(id) {
@@ -10171,7 +12762,7 @@ var init_storage_file = __esm({
           const m = this.db.qcMaterials.find((x) => x.id === t2.materialId);
           if (!m) continue;
           const runs = this.db.qcResults.filter((r) => r.targetId === t2.id && !r.voidedAt).sort((a, b) => a.measuredAt.localeCompare(b.measuredAt) || a.createdAt.localeCompare(b.createdAt));
-          const last = runs.at(-1);
+          const last2 = runs.at(-1);
           targets.push({
             ...t2,
             materialName: m.name,
@@ -10181,7 +12772,7 @@ var init_storage_file = __esm({
             materialActive: m.isActive,
             testName: this.db.tests.find((x) => x.id === t2.testId)?.name ?? "\u2014",
             deviceName: t2.deviceId ? this.db.labDevices.find((x) => x.id === t2.deviceId)?.name ?? null : null,
-            lastResult: last ? { value: last.value, z: last.z, status: last.status, measuredAt: last.measuredAt } : null,
+            lastResult: last2 ? { value: last2.value, z: last2.z, status: last2.status, measuredAt: last2.measuredAt } : null,
             runs: runs.length,
             runsToday: runs.filter((r) => localDay(r.measuredAt) === day).length,
             openRejections: runs.filter((r) => r.status === "reject" && !r.reviewedAt).length
@@ -10370,7 +12961,7 @@ var init_storage_file = __esm({
         }));
       }
       async addEqa(input, actor) {
-        const z2 = roundZ(zScore(input.reportedValue, input.assignedValue, input.sdpa));
+        const z4 = roundZ(zScore(input.reportedValue, input.assignedValue, input.sdpa));
         const e = {
           id: randomUUID(),
           provider: input.provider,
@@ -10382,8 +12973,8 @@ var init_storage_file = __esm({
           reportedValue: input.reportedValue,
           assignedValue: input.assignedValue,
           sdpa: input.sdpa,
-          z: z2,
-          evaluation: eqaEvaluation(z2),
+          z: z4,
+          evaluation: eqaEvaluation(z4),
           notes: input.notes ?? null,
           enteredBy: actor.id,
           enteredByName: actor.name,
@@ -10975,7 +13566,7 @@ var init_storage_file = __esm({
               issueId: null,
               countId: null,
               consumptionId: e.c.id,
-              note: null,
+              note: e.c.kind === "inpatient" ? e.c.note : null,
               createdAt: now,
               createdBy: actor.id,
               createdByName: actor.name
@@ -11004,6 +13595,7 @@ var init_storage_file = __esm({
               normId: n.id,
               quantity: n.quantity,
               posted: 0,
+              procedureTaskId: null,
               reason: null,
               note: null,
               createdAt: now,
@@ -11035,6 +13627,7 @@ var init_storage_file = __esm({
           normId: null,
           quantity: input.quantity,
           posted: 0,
+          procedureTaskId: null,
           reason: input.reason,
           note: input.note ?? null,
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -11067,9 +13660,16 @@ var init_storage_file = __esm({
       async cancelConsumption(id, reason, actor) {
         const c = this.db.labConsumptions.find((x) => x.id === id);
         if (!c) return void 0;
+        if (c.kind === "inpatient") throw new StorageConflict(INPATIENT_CONSUMPTION_FINAL);
         if (c.kind !== "extra") throw new StorageConflict(NORM_CONSUMPTION_FINAL);
+        this.returnConsumption(c, reason, actor);
+        await this.persist();
+        return this.consumptionView(c);
+      }
+      /** Puts what a consumption took back on its batches and marks it cancelled (refused once counted since). */
+      returnConsumption(c, reason, actor) {
         if (c.cancelledAt) throw new StorageConflict(CONSUMPTION_ALREADY_CANCELLED);
-        const out = this.db.stockMovements.filter((m) => m.consumptionId === id && m.kind === "consumption");
+        const out = this.db.stockMovements.filter((m) => m.consumptionId === c.id && m.kind === "consumption");
         if (this.countedSince(out.map((m) => m.batchId), c.createdAt)) throw new StorageConflict(COUNTED_AFTER_DOCUMENT);
         const now = (/* @__PURE__ */ new Date()).toISOString();
         for (const m of out) {
@@ -11084,7 +13684,7 @@ var init_storage_file = __esm({
             receiptId: null,
             issueId: null,
             countId: null,
-            consumptionId: id,
+            consumptionId: c.id,
             note: reason,
             createdAt: now,
             createdBy: actor.id,
@@ -11092,8 +13692,6 @@ var init_storage_file = __esm({
           });
         }
         Object.assign(c, { cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
-        await this.persist();
-        return this.consumptionView(c);
       }
       // ------------------------------------------------------- reports (B5.7)
       /** Ledger movements recorded before `to`, each with its bucket and money. */
@@ -11121,7 +13719,33 @@ var init_storage_file = __esm({
             paid: this.db.payments.filter((p) => p.appointmentId === a.id && !p.voidedAt).reduce((s, p) => s + p.amount, 0)
           };
         });
-        return buildBillLines(orders2, appts);
+        return buildBillLines(orders2, appts, this.stayBills((a) => a.visitId === visitId));
+      }
+      /** B6.6: stays as bill lines, their charge worked out by stayCharge. */
+      stayBills(match) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        return this.db.admissions.filter(match).map((a) => {
+          const charge = stayCharge({
+            status: a.status,
+            periods: this.db.admissionBeds.filter((p) => p.admissionId === a.id).map((p) => ({
+              fromAt: p.fromAt,
+              toAt: p.toAt,
+              dayPrice: p.dayPrice ?? 0,
+              wardName: this.db.wards.find((w) => w.id === p.wardId)?.name ?? "\u2014",
+              bedLabel: this.db.beds.find((b) => b.id === p.bedId)?.label ?? "\u2014"
+            })),
+            orders: this.db.inpatientOrders.filter((o) => o.admissionId === a.id).map((o) => ({ id: o.id, name: o.name, unitPrice: o.unitPrice ?? null, done: this.db.procedureTasks.filter((t2) => t2.orderId === o.id && t2.status === "done").length })),
+            discount: a.discount ?? 0,
+            now,
+            dayOf: localDay
+          });
+          const paid = this.db.payments.filter((x) => x.admissionId === a.id && !x.voidedAt).reduce((s, x) => s + x.amount, 0);
+          return { id: a.id, number: a.number, status: a.status, admittedAt: a.admittedAt, visitId: a.visitId ?? null, charge, paid };
+        });
+      }
+      async getStayCharge(admissionId) {
+        const [s] = this.stayBills((a) => a.id === admissionId);
+        return s && { visitId: s.visitId, charge: s.charge, paid: s.paid };
       }
       async getBill(visitId) {
         const visit = this.db.visits.find((v) => v.id === visitId);
@@ -11131,9 +13755,12 @@ var init_storage_file = __esm({
         const invoice = this.db.invoices.find((i) => i.visitId === visitId) ?? null;
         const receipts = invoice ? this.db.invoicePayments.filter((r) => r.invoiceId === invoice.id).sort((a, b) => b.number - a.number).map((r) => ({
           ...r,
+          // Receipts written before B7.6 carry none of these.
+          tendered: r.tendered ?? null,
+          dueAfter: r.dueAfter ?? null,
+          printCount: r.printCount ?? 0,
           shares: this.db.payments.filter((p) => p.invoicePaymentId === r.id).map((p) => {
-            const source = p.orderId ? "order" : "appointment";
-            const sourceId = p.orderId ?? p.appointmentId;
+            const { source, sourceId } = paymentSource(p);
             return { source, sourceId, title: lines.find((l) => l.source === source && l.sourceId === sourceId)?.title ?? "\u2014", amount: p.amount };
           })
         })) : [];
@@ -11144,6 +13771,8 @@ var init_storage_file = __esm({
           invoice: invoice ? { ...invoice } : null,
           lines,
           receipts,
+          refunds: await this.listRefunds({ visitId }),
+          discounts: this.db.billDiscounts.filter((d) => d.visitId === visitId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
           totals: billTotals(lines)
         };
       }
@@ -11167,6 +13796,7 @@ var init_storage_file = __esm({
       async payBill(visitId, input, actor) {
         const visit = this.db.visits.find((v) => v.id === visitId);
         if (!visit) return void 0;
+        const shiftId = this.shiftFor(actor);
         const lines = this.billLinesOf(visitId);
         const { shares, taken } = allocatePayment(lines, input.amount);
         if (taken === 0) throw new StorageConflict(BILL_PAID);
@@ -11181,6 +13811,9 @@ var init_storage_file = __esm({
           amount: taken,
           method: input.method,
           note: input.note ?? null,
+          tendered: input.amount,
+          dueAfter: billTotals(lines).due - taken,
+          printCount: 0,
           createdAt: now,
           createdBy: actor.id,
           createdByName: actor.name,
@@ -11193,9 +13826,10 @@ var init_storage_file = __esm({
         for (const s of shares) {
           this.db.payments.push({
             id: randomUUID(),
-            orderId: s.source === "order" ? s.sourceId : null,
-            appointmentId: s.source === "appointment" ? s.sourceId : null,
+            ...paymentTarget(s.source, s.sourceId),
             invoicePaymentId: receipt.id,
+            refundId: null,
+            shiftId,
             amount: s.amount,
             method: input.method,
             note: `Hisobvaraq \u2116${invoice.number}, kvitansiya \u2116${receipt.number}`,
@@ -11216,6 +13850,7 @@ var init_storage_file = __esm({
       async voidReceipt(receiptId, reason, actor) {
         const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
         if (!rec) return void 0;
+        this.refuseClosedShift(this.db.payments.find((x) => x.invoicePaymentId === receiptId)?.shiftId ?? null);
         if (rec.voidedAt) throw new StorageConflict(RECEIPT_ALREADY_VOIDED);
         const now = (/* @__PURE__ */ new Date()).toISOString();
         Object.assign(rec, { voidedAt: now, voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
@@ -11249,11 +13884,1010 @@ var init_storage_file = __esm({
             invoiceNumber: this.db.invoices.find((i) => i.visitId === v.id)?.number ?? null,
             appointments: lines.filter((l) => l.source === "appointment" && !l.cancelled).length,
             orders: lines.filter((l) => l.source === "order" && !l.cancelled).length,
+            stays: lines.filter((l) => l.source === "stay" && !l.cancelled).length,
             totals: billTotals(lines)
           });
         }
         rows.sort((a, b) => b.visitDate.localeCompare(a.visitDate) || a.patientName.localeCompare(b.patientName));
         return filterBills(rows, query.status).slice(0, query.limit ?? 500);
+      }
+      async discountBill(visitId, input, actor) {
+        const visit = this.db.visits.find((v) => v.id === visitId);
+        if (!visit) return void 0;
+        const lines = this.billLinesOf(visitId);
+        if (input.target && !lines.some((l) => l.source === input.target.source && l.sourceId === input.target.sourceId && l.amount > l.paid)) {
+          throw new StorageConflict(DISCOUNT_LINE_GONE);
+        }
+        const plan = planDiscount(lines, input.mode, input.value, input.target);
+        if (!plan.total) throw new StorageConflict(DISCOUNT_NOTHING);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const l of plan.lines) {
+          if (l.source === "order") {
+            const o = this.db.orders.find((x) => x.id === l.sourceId);
+            o.discount += l.amount;
+            o.totalAmount -= l.amount;
+            this.touchOrder(o, actor);
+          } else if (l.source === "stay") {
+            const st = this.db.admissions.find((x) => x.id === l.sourceId);
+            Object.assign(st, { discount: (st.discount ?? 0) + l.amount, updatedAt: now, updatedBy: actor.id });
+          } else {
+            const a = this.db.appointments.find((x) => x.id === l.sourceId);
+            a.discount = (a.discount ?? 0) + l.amount;
+            a.updatedAt = now;
+            a.updatedBy = actor.id;
+          }
+        }
+        const discount = {
+          id: randomUUID(),
+          patientId: visit.patientId,
+          visitId,
+          mode: input.mode,
+          value: input.value,
+          total: plan.total,
+          lines: plan.lines,
+          reason: input.reason,
+          createdAt: now,
+          createdBy: actor.id,
+          createdByName: actor.name
+        };
+        this.db.billDiscounts.push(discount);
+        await this.persist();
+        return { bill: await this.getBill(visitId), discount };
+      }
+      // ------------------------------------------------------------ B6.1 wards and beds
+      /** A bed shows "occupied" while an admission's bed period on it is open (B6.2); otherwise its own state. */
+      bedViewOf(b, occ = this.occupantsNow()) {
+        const occupant = occ.get(b.id) ?? null;
+        return { ...b, display: occupant ? "occupied" : b.state, occupant };
+      }
+      wardViewOf(w, occ = this.occupantsNow()) {
+        return {
+          ...w,
+          departmentName: this.db.departments.find((d) => d.id === w.departmentId)?.name ?? "\u2014",
+          beds: sortBeds(this.db.beds.filter((b) => b.wardId === w.id).map((b) => this.bedViewOf(b, occ)))
+        };
+      }
+      async listWards() {
+        return sortWards(this.db.wards.map((w) => this.wardViewOf(w)));
+      }
+      async getWard(id) {
+        const w = this.db.wards.find((x) => x.id === id);
+        return w && this.wardViewOf(w);
+      }
+      wardDepartmentProblem(departmentId) {
+        const d = this.db.departments.find((x) => x.id === departmentId);
+        return d && d.isActive && d.kind === "statsionar" ? null : WARD_DEPARTMENT;
+      }
+      wardNameTaken(departmentId, name, exceptId) {
+        return this.db.wards.some((w) => w.id !== exceptId && w.departmentId === departmentId && labelKey(w.name) === labelKey(name));
+      }
+      async createWard(input, actor) {
+        const problem = this.wardDepartmentProblem(input.departmentId);
+        if (problem) throw new Error(problem);
+        if (this.wardNameTaken(input.departmentId, input.name)) throw new StorageConflict(WARD_NAME_TAKEN);
+        const row = {
+          id: randomUUID(),
+          departmentId: input.departmentId,
+          name: input.name.trim(),
+          floor: input.floor ?? null,
+          gender: input.gender,
+          dayPrice: input.dayPrice,
+          note: input.note ?? null,
+          isActive: true,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          updatedAt: null,
+          updatedBy: null
+        };
+        this.db.wards.push(row);
+        await this.persist();
+        return this.wardViewOf(row);
+      }
+      async updateWard(id, patch, actor) {
+        const w = this.db.wards.find((x) => x.id === id);
+        if (!w) return void 0;
+        if (patch.departmentId && patch.departmentId !== w.departmentId) {
+          const problem = this.wardDepartmentProblem(patch.departmentId);
+          if (problem) throw new Error(problem);
+        }
+        if ((patch.name !== void 0 || patch.departmentId) && this.wardNameTaken(patch.departmentId ?? w.departmentId, patch.name ?? w.name, id)) throw new StorageConflict(WARD_NAME_TAKEN);
+        if (patch.isActive === false || patch.departmentId && patch.departmentId !== w.departmentId) {
+          const occ = this.occupantsNow();
+          if (this.db.beds.some((b) => b.wardId === id && occ.has(b.id))) throw new StorageConflict(WARD_OCCUPIED);
+        }
+        if (patch.departmentId !== void 0) w.departmentId = patch.departmentId;
+        if (patch.name !== void 0) w.name = patch.name.trim();
+        if (patch.floor !== void 0) w.floor = patch.floor;
+        if (patch.gender !== void 0) w.gender = patch.gender;
+        if (patch.dayPrice !== void 0) w.dayPrice = patch.dayPrice;
+        if (patch.note !== void 0) w.note = patch.note;
+        if (patch.isActive !== void 0) w.isActive = patch.isActive;
+        w.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        w.updatedBy = actor.id;
+        await this.persist();
+        return this.wardViewOf(w);
+      }
+      async deleteWard(id) {
+        if (!this.db.wards.some((w) => w.id === id)) return false;
+        if (this.db.beds.some((b) => b.wardId === id)) throw new StorageConflict(WARD_HAS_BEDS);
+        this.db.wards = this.db.wards.filter((w) => w.id !== id);
+        await this.persist();
+        return true;
+      }
+      async addBeds(wardId, count, actor) {
+        const w = this.db.wards.find((x) => x.id === wardId);
+        if (!w) return void 0;
+        const existing = this.db.beds.filter((b) => b.wardId === wardId);
+        if (existing.length + count > MAX_BEDS_PER_WARD) throw new Error(`Palatada ko'pi bilan ${MAX_BEDS_PER_WARD} ta yotoq bo'ladi`);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const label of nextBedLabels(existing.map((b) => b.label), count)) {
+          this.db.beds.push({
+            id: randomUUID(),
+            wardId,
+            label,
+            state: "ready",
+            stateNote: null,
+            stateChangedAt: null,
+            stateChangedBy: null,
+            stateChangedByName: null,
+            note: null,
+            isActive: true,
+            createdAt: now,
+            createdBy: actor.id,
+            updatedAt: null,
+            updatedBy: null
+          });
+        }
+        await this.persist();
+        return this.wardViewOf(w);
+      }
+      async updateBed(id, patch, actor) {
+        const b = this.db.beds.find((x) => x.id === id);
+        if (!b) return void 0;
+        if (patch.isActive === false && this.occupantsNow().has(id)) throw new StorageConflict(BED_OCCUPIED);
+        if (patch.label !== void 0 && this.db.beds.some((x) => x.id !== id && x.wardId === b.wardId && labelKey(x.label) === labelKey(patch.label))) {
+          throw new StorageConflict(BED_LABEL_TAKEN);
+        }
+        if (patch.label !== void 0) b.label = patch.label.trim();
+        if (patch.note !== void 0) b.note = patch.note;
+        if (patch.isActive !== void 0) b.isActive = patch.isActive;
+        b.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+        b.updatedBy = actor.id;
+        await this.persist();
+        return this.bedViewOf(b);
+      }
+      async setBedState(id, state, note, actor) {
+        if (state === "maintenance" && !note) throw new Error(BED_MAINTENANCE_NOTE);
+        const b = this.db.beds.find((x) => x.id === id);
+        if (!b) return void 0;
+        if (this.occupantsNow().has(id)) throw new StorageConflict(BED_OCCUPIED);
+        Object.assign(b, { state, stateNote: note, stateChangedAt: (/* @__PURE__ */ new Date()).toISOString(), stateChangedBy: actor.id, stateChangedByName: actor.name });
+        await this.persist();
+        return this.bedViewOf(b);
+      }
+      async deleteBed(id) {
+        if (!this.db.beds.some((b) => b.id === id)) return false;
+        if (this.db.admissionBeds.some((p) => p.bedId === id)) throw new StorageConflict(BED_HAS_HISTORY);
+        this.db.beds = this.db.beds.filter((b) => b.id !== id);
+        await this.persist();
+        return true;
+      }
+      // ------------------------------------------------------------ B6.2 admissions
+      occupantsNow() {
+        const out = /* @__PURE__ */ new Map();
+        for (const p of this.db.admissionBeds) {
+          if (p.toAt) continue;
+          const a = this.db.admissions.find((x) => x.id === p.admissionId);
+          const patient = a && this.db.patients.find((x) => x.id === a.patientId);
+          if (!a || !patient) continue;
+          out.set(p.bedId, { admissionId: a.id, number: a.number, patientId: patient.id, patientName: patient.fullName, patientNumber: patient.patientNumber, since: p.fromAt });
+        }
+        return out;
+      }
+      admissionViewOf(a) {
+        const patient = this.db.patients.find((p) => p.id === a.patientId);
+        const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
+        const user = doctor && this.db.users.find((u) => u.id === doctor.userId);
+        const stays = this.db.admissionBeds.filter((p) => p.admissionId === a.id).sort((x, y) => x.fromAt.localeCompare(y.fromAt)).map((p) => {
+          const ward = this.db.wards.find((w) => w.id === p.wardId);
+          return { ...p, wardName: ward?.name ?? "\u2014", bedLabel: this.db.beds.find((b) => b.id === p.bedId)?.label ?? "\u2014", dayPrice: p.dayPrice ?? ward?.dayPrice ?? 0 };
+        });
+        const open2 = stays.find((s) => !s.toAt);
+        return {
+          ...a,
+          patientName: patient?.fullName ?? "\u2014",
+          patientNumber: patient?.patientNumber ?? 0,
+          patientGender: patient?.gender ?? null,
+          doctorName: user?.fullName ?? "\u2014",
+          doctorSpecialty: doctor?.specialty ?? null,
+          departmentName: this.db.departments.find((d) => d.id === a.departmentId)?.name ?? "\u2014",
+          stays,
+          current: open2 ? { bedId: open2.bedId, bedLabel: open2.bedLabel, wardId: open2.wardId, wardName: open2.wardName, since: open2.fromAt } : null
+        };
+      }
+      async listAdmissions(query = {}) {
+        return this.db.admissions.filter((a) => (!query.status || a.status === query.status) && (!query.patientId || a.patientId === query.patientId) && (!query.id || a.id === query.id)).filter((a) => {
+          const span = query.inHospitalBetween;
+          if (!span) return true;
+          return a.status !== "cancelled" && Date.parse(a.admittedAt) <= Date.parse(span.to) && (!a.dischargedAt || Date.parse(a.dischargedAt) >= Date.parse(span.from));
+        }).sort((x, y) => y.admittedAt.localeCompare(x.admittedAt)).slice(0, query.limit ?? 500).map((a) => this.admissionViewOf(a));
+      }
+      async getAdmission(id) {
+        const a = this.db.admissions.find((x) => x.id === id);
+        return a && this.admissionViewOf(a);
+      }
+      freeBed(bedId) {
+        const bed = this.db.beds.find((b) => b.id === bedId);
+        const ward = bed && this.db.wards.find((w) => w.id === bed.wardId);
+        const problem = bedFreeProblem(bed, ward?.isActive ?? false, this.occupantsNow().has(bedId));
+        if (problem) throw new StorageConflict(problem);
+        return { ward };
+      }
+      async admitPatient(input, actor) {
+        const now = /* @__PURE__ */ new Date();
+        const admittedAt = input.admittedAt ? new Date(input.admittedAt) : now;
+        if (admittedAt.getTime() > now.getTime() + 6e4) throw new Error(ADMISSION_IN_FUTURE);
+        if (!this.db.doctors.some((d) => d.id === input.doctorId && d.isActive)) throw new Error(ADMISSION_DOCTOR);
+        if (!this.db.patients.some((p) => p.id === input.patientId)) throw new Error("Bemor topilmadi");
+        if (this.db.admissions.some((a2) => a2.patientId === input.patientId && a2.status === "active")) throw new StorageConflict(PATIENT_ALREADY_ADMITTED);
+        const { ward } = this.freeBed(input.bedId);
+        this.db.counters.admissionNumber += 1;
+        const a = {
+          id: randomUUID(),
+          number: this.db.counters.admissionNumber,
+          patientId: input.patientId,
+          departmentId: ward.departmentId,
+          doctorId: input.doctorId,
+          admittedAt: admittedAt.toISOString(),
+          reason: input.reason,
+          plannedDischargeOn: null,
+          // B6.6: the stay bills on the visit of its admission day.
+          visitId: this.ensureVisit(input.patientId, localDay(admittedAt.toISOString()), actor.id).id,
+          discount: 0,
+          status: "active",
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelledByName: null,
+          cancelReason: null,
+          dischargedAt: null,
+          dischargedBy: null,
+          dischargedByName: null,
+          createdAt: now.toISOString(),
+          createdBy: actor.id,
+          createdByName: actor.name,
+          updatedAt: null,
+          updatedBy: null
+        };
+        this.db.admissions.push(a);
+        this.db.admissionBeds.push({ id: randomUUID(), admissionId: a.id, bedId: input.bedId, wardId: ward.id, fromAt: a.admittedAt, toAt: null, dayPrice: ward.dayPrice, note: null, movedBy: actor.id, movedByName: actor.name });
+        await this.persist();
+        return this.admissionViewOf(a);
+      }
+      async transferAdmission(id, input, actor) {
+        const a = this.db.admissions.find((x) => x.id === id);
+        if (!a) return void 0;
+        if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+        const open2 = this.db.admissionBeds.find((p) => p.admissionId === id && !p.toAt);
+        if (open2?.bedId === input.bedId) throw new StorageConflict(ADMISSION_SAME_BED);
+        const { ward } = this.freeBed(input.bedId);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        if (open2) {
+          open2.toAt = now;
+          const left = this.db.beds.find((b) => b.id === open2.bedId);
+          if (left) Object.assign(left, { state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name });
+        }
+        this.db.admissionBeds.push({ id: randomUUID(), admissionId: id, bedId: input.bedId, wardId: ward.id, fromAt: now, toAt: null, dayPrice: ward.dayPrice, note: input.note, movedBy: actor.id, movedByName: actor.name });
+        Object.assign(a, { departmentId: ward.departmentId, updatedAt: now, updatedBy: actor.id });
+        await this.persist();
+        return this.admissionViewOf(a);
+      }
+      async planDischarge(id, date, actor) {
+        const a = this.db.admissions.find((x) => x.id === id);
+        if (!a) return void 0;
+        if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+        if (date && date < localDay(a.admittedAt)) throw new Error(DISCHARGE_PLAN_BEFORE_ADMISSION);
+        Object.assign(a, { plannedDischargeOn: date, updatedAt: (/* @__PURE__ */ new Date()).toISOString(), updatedBy: actor.id });
+        await this.persist();
+        return this.admissionViewOf(a);
+      }
+      // ------------------------------------------------------------ B6.4 case history
+      async listCaseHistory(admissionId) {
+        return this.db.caseHistoryVersions.filter((v) => v.admissionId === admissionId).sort((a, b) => b.version - a.version);
+      }
+      openStay(admissionId) {
+        const a = this.db.admissions.find((x) => x.id === admissionId);
+        if (a && a.status !== "active") throw new StorageConflict(CASE_CLOSED);
+        return a;
+      }
+      async saveCaseHistory(admissionId, baseVersion, text2, actor) {
+        if (!this.openStay(admissionId)) return void 0;
+        const latest = (await this.listCaseHistory(admissionId))[0];
+        if ((latest?.version ?? 0) !== baseVersion) throw new StorageConflict(CASE_HISTORY_STALE);
+        const problem = caseSaveProblem(latest ? caseTextOf(latest) : null, text2);
+        if (problem) throw new Error(problem);
+        const row = { id: randomUUID(), admissionId, version: baseVersion + 1, ...text2, savedAt: (/* @__PURE__ */ new Date()).toISOString(), savedBy: actor.id, savedByName: actor.name };
+        this.db.caseHistoryVersions.push(row);
+        await this.persist();
+        return row;
+      }
+      async listObservations(admissionId) {
+        return this.db.admissionObservations.filter((o) => o.admissionId === admissionId).sort((a, b) => b.observedAt.localeCompare(a.observedAt) || b.createdAt.localeCompare(a.createdAt));
+      }
+      async getObservation(id) {
+        return this.db.admissionObservations.find((o) => o.id === id);
+      }
+      async addObservation(admissionId, input, actor) {
+        const problem = observationProblem(input.vitals, input.note);
+        if (problem) throw new Error(problem);
+        const a = this.openStay(admissionId);
+        if (!a) return void 0;
+        const late = observationTimeProblem(input.observedAt, a.admittedAt);
+        if (late) throw new Error(late);
+        const row = {
+          id: randomUUID(),
+          admissionId,
+          observedAt: new Date(input.observedAt).toISOString(),
+          ...input.vitals,
+          note: input.note,
+          authorId: actor.id,
+          authorName: actor.name,
+          authorRole: input.authorRole,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          voidedAt: null,
+          voidedBy: null,
+          voidedByName: null,
+          voidReason: null
+        };
+        this.db.admissionObservations.push(row);
+        await this.persist();
+        return row;
+      }
+      async voidObservation(id, reason, any, actor) {
+        const o = this.db.admissionObservations.find((x) => x.id === id);
+        if (!o) return void 0;
+        if (o.voidedAt) throw new StorageConflict(OBSERVATION_VOIDED);
+        if (!any && o.authorId !== actor.id) throw new StorageConflict(OBSERVATION_NOT_YOURS);
+        this.openStay(o.admissionId);
+        Object.assign(o, { voidedAt: (/* @__PURE__ */ new Date()).toISOString(), voidedBy: actor.id, voidedByName: actor.name, voidReason: reason });
+        await this.persist();
+        return o;
+      }
+      async cancelAdmission(id, reason, actor) {
+        const a = this.db.admissions.find((x) => x.id === id);
+        if (!a) return void 0;
+        if (a.status !== "active") throw new StorageConflict(ADMISSION_NOT_ACTIVE);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const p of this.db.admissionBeds) if (p.admissionId === id && !p.toAt) p.toAt = now;
+        for (const o of this.db.inpatientOrders)
+          if (o.admissionId === id && o.status === "active") Object.assign(o, { status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: `Yotqizish bekor qilindi: ${reason}` });
+        for (const t2 of this.db.procedureTasks) if (t2.admissionId === id && t2.status === "planned") t2.status = "cancelled";
+        Object.assign(a, { status: "cancelled", cancelledAt: now, cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason, updatedAt: now, updatedBy: actor.id });
+        await this.persist();
+        return this.admissionViewOf(a);
+      }
+      // ------------------------------------------------------------ B8.4 monitoring
+      // Kept in memory: the JSON store is a single local process, and these are operational, not records.
+      requestStats = /* @__PURE__ */ new Map();
+      errorGroups = /* @__PURE__ */ new Map();
+      async saveRequestStats(rows) {
+        for (const r of rows) {
+          const k = `${r.hour}|${r.method}|${r.route}`;
+          const a = this.requestStats.get(k);
+          if (!a) {
+            this.requestStats.set(k, { ...r, histogram: [...r.histogram] });
+            continue;
+          }
+          a.count += r.count;
+          a.totalMs += r.totalMs;
+          a.maxMs = Math.max(a.maxMs, r.maxMs);
+          a.errors += r.errors;
+          r.histogram.forEach((n, i) => a.histogram[i] = (a.histogram[i] ?? 0) + n);
+        }
+      }
+      async listRequestStats(sinceHour) {
+        return [...this.requestStats.values()].filter((r) => r.hour >= sinceHour).map((r) => ({ ...r, histogram: [...r.histogram] }));
+      }
+      async recordErrors(events) {
+        for (const e of events) {
+          const g = this.errorGroups.get(e.fingerprint);
+          if (!g) {
+            this.errorGroups.set(e.fingerprint, {
+              id: randomUUID(),
+              fingerprint: e.fingerprint,
+              source: e.source,
+              where: e.where,
+              name: e.name,
+              message: e.message,
+              stack: e.stack,
+              count: e.count,
+              firstSeen: e.at,
+              lastSeen: e.at,
+              lastStatus: e.status,
+              lastRole: e.role,
+              resolvedAt: null,
+              resolvedByName: null
+            });
+            continue;
+          }
+          Object.assign(g, { count: g.count + e.count, lastSeen: e.at > g.lastSeen ? e.at : g.lastSeen, lastStatus: e.status, lastRole: e.role, stack: e.stack ?? g.stack, resolvedAt: null, resolvedByName: null });
+        }
+      }
+      async listErrorGroups(query) {
+        return [...this.errorGroups.values()].filter((g) => (!query.since || g.lastSeen >= query.since) && (query.includeResolved || !g.resolvedAt)).sort((a, b) => b.lastSeen.localeCompare(a.lastSeen)).slice(0, query.limit).map(({ fingerprint: _f, ...g }) => ({ ...g }));
+      }
+      async resolveErrorGroup(id, actor) {
+        const g = [...this.errorGroups.values()].find((x) => x.id === id);
+        if (!g) return void 0;
+        Object.assign(g, { resolvedAt: (/* @__PURE__ */ new Date()).toISOString(), resolvedByName: actor.name });
+        const { fingerprint: _f, ...view } = g;
+        return { ...view };
+      }
+      async pruneMonitoring(before) {
+        for (const [k, r] of this.requestStats) if (r.hour < before) this.requestStats.delete(k);
+        for (const [k, g] of this.errorGroups) if (g.lastSeen < before) this.errorGroups.delete(k);
+      }
+      async ping() {
+      }
+      // ------------------------------------------------------------ B8.1 change feed
+      // In memory: one local process, so its tabs only need to see versions move.
+      // After a restart they start again from zero, which the tabs read as "changed".
+      topicVersions = {};
+      async bumpTopics(topics) {
+        for (const t2 of new Set(topics)) this.topicVersions[t2] = (this.topicVersions[t2] ?? 0) + 1;
+      }
+      async getTopicVersions() {
+        return { ...this.topicVersions };
+      }
+      // ------------------------------------------------------------ B8.3 backups
+      /** The JSON store has no automatic backups (they are a Postgres deployment's); the panel says so. */
+      async listBackupRuns(_limit) {
+        return [];
+      }
+      // ------------------------------------------------------------ R.2 patient flow
+      async listActivity(from, to) {
+        const within = (d) => d >= from && d <= to;
+        const seen = /* @__PURE__ */ new Set();
+        const events = [];
+        const add2 = (day, patientId, kind) => {
+          const k = `${day}|${patientId}|${kind}`;
+          if (seen.has(k)) return;
+          seen.add(k);
+          events.push({ day, patientId, kind });
+        };
+        const live = this.db.orders.filter((o) => o.status !== "cancelled");
+        for (const o of live) if (within(localDay(o.createdAt))) add2(localDay(o.createdAt), o.patientId, "lab");
+        for (const a of this.db.appointments) if (["arrived", "in_progress", "completed"].includes(a.status) && within(a.date)) add2(a.date, a.patientId, "visit");
+        const fresh = /* @__PURE__ */ new Map();
+        for (const p of this.db.patients) {
+          const d = localDay(p.createdAt);
+          if (within(d)) fresh.set(d, (fresh.get(d) ?? 0) + 1);
+        }
+        const tests2 = /* @__PURE__ */ new Map();
+        const bump2 = (day, key) => {
+          const t2 = tests2.get(day) ?? { day, ordered: 0, verified: 0 };
+          t2[key]++;
+          tests2.set(day, t2);
+        };
+        const liveIds = new Map(live.map((o) => [o.id, o]));
+        for (const ot of this.db.orderTests) {
+          const o = liveIds.get(ot.orderId);
+          if (!o) continue;
+          if (within(localDay(o.createdAt))) bump2(localDay(o.createdAt), "ordered");
+          if (ot.verifiedAt && within(localDay(ot.verifiedAt))) bump2(localDay(ot.verifiedAt), "verified");
+        }
+        return { events, newPatients: [...fresh.entries()].map(([day, count]) => ({ day, count })), tests: [...tests2.values()] };
+      }
+      // ------------------------------------------------------------ B6.7 discharge and epicrisis
+      async listEpicrisis(admissionId) {
+        return this.db.epicrisisVersions.filter((v) => v.admissionId === admissionId).sort((a, b) => b.version - a.version);
+      }
+      async saveEpicrisis(admissionId, baseVersion, text2, reason, actor) {
+        const a = this.db.admissions.find((x) => x.id === admissionId);
+        if (!a) return void 0;
+        if (a.status === "cancelled") throw new StorageConflict(EPICRISIS_CANCELLED);
+        if (a.status === "discharged" && !reason) throw new Error(EPICRISIS_REASON);
+        const latest = (await this.listEpicrisis(admissionId))[0];
+        if ((latest?.version ?? 0) !== baseVersion) throw new StorageConflict(EPICRISIS_STALE);
+        const problem = epicrisisSaveProblem(latest ? epicrisisTextOf(latest) : null, text2);
+        if (problem) throw new Error(problem);
+        const row = {
+          id: randomUUID(),
+          admissionId,
+          version: baseVersion + 1,
+          ...text2,
+          reason: a.status === "discharged" ? reason : null,
+          savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          savedBy: actor.id,
+          savedByName: actor.name
+        };
+        this.db.epicrisisVersions.push(row);
+        await this.persist();
+        return row;
+      }
+      async dischargeAdmission(id, at, actor) {
+        const a = this.db.admissions.find((x) => x.id === id);
+        if (!a) return void 0;
+        if (a.status !== "active") throw new StorageConflict(DISCHARGE_NOT_ACTIVE);
+        const late = dischargeTimeProblem(at, a.admittedAt);
+        if (late) throw new Error(late);
+        const latest = (await this.listEpicrisis(id))[0];
+        const missing = dischargeProblem(latest ? epicrisisTextOf(latest) : null);
+        if (missing) throw new Error(missing);
+        const when2 = new Date(at).toISOString();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const open2 = this.db.admissionBeds.find((p) => p.admissionId === id && !p.toAt);
+        if (open2) {
+          open2.toAt = when2 < open2.fromAt ? open2.fromAt : when2;
+          const bed = this.db.beds.find((b) => b.id === open2.bedId);
+          if (bed) Object.assign(bed, { state: "cleaning", stateNote: VACATED_NOTE, stateChangedAt: now, stateChangedBy: actor.id, stateChangedByName: actor.name });
+        }
+        for (const o of this.db.inpatientOrders)
+          if (o.admissionId === id && o.status === "active") Object.assign(o, { status: "stopped", stoppedAt: now, stoppedBy: actor.id, stoppedByName: actor.name, stopReason: "Bemor chiqarildi" });
+        for (const t2 of this.db.procedureTasks) if (t2.admissionId === id && t2.status === "planned") t2.status = "cancelled";
+        Object.assign(a, { status: "discharged", dischargedAt: when2, dischargedBy: actor.id, dischargedByName: actor.name, updatedAt: now, updatedBy: actor.id });
+        await this.persist();
+        return this.admissionViewOf(a);
+      }
+      // ------------------------------------------------------------ B6.5 orders and procedures
+      orderView(o) {
+        return { ...o, tasks: this.db.procedureTasks.filter((t2) => t2.orderId === o.id).sort((x, y) => x.plannedAt.localeCompare(y.plannedAt)) };
+      }
+      async listInpatientOrders(admissionId) {
+        return this.db.inpatientOrders.filter((o) => o.admissionId === admissionId).sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map((o) => this.orderView(o));
+      }
+      async getInpatientOrder(id) {
+        const o = this.db.inpatientOrders.find((x) => x.id === id);
+        return o && this.orderView(o);
+      }
+      async createInpatientOrder(admissionId, order, slots, actor) {
+        const a = this.db.admissions.find((x) => x.id === admissionId);
+        if (!a) return void 0;
+        if (a.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+        const o = {
+          id: randomUUID(),
+          admissionId,
+          ...order,
+          status: "active",
+          prescribedBy: actor.id,
+          prescribedByName: actor.name,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          stoppedAt: null,
+          stoppedBy: null,
+          stoppedByName: null,
+          stopReason: null
+        };
+        this.db.inpatientOrders.push(o);
+        for (const plannedAt of slots) {
+          this.db.procedureTasks.push({ id: randomUUID(), orderId: o.id, admissionId, plannedAt, status: "planned", doneAt: null, doneBy: null, doneByName: null, note: null, revertedAt: null, revertedByName: null, revertReason: null });
+        }
+        await this.persist();
+        return this.orderView(o);
+      }
+      async stopInpatientOrder(id, reason, actor) {
+        const o = this.db.inpatientOrders.find((x) => x.id === id);
+        if (!o) return void 0;
+        if (o.status !== "active") throw new StorageConflict(ORDER_STOPPED);
+        if (this.db.admissions.find((x) => x.id === o.admissionId)?.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+        const now = /* @__PURE__ */ new Date();
+        Object.assign(o, { status: "stopped", stoppedAt: now.toISOString(), stoppedBy: actor.id, stoppedByName: actor.name, stopReason: reason });
+        const from = now.getTime() - DUE_WINDOW_MS;
+        for (const t2 of this.db.procedureTasks) if (t2.orderId === id && t2.status === "planned" && Date.parse(t2.plannedAt) >= from) t2.status = "cancelled";
+        await this.persist();
+        return this.orderView(o);
+      }
+      taskView(t2) {
+        const o = this.db.inpatientOrders.find((x) => x.id === t2.orderId);
+        const a = this.db.admissions.find((x) => x.id === t2.admissionId);
+        const p = a && this.db.patients.find((x) => x.id === a.patientId);
+        if (!o || !a || !p) return void 0;
+        const open2 = this.db.admissionBeds.find((x) => x.admissionId === a.id && !x.toAt);
+        const given = this.db.labConsumptions.find((c) => c.procedureTaskId === t2.id && c.kind === "inpatient" && !c.cancelledAt);
+        const item = given && this.db.inventoryItems.find((i) => i.id === given.itemId);
+        return {
+          ...t2,
+          stock: given ? { quantity: given.quantity, posted: given.posted, unit: item?.unit ?? "", itemName: item?.name ?? "" } : null,
+          kind: o.kind,
+          name: o.name,
+          dose: o.dose,
+          route: o.route,
+          orderNote: o.note,
+          orderStatus: o.status,
+          prescribedByName: o.prescribedByName,
+          admissionNumber: a.number,
+          patientId: p.id,
+          patientName: p.fullName,
+          patientNumber: p.patientNumber,
+          wardName: open2 ? this.db.wards.find((w) => w.id === open2.wardId)?.name ?? null : null,
+          bedLabel: open2 ? this.db.beds.find((b) => b.id === open2.bedId)?.label ?? null : null
+        };
+      }
+      async listProcedureTasks(query) {
+        const from = Date.parse(query.from);
+        const to = Date.parse(query.to);
+        const active = new Set(this.db.admissions.filter((a) => a.status === "active").map((a) => a.id));
+        return this.db.procedureTasks.filter((t2) => active.has(t2.admissionId) && (!query.admissionId || t2.admissionId === query.admissionId) && Date.parse(t2.plannedAt) >= from && Date.parse(t2.plannedAt) < to).sort((x, y) => x.plannedAt.localeCompare(y.plannedAt)).map((t2) => this.taskView(t2)).filter((t2) => Boolean(t2));
+      }
+      async getProcedureTask(id) {
+        const t2 = this.db.procedureTasks.find((x) => x.id === id);
+        return t2 && this.taskView(t2);
+      }
+      openTask(id) {
+        const t2 = this.db.procedureTasks.find((x) => x.id === id);
+        if (t2 && this.db.admissions.find((a) => a.id === t2.admissionId)?.status !== "active") throw new StorageConflict(ORDER_STAY_CLOSED);
+        return t2;
+      }
+      async markProcedureTask(id, mark, actor) {
+        const t2 = this.openTask(id);
+        if (!t2) return void 0;
+        const problem = markDoneProblem(t2);
+        if (problem) throw new StorageConflict(problem);
+        Object.assign(t2, { status: mark.status, doneAt: (/* @__PURE__ */ new Date()).toISOString(), doneBy: actor.id, doneByName: actor.name, note: mark.note });
+        if (mark.status === "done") this.issueDose(t2, actor);
+        await this.persist();
+        return this.taskView(t2);
+      }
+      /** B6.6b: a stocked medicine's dose, given, leaves the warehouse (FEFO; the rest a shortage), as on Postgres. */
+      issueDose(t2, actor) {
+        const o = this.db.inpatientOrders.find((x) => x.id === t2.orderId);
+        if (!o || o.kind !== "medicine" || !o.itemId || !o.issueQty) return;
+        const a = this.db.admissions.find((x) => x.id === t2.admissionId);
+        const c = {
+          id: randomUUID(),
+          kind: "inpatient",
+          orderId: null,
+          orderTestId: null,
+          testId: null,
+          itemId: o.itemId,
+          normId: null,
+          quantity: o.issueQty,
+          posted: 0,
+          procedureTaskId: t2.id,
+          reason: null,
+          note: `Statsionar karta \u2116${a?.number ?? "?"}: ${o.name}${o.dose ? ` ${o.dose}` : ""}`,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          createdBy: actor.id,
+          createdByName: actor.name,
+          settledAt: null,
+          settledByName: null,
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelledByName: null,
+          cancelReason: null
+        };
+        this.db.labConsumptions.push(c);
+        this.postConsumptions([{ c, need: c.quantity }], todayKey(), actor);
+      }
+      async revertProcedureTask(id, reason, actor) {
+        const t2 = this.openTask(id);
+        if (!t2) return void 0;
+        if (t2.status !== "done" && t2.status !== "missed") throw new StorageConflict(TASK_NOT_MARKED);
+        const given = this.db.labConsumptions.find((c) => c.procedureTaskId === t2.id && c.kind === "inpatient" && !c.cancelledAt);
+        if (given) this.returnConsumption(given, `Muolaja belgisi qaytarildi: ${reason}`, actor);
+        Object.assign(t2, { status: "planned", doneAt: null, doneBy: null, doneByName: null, note: null, revertedAt: (/* @__PURE__ */ new Date()).toISOString(), revertedByName: actor.name, revertReason: reason });
+        await this.persist();
+        return this.taskView(t2);
+      }
+      async financeServices(days) {
+        const acc = /* @__PURE__ */ new Map();
+        const put = (r) => {
+          const key = `${r.kind}|${r.name}|${r.doctorName ?? ""}`;
+          const t2 = acc.get(key) ?? { ...r, count: 0, gross: 0, discount: 0, net: 0, paid: 0 };
+          t2.count += r.count;
+          t2.gross += r.gross;
+          t2.discount += r.discount;
+          t2.net += r.net;
+          t2.paid += r.paid;
+          acc.set(key, t2);
+        };
+        for (const a of this.db.appointments) {
+          if (!["arrived", "in_progress", "completed"].includes(a.status) || a.date < days.from || a.date > days.to) continue;
+          const service = a.serviceId ? this.db.services.find((s) => s.id === a.serviceId) : void 0;
+          const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
+          const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : void 0;
+          const discount = a.discount ?? 0;
+          put({
+            kind: service?.kind ?? "konsultatsiya",
+            name: service?.name ?? `${doctor?.specialty ?? "Shifokor"} ko'rigi`,
+            doctorName: user?.fullName ?? null,
+            count: 1,
+            gross: a.price,
+            discount,
+            net: a.price - discount,
+            paid: this.db.payments.filter((p) => p.appointmentId === a.id && !p.voidedAt).reduce((s, p) => s + p.amount, 0)
+          });
+        }
+        for (const o of this.db.orders) {
+          const day = localDay(o.createdAt);
+          if (o.status === "cancelled" || day < days.from || day > days.to) continue;
+          put({ kind: "laboratoriya", name: "Laboratoriya tahlillari", doctorName: null, count: 1, gross: o.totalAmount + o.discount, discount: o.discount, net: o.totalAmount, paid: o.paidAmount });
+        }
+        for (const s of this.stayBills((a) => a.status !== "cancelled" && localDay(a.admittedAt) >= days.from && localDay(a.admittedAt) <= days.to)) {
+          const discount = Math.min(s.charge.discount, s.charge.gross);
+          put({ kind: "statsionar", name: "Statsionar: yotoq-kun va muolajalar", doctorName: null, count: 1, gross: s.charge.gross, discount, net: s.charge.gross - discount, paid: s.paid });
+        }
+        return [...acc.values()];
+      }
+      async countBillDiscounts(range) {
+        return this.db.billDiscounts.filter((d) => d.createdAt >= range.from && d.createdAt < range.to).length;
+      }
+      async listDebtors() {
+        const byPatient = /* @__PURE__ */ new Map();
+        for (const v of this.db.visits) {
+          const due = billTotals(this.billLinesOf(v.id)).due;
+          if (!due) continue;
+          const p = this.db.patients.find((x) => x.id === v.patientId);
+          const row = byPatient.get(v.patientId) ?? {
+            patientId: v.patientId,
+            patientNumber: p?.patientNumber ?? 0,
+            patientName: p?.fullName ?? "\u2014",
+            phone: p?.phone ?? null,
+            bills: 0,
+            due: 0,
+            oldest: v.visitDate,
+            latest: v.visitDate
+          };
+          row.bills++;
+          row.due += due;
+          if (v.visitDate < row.oldest) row.oldest = v.visitDate;
+          if (v.visitDate > row.latest) row.latest = v.visitDate;
+          byPatient.set(v.patientId, row);
+        }
+        return sortDebtors(Array.from(byPatient.values()));
+      }
+      // ------------------------------------------------------------ B7.4 refunds
+      refundView(r) {
+        const patient = this.db.patients.find((p) => p.id === r.patientId);
+        return {
+          ...r,
+          patientNumber: patient?.patientNumber ?? 0,
+          patientName: patient?.fullName ?? "\u2014",
+          visitDate: this.db.visits.find((v) => v.id === r.visitId)?.visitDate ?? "",
+          shiftNumber: r.shiftId ? this.db.cashShifts.find((s) => s.id === r.shiftId)?.number ?? null : null
+        };
+      }
+      async getRefund(id) {
+        const r = this.db.refunds.find((x) => x.id === id);
+        return r && this.refundView(r);
+      }
+      async listRefunds(query) {
+        const dated = !(query.status && isOpenRefund(query.status));
+        return this.db.refunds.filter((r) => !query.visitId || r.visitId === query.visitId).filter((r) => !query.status || r.status === query.status).filter((r) => !dated || (!query.from || r.requestedAt >= query.from) && (!query.to || r.requestedAt < query.to)).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)).slice(0, query.limit ?? 300).map((r) => this.refundView(r));
+      }
+      async requestRefund(visitId, input, actor) {
+        const visit = this.db.visits.find((v) => v.id === visitId);
+        if (!visit) return void 0;
+        const available = refundAvailable(
+          this.billLinesOf(visitId),
+          this.db.refunds.filter((r) => r.visitId === visitId)
+        );
+        if (!available) throw new StorageConflict(REFUND_NOTHING);
+        if (input.amount > available) throw new StorageConflict(refundTooMuch(available));
+        this.db.counters.refundNumber += 1;
+        const row = {
+          id: randomUUID(),
+          number: this.db.counters.refundNumber,
+          patientId: visit.patientId,
+          visitId,
+          amount: input.amount,
+          method: input.method,
+          reason: input.reason,
+          status: "requested",
+          requestedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          requestedBy: actor.id,
+          requestedByName: actor.name,
+          decidedAt: null,
+          decidedBy: null,
+          decidedByName: null,
+          decisionNote: null,
+          paidAt: null,
+          paidBy: null,
+          paidByName: null,
+          shiftId: null,
+          lines: null,
+          cancelledAt: null,
+          cancelledBy: null,
+          cancelledByName: null,
+          cancelReason: null,
+          printCount: 0
+        };
+        this.db.refunds.push(row);
+        await this.persist();
+        return this.refundView(row);
+      }
+      async decideRefund(id, approve, note, actor) {
+        const r = this.db.refunds.find((x) => x.id === id);
+        if (!r) return void 0;
+        if (r.requestedBy && r.requestedBy === actor.id) throw new StorageConflict(REFUND_SELF_APPROVAL);
+        const problem = refundActionProblem(r.status, approve ? "approve" : "reject");
+        if (problem) throw new StorageConflict(problem);
+        Object.assign(r, { status: approve ? "approved" : "rejected", decidedAt: (/* @__PURE__ */ new Date()).toISOString(), decidedBy: actor.id, decidedByName: actor.name, decisionNote: note });
+        await this.persist();
+        return this.refundView(r);
+      }
+      async payRefund(id, actor) {
+        const r = this.db.refunds.find((x) => x.id === id);
+        if (!r) return void 0;
+        const problem = refundActionProblem(r.status, "pay");
+        if (problem) throw new StorageConflict(problem);
+        const shiftId = this.shiftFor(actor);
+        const plan = allocateRefund(this.billLinesOf(r.visitId), r.amount);
+        if (plan.taken < r.amount) throw new StorageConflict(REFUND_BILL_CHANGED);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const l of plan.lines) {
+          this.db.payments.push({
+            id: randomUUID(),
+            ...paymentTarget(l.source, l.sourceId),
+            invoicePaymentId: null,
+            refundId: r.id,
+            shiftId,
+            amount: -l.amount,
+            method: r.method,
+            note: `Qaytarish \u2116${r.number}`,
+            createdBy: actor.id,
+            createdByName: actor.name,
+            createdAt: now,
+            ...UNVOIDED
+          });
+          if (l.source === "order") {
+            const order = this.db.orders.find((o) => o.id === l.sourceId);
+            if (order) this.touchOrder(order, actor);
+            this.syncPaid(l.sourceId);
+          }
+        }
+        Object.assign(r, { status: "paid", paidAt: now, paidBy: actor.id, paidByName: actor.name, shiftId, lines: plan.lines });
+        await this.persist();
+        return this.refundView(r);
+      }
+      async cancelRefund(id, reason, actor) {
+        const r = this.db.refunds.find((x) => x.id === id);
+        if (!r) return void 0;
+        const problem = refundActionProblem(r.status, "cancel");
+        if (problem) throw new StorageConflict(problem);
+        Object.assign(r, { status: "cancelled", cancelledAt: (/* @__PURE__ */ new Date()).toISOString(), cancelledBy: actor.id, cancelledByName: actor.name, cancelReason: reason });
+        await this.persist();
+        return this.refundView(r);
+      }
+      async markRefundPrinted(id) {
+        const r = this.db.refunds.find((x) => x.id === id);
+        if (!r) return void 0;
+        r.printCount += 1;
+        await this.persist();
+        return r.printCount;
+      }
+      async getReceiptSlip(receiptId) {
+        const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
+        const inv = rec && this.db.invoices.find((i) => i.id === rec.invoiceId);
+        if (!rec || !inv) return void 0;
+        const bill = await this.getBill(inv.visitId);
+        const receipt = bill?.receipts.find((r) => r.id === receiptId);
+        if (!bill || !receipt) return void 0;
+        const shiftId = this.db.payments.find((p) => p.invoicePaymentId === receiptId)?.shiftId;
+        const { phone: _phone, ...patient } = bill.patient;
+        return { receipt, invoiceNumber: inv.number, visitDate: bill.visitDate, patient, shiftNumber: this.db.cashShifts.find((s) => s.id === shiftId)?.number ?? null };
+      }
+      async markReceiptPrinted(receiptId) {
+        const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
+        if (!rec) return void 0;
+        rec.printCount = (rec.printCount ?? 0) + 1;
+        await this.persist();
+        return rec.printCount;
+      }
+      // ------------------------------------------------------------ B7.5 cash shifts
+      /** The shift a money write lands in: it must still be open and the actor's own. */
+      shiftFor(actor) {
+        if (!actor.shiftId) return null;
+        const shift = this.db.cashShifts.find((x) => x.id === actor.shiftId && x.cashierId === actor.id && !x.closedAt);
+        if (!shift) throw new StorageConflict(SHIFT_CLOSED);
+        return shift.id;
+      }
+      /** A payment counted in a closed shift's report is never voided (shared/cash-shift.ts). */
+      refuseClosedShift(shiftId) {
+        const shift = shiftId ? this.db.cashShifts.find((x) => x.id === shiftId) : void 0;
+        if (shift?.closedAt) throw new StorageConflict(paymentInClosedShift(shift.number));
+      }
+      shiftRowsOf(shiftId) {
+        return this.db.payments.filter((p) => p.shiftId === shiftId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((p) => {
+          const receipt = p.invoicePaymentId ? this.db.invoicePayments.find((r) => r.id === p.invoicePaymentId) : void 0;
+          const order = p.orderId ? this.db.orders.find((o) => o.id === p.orderId) : void 0;
+          const refund = p.refundId ? this.db.refunds.find((x) => x.id === p.refundId) : void 0;
+          const patient = this.db.patients.find((x) => x.id === (receipt?.patientId ?? refund?.patientId ?? order?.patientId));
+          return {
+            id: p.id,
+            amount: p.amount,
+            method: p.method,
+            createdAt: p.createdAt,
+            voidedAt: p.voidedAt,
+            voidReason: p.voidReason,
+            receiptId: p.invoicePaymentId,
+            refundId: p.refundId ?? null,
+            refundNumber: p.refundId ? this.db.refunds.find((x) => x.id === p.refundId)?.number ?? null : null,
+            receiptNumber: receipt?.number ?? null,
+            invoiceNumber: receipt ? this.db.invoices.find((i) => i.id === receipt.invoiceId)?.number ?? null : null,
+            orderNumber: order?.orderNumber ?? null,
+            patientName: patient?.fullName ?? null,
+            patientNumber: patient?.patientNumber ?? null
+          };
+        });
+      }
+      shiftSummaryOf(row, rows = row.closedAt && row.totals ? [] : this.shiftRowsOf(row.id)) {
+        return {
+          ...row,
+          // Closed: the report as it was signed off. Open: live.
+          totals: row.closedAt && row.totals ? row.totals : summarizeShift(rows, row.openingCash),
+          hours: shiftHours(row.openedAt, row.closedAt)
+        };
+      }
+      shiftReportOf(row) {
+        const rows = this.shiftRowsOf(row.id);
+        return { ...this.shiftSummaryOf(row, rows), entries: shiftEntries(rows) };
+      }
+      async getOpenShift(cashierId) {
+        return this.db.cashShifts.find((x) => x.cashierId === cashierId && !x.closedAt);
+      }
+      async getCashDesk(cashierId) {
+        const open2 = await this.getOpenShift(cashierId);
+        const last2 = this.db.cashShifts.filter((x) => x.cashierId === cashierId && x.closedAt).sort((a, b) => b.closedAt.localeCompare(a.closedAt))[0];
+        return {
+          shift: open2 ? this.shiftReportOf(open2) : null,
+          last: last2 ? { id: last2.id, number: last2.number, closedAt: last2.closedAt, carriedCash: last2.carriedCash ?? 0 } : null
+        };
+      }
+      async openShift(input, actor) {
+        if (await this.getOpenShift(actor.id)) throw new StorageConflict(SHIFT_ALREADY_OPEN);
+        this.db.counters.shiftNumber += 1;
+        const row = {
+          id: randomUUID(),
+          number: this.db.counters.shiftNumber,
+          cashierId: actor.id,
+          cashierName: actor.name,
+          openedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          openingCash: input.openingCash,
+          openingNote: input.note ?? null,
+          closedAt: null,
+          closedBy: null,
+          closedByName: null,
+          expectedCash: null,
+          countedCash: null,
+          difference: null,
+          carriedCash: null,
+          denominations: null,
+          closingNote: null,
+          totals: null
+        };
+        this.db.cashShifts.push(row);
+        await this.persist();
+        return this.shiftReportOf(row);
+      }
+      async getShift(id) {
+        const row = this.db.cashShifts.find((x) => x.id === id);
+        return row && this.shiftReportOf(row);
+      }
+      async closeShift(id, input, actor) {
+        const row = this.db.cashShifts.find((x) => x.id === id);
+        if (!row) return void 0;
+        if (row.closedAt) throw new StorageConflict(SHIFT_ALREADY_CLOSED);
+        const totals = summarizeShift(this.shiftRowsOf(id), row.openingCash);
+        if (totals.expectedCash !== input.expectedCash) throw new StorageConflict(SHIFT_MOVED);
+        const problem = closeProblem(input, totals.expectedCash);
+        if (problem) throw new Error(problem);
+        Object.assign(row, {
+          closedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          closedBy: actor.id,
+          closedByName: actor.name,
+          expectedCash: totals.expectedCash,
+          countedCash: input.countedCash,
+          difference: input.countedCash - totals.expectedCash,
+          carriedCash: input.carriedCash,
+          denominations: cleanDenominations(input.denominations),
+          closingNote: input.note ?? null,
+          totals
+        });
+        await this.persist();
+        return this.shiftReportOf(row);
+      }
+      async listShifts(query) {
+        const inRange = (x) => (!query.from || x.openedAt >= query.from) && (!query.to || x.openedAt < query.to);
+        return this.db.cashShifts.filter((x) => !query.cashierId || x.cashierId === query.cashierId).filter((x) => query.open ? !x.closedAt : !x.closedAt || inRange(x)).sort((a, b) => Number(!b.closedAt) - Number(!a.closedAt) || b.openedAt.localeCompare(a.openedAt)).slice(0, query.limit ?? 200).map((x) => this.shiftSummaryOf(x));
       }
       async movementTotals(range) {
         const acc = /* @__PURE__ */ new Map();
@@ -11278,6 +14912,24 @@ var init_storage_file = __esm({
           acc.set(day, d);
         }
         return Array.from(acc.values()).sort((a, b) => a.date.localeCompare(b.date));
+      }
+      async cashDayTotals(range) {
+        const acc = /* @__PURE__ */ new Map();
+        for (const p of this.db.payments) {
+          if (p.voidedAt || p.createdAt < range.from || p.createdAt >= range.to) continue;
+          const date = localDay(p.createdAt);
+          const key = `${date}|${p.method}`;
+          const row = acc.get(key) ?? { date, method: p.method, taken: 0, refunded: 0, payments: 0, refunds: 0, seenPay: /* @__PURE__ */ new Set(), seenRefund: /* @__PURE__ */ new Set() };
+          if (p.amount > 0) {
+            row.taken += p.amount;
+            row.seenPay.add(p.invoicePaymentId ?? p.id);
+          } else {
+            row.refunded -= p.amount;
+            row.seenRefund.add(p.refundId ?? p.id);
+          }
+          acc.set(key, row);
+        }
+        return Array.from(acc.values()).map(({ seenPay, seenRefund, ...r }) => ({ ...r, payments: seenPay.size, refunds: seenRefund.size })).sort((a, b) => a.date.localeCompare(b.date) || a.method.localeCompare(b.method));
       }
       async departmentLines(range) {
         const acc = /* @__PURE__ */ new Map();
@@ -11388,7 +15040,7 @@ var init_storage_file = __esm({
           totalPaid,
           totalPatients: new Set(inRange.map((o) => o.patientId)).size,
           totalTests: items.length,
-          topTests: Array.from(testAgg.entries()).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.revenue - a.revenue).slice(0, 8),
+          topTests: Array.from(testAgg.entries()).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.count - a.count || b.revenue - a.revenue).slice(0, 100),
           byCategory: Array.from(catAgg.entries()).map(([category, v]) => ({ category, ...v })).sort((a, b) => b.revenue - a.revenue),
           totalExpenses,
           // Against money actually collected, not invoiced: an unpaid bill is not
@@ -11497,6 +15149,8 @@ try {
   process.loadEnvFile(".env");
 } catch {
 }
+var zone = process.env.CLINIC_TZ?.trim() || "Asia/Tashkent";
+process.env.TZ = /^[A-Za-z0-9_+\-/]+$/.test(zone) ? zone : "Asia/Tashkent";
 
 // server/app.ts
 import express from "express";
@@ -11505,8 +15159,7 @@ import express from "express";
 init_schema();
 init_permissions();
 import passport2 from "passport";
-import { ZodError } from "zod";
-import { fromZodError } from "zod-validation-error";
+import { fromZodError as fromZodError2 } from "zod-validation-error";
 
 // shared/lockout.ts
 var MINUTE = 60 * 1e3;
@@ -11683,6 +15336,7 @@ function requirePermission(...permissions) {
 
 // server/session-policy.ts
 init_schema();
+init_realtime();
 import { createHash } from "crypto";
 var TOUCH_EVERY_MS = 3e4;
 var POLICY_TTL_MS = 6e4;
@@ -11735,7 +15389,8 @@ function enforceSessionPolicy() {
       }
       if (now - meta.lastSeen > sessionIdleMinutes * 6e4) return endSession(req, res, "SESSION_IDLE");
       if (now - meta.createdAt > sessionMaxHours * 36e5) return endSession(req, res, "SESSION_MAX");
-      if (now - meta.lastSeen > TOUCH_EVERY_MS) {
+      const passive = req.get(USER_ACTIVE_HEADER) === "0";
+      if (!passive && now - meta.lastSeen > TOUCH_EVERY_MS) {
         meta.lastSeen = now;
         meta.ip = clientIp(req);
       }
@@ -11826,6 +15481,9 @@ function forgetSessionUser(id) {
 }
 function setupAuth(app) {
   app.set("trust proxy", 1);
+  if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET?.trim()) {
+    throw new Error("SESSION_SECRET o'rnatilmagan \u2014 ishlab chiqarish rejimida server ishga tushmaydi (seanslarni soxtalashtirishdan himoya)");
+  }
   app.use(
     session({
       secret: process.env.SESSION_SECRET ?? "medlab-dev-secret-change-in-production",
@@ -11976,7 +15634,7 @@ init_password();
 import QRCode from "qrcode";
 
 // server/mfa.ts
-import { createCipheriv, createDecipheriv, createHash as createHash2, createHmac, randomBytes as randomBytes2, randomInt, timingSafeEqual as timingSafeEqual2 } from "crypto";
+import { createCipheriv, createDecipheriv, createHash as createHash2, createHmac, randomBytes as randomBytes3, randomInt, timingSafeEqual as timingSafeEqual2 } from "crypto";
 var TOTP_DIGITS = 6;
 var TOTP_PERIOD_S = 30;
 var TOTP_WINDOW = 1;
@@ -12016,7 +15674,7 @@ function base32Decode(input) {
   return Buffer.from(out);
 }
 function generateTotpSecret() {
-  return base32Encode(randomBytes2(20));
+  return base32Encode(randomBytes3(20));
 }
 function hotp(key, counter, digits = TOTP_DIGITS) {
   const msg = Buffer.alloc(8);
@@ -12056,7 +15714,7 @@ function encryptionKey() {
   return createHash2("sha256").update(`neogen-mfa:${material}`).digest();
 }
 function encryptSecret(plain) {
-  const iv = randomBytes2(12);
+  const iv = randomBytes3(12);
   const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
   const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -12105,9 +15763,6 @@ function checkMfaCode(record, code, now = Date.now()) {
   return record.recoveryCodes.some((h) => sameString(h, hash)) ? { ok: true, kind: "recovery", hash } : { ok: false, reason: "invalid" };
 }
 
-// server/routes.ts
-init_storage_types();
-
 // server/telegram.ts
 init_schema();
 init_lab_verification();
@@ -12129,6 +15784,7 @@ var token = process.env.TELEGRAM_BOT_TOKEN?.trim();
 var telegramEnabled = Boolean(token);
 var telegramUsesWebhook = Boolean(process.env.VERCEL);
 var webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim() || void 0;
+var telegramWebhookSecured = Boolean(webhookSecret);
 var MAX_MESSAGE = 3500;
 var CONTACT_BUTTON = "\u{1F4F1} Telefon raqamimni yuborish";
 var FLAG_MARKS = { low: "\u{1F53B}", high: "\u{1F53A}", normal: "\u2705" };
@@ -12240,8 +15896,8 @@ function registerHandlers(bot) {
 Bundan buyon tahlil natijalaringiz tayyor bo'lishi bilan shu yerga yuboriladi.`,
       { parse_mode: "HTML", reply_markup: { remove_keyboard: true } }
     );
-    const pending = await storage.listUndeliveredOrders(patient.id);
-    for (const order of pending.reverse()) {
+    const pending2 = await storage.listUndeliveredOrders(patient.id);
+    for (const order of pending2.reverse()) {
       await deliverOrderResults(order);
     }
   });
@@ -12301,13 +15957,13 @@ async function claimPendingContact(patient) {
   if (!telegramEnabled || patient.telegramChatId) return patient;
   let linked = patient;
   try {
-    const pending = await storage.findPendingContact(patient.phone);
-    if (!pending) return patient;
-    linked = await storage.linkTelegram(patient.id, pending.chatId) ?? patient;
-    await storage.deletePendingContact(pending.chatId);
+    const pending2 = await storage.findPendingContact(patient.phone);
+    if (!pending2) return patient;
+    linked = await storage.linkTelegram(patient.id, pending2.chatId) ?? patient;
+    await storage.deletePendingContact(pending2.chatId);
     const settings = await storage.getSettings();
     await getBot().api.sendMessage(
-      pending.chatId,
+      pending2.chatId,
       `Assalomu alaykum, <b>${escapeHtml(linked.fullName)}</b>! \u2705
 
 ${escapeHtml(settings.labName)} tizimida ro'yxatdan o'tdingiz. Tahlil natijalaringiz tayyor bo'lishi bilan shu yerga yuboriladi.`,
@@ -12325,8 +15981,8 @@ async function telegramPhoneStatus(phone) {
   if (!telegramEnabled) return { connected: false, source: null, telegramName: null };
   const patient = await storage.getPatientByPhone(phone);
   if (patient?.telegramChatId) return { connected: true, source: "patient", telegramName: null };
-  const pending = await storage.findPendingContact(phone);
-  if (pending) return { connected: true, source: "pending", telegramName: pending.fullName };
+  const pending2 = await storage.findPendingContact(phone);
+  if (pending2) return { connected: true, source: "pending", telegramName: pending2.fullName };
   return { connected: false, source: null, telegramName: null };
 }
 async function deliverOrderResults(order, opts = {}) {
@@ -12384,9 +16040,9 @@ var numberParam = (value, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 var stringParam = (value) => typeof value === "string" && value ? value : void 0;
-var DAY = /^\d{4}-\d{2}-\d{2}$/;
+var DAY2 = /^\d{4}-\d{2}-\d{2}$/;
 function dayRange(from, to) {
-  if (!DAY.test(from) || !DAY.test(to)) return { error: "Sanani YYYY-MM-DD ko'rinishida kiriting" };
+  if (!DAY2.test(from) || !DAY2.test(to)) return { error: "Sanani YYYY-MM-DD ko'rinishida kiriting" };
   if (from > to) return { error: "Davr boshi oxiridan keyin bo'lishi mumkin emas" };
   const end = /* @__PURE__ */ new Date(`${to}T00:00:00`);
   end.setDate(end.getDate() + 1);
@@ -13142,14 +16798,14 @@ function registerMedicalRoutes(app) {
   );
   app.get(
     "/api/prescription-catalog",
-    requirePermission("records.write", "records.amend"),
+    requirePermission("records.write", "records.amend", "procedures.prescribe"),
     handle(async (_req, res) => {
       const [items, services2] = await Promise.all([
         storage.listInventoryItems().catch((e) => emptyIfMissing(e, [])),
         storage.listServices({ activeOnly: true }).catch((e) => emptyIfMissing(e, []))
       ]);
       const catalog = {
-        medicines: items.filter((i) => i.kind === "medicine" && i.isActive).map((i) => ({ id: i.id, name: i.name, unit: i.unit, manufacturer: i.manufacturer, inStock: i.onHand > 0 })),
+        medicines: items.filter((i) => i.kind === "medicine" && i.isActive).map((i) => ({ id: i.id, name: i.name, unit: i.unit, manufacturer: i.manufacturer, inStock: i.onHand > 0, salePrice: i.salePrice ?? null })),
         procedures: services2.filter((x) => x.kind === "muolaja").map((x) => ({ id: x.id, name: x.name, price: x.price }))
       };
       res.json(catalog);
@@ -13729,7 +17385,7 @@ function registerQcRoutes(app) {
     handle(async (req, res) => {
       const input = insertQcResultSchema.parse(req.body);
       if (input.measuredAt) {
-        const problem = occurredAtProblem(input.measuredAt);
+        const problem = occurredAtProblem(input.measuredAt, Date.now(), "O'lchov vaqti");
         if (problem) return res.status(400).json({ message: problem });
       }
       const target = await storage.getQcTarget(req.params.id);
@@ -13798,7 +17454,7 @@ function registerQcRoutes(app) {
     handle(async (req, res) => {
       const input = insertCalibrationSchema.parse(req.body);
       if (input.performedAt) {
-        const problem = occurredAtProblem(input.performedAt);
+        const problem = occurredAtProblem(input.performedAt, Date.now(), "Kalibrovka vaqti");
         if (problem) return res.status(400).json({ message: problem });
       }
       const device = await storage.getDevice(input.deviceId);
@@ -13838,7 +17494,7 @@ function registerQcRoutes(app) {
     handle(async (req, res) => {
       const input = insertMaintenanceSchema.parse(req.body);
       if (input.performedAt) {
-        const problem = occurredAtProblem(input.performedAt);
+        const problem = occurredAtProblem(input.performedAt, Date.now(), "Xizmat vaqti");
         if (problem) return res.status(400).json({ message: problem });
       }
       const device = await storage.getDevice(input.deviceId);
@@ -14239,8 +17895,8 @@ function registerInventoryRoutes(app) {
           cancelled: c.status === "cancelled"
         }))
       ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
-      const open = counts.find((c) => c.status === "open");
-      const last = counts.find((c) => c.status === "posted");
+      const open2 = counts.find((c) => c.status === "open");
+      const last2 = counts.find((c) => c.status === "posted");
       const out = {
         date: today,
         month: { from: monthStart, to: today, figures: monthFigures(totals) },
@@ -14248,8 +17904,8 @@ function registerInventoryRoutes(app) {
         recent,
         attention: {
           pendingNorms: norms.filter((n) => n.status === "draft").length,
-          openCount: open ? { id: open.id, number: open.number, counted: open.countedCount, lines: open.lineCount } : null,
-          lastCount: last?.postedAt ? { number: last.number, postedAt: last.postedAt } : null
+          openCount: open2 ? { id: open2.id, number: open2.number, counted: open2.countedCount, lines: open2.lineCount } : null,
+          lastCount: last2?.postedAt ? { number: last2.number, postedAt: last2.postedAt } : null
         }
       };
       res.json(out);
@@ -14423,9 +18079,216 @@ function registerConsumptionRoutes(app) {
 
 // server/routes-billing.ts
 init_schema();
+init_discount();
 init_invoice();
-var DAY2 = /^\d{4}-\d{2}-\d{2}$/;
+init_storage_types();
+init_debt();
+
+// server/routes-cashdesk.ts
+init_schema();
+init_cash_shift();
+init_storage_types();
+
+// shared/cash-report.ts
+init_schema();
+var blankMethods = () => Object.fromEntries(PAYMENT_METHODS.map((m) => [m, { taken: 0, refunded: 0, net: 0 }]));
+var blankDay = (date) => ({ date, byMethod: blankMethods(), taken: 0, refunded: 0, net: 0, payments: 0, refunds: 0 });
+function cashDays(rows, from, to) {
+  const byDate = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const d = byDate.get(r.date) ?? blankDay(r.date);
+    const m = d.byMethod[r.method] ?? d.byMethod.naqd;
+    m.taken += r.taken;
+    m.refunded += r.refunded;
+    m.net = m.taken - m.refunded;
+    d.taken += r.taken;
+    d.refunded += r.refunded;
+    d.net = d.taken - d.refunded;
+    d.payments += r.payments;
+    d.refunds += r.refunds;
+    byDate.set(r.date, d);
+  }
+  const out = [];
+  const cur = /* @__PURE__ */ new Date(`${from}T12:00:00Z`);
+  const end = /* @__PURE__ */ new Date(`${to}T12:00:00Z`);
+  for (let i = 0; cur <= end && i < 400; i++) {
+    const key = cur.toISOString().slice(0, 10);
+    out.push(byDate.get(key) ?? blankDay(key));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return out;
+}
+function cashTotal(days, label = "jami") {
+  const t2 = blankDay(label);
+  for (const d of days) {
+    for (const m of PAYMENT_METHODS) {
+      t2.byMethod[m].taken += d.byMethod[m].taken;
+      t2.byMethod[m].refunded += d.byMethod[m].refunded;
+      t2.byMethod[m].net += d.byMethod[m].net;
+    }
+    t2.taken += d.taken;
+    t2.refunded += d.refunded;
+    t2.net += d.net;
+    t2.payments += d.payments;
+    t2.refunds += d.refunds;
+  }
+  return t2;
+}
+
+// server/routes-cashdesk.ts
 var sum = (n) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
+async function tillActor(req, res) {
+  const shift = req.user ? await storage.getOpenShift(req.user.id).catch((e) => emptyIfMissing(e, void 0)) : void 0;
+  if (!shift) {
+    res.status(409).json({ message: SHIFT_REQUIRED, code: "SHIFT_REQUIRED" });
+    return null;
+  }
+  return { ...actorOf(req), shiftId: shift.id };
+}
+var handlesMoney = (req) => hasPermission(req, "payments.create");
+function mayRead(req, shift) {
+  return hasPermission(req, "shifts.read") || shift.cashierId === req.user?.id && handlesMoney(req);
+}
+function describeClose(r) {
+  const t2 = r.totals;
+  const diff = r.difference ?? 0;
+  const methods = PAYMENT_METHODS.filter((m) => t2.byMethod[m].taken || t2.byMethod[m].refunded).map((m) => `${PAYMENT_METHOD_LABELS[m]} ${sum(t2.byMethod[m].net)}`).join(", ");
+  return `Smena \u2116${r.number} (${r.cashierName}) yopildi: kutilgan ${sum(r.expectedCash ?? 0)}, sanalgan ${sum(r.countedCash ?? 0)}` + (diff ? `, ${COUNT_OUTCOME_LABELS[countOutcome(diff)].toLowerCase()} ${sum(Math.abs(diff))}` : ", mos") + `; topshirildi ${sum((r.countedCash ?? 0) - (r.carriedCash ?? 0))}, kassada qoldi ${sum(r.carriedCash ?? 0)}; ${t2.payments} ta to'lov${t2.refunds ? `, ${t2.refunds} ta qaytarish` : ""}${methods ? ` (${methods})` : ""}` + (r.closingNote ? `. Izoh: ${r.closingNote}` : "");
+}
+var addDays2 = (day, n) => {
+  const d = /* @__PURE__ */ new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+function registerCashDeskRoutes(app) {
+  app.get(
+    "/api/cashier/overview",
+    requirePermission("payments.create", "payments.refund", "finance.view", "shifts.read"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const monthStart = `${today.slice(0, 8)}01`;
+      const first2 = [addDays2(today, -29), monthStart].sort()[0];
+      const range = dayRange(first2, today);
+      const seesShifts = hasPermission(req, "shifts.read") || handlesMoney(req);
+      const [rows, bills, requested, approved, shifts] = await Promise.all([
+        storage.cashDayTotals(range),
+        storage.listBills({ from: today, to: today }).catch((e) => emptyIfMissing(e, [])),
+        storage.listRefunds({ status: "requested" }).catch((e) => emptyIfMissing(e, [])),
+        storage.listRefunds({ status: "approved" }).catch((e) => emptyIfMissing(e, [])),
+        seesShifts ? storage.listShifts({ open: true, cashierId: hasPermission(req, "shifts.read") ? void 0 : req.user.id }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve([])
+      ]);
+      const all = cashDays(rows, first2, today);
+      const byDate = new Map(all.map((d) => [d.date, d]));
+      const sumOf = (xs) => xs.reduce((s, x) => s + x.amount, 0);
+      const overview = {
+        today: byDate.get(today),
+        weekAgo: byDate.get(addDays2(today, -7)) ?? cashDays([], addDays2(today, -7), addDays2(today, -7))[0],
+        month: { ...cashTotal(all.filter((d) => d.date >= monthStart)), from: monthStart },
+        days: all.filter((d) => d.date >= addDays2(today, -29)),
+        bills: {
+          count: bills.length,
+          amount: bills.reduce((s, b) => s + b.totals.amount, 0),
+          paid: bills.reduce((s, b) => s + b.totals.paid, 0),
+          due: bills.reduce((s, b) => s + b.totals.due, 0),
+          debtors: bills.filter((b) => b.totals.due > 0).sort((a, b) => b.totals.due - a.totals.due).slice(0, 6).map((b) => ({ visitId: b.visitId, patientName: b.patientName, patientNumber: b.patientNumber, due: b.totals.due }))
+        },
+        refunds: { requested: { count: requested.length, amount: sumOf(requested) }, approved: { count: approved.length, amount: sumOf(approved) } },
+        openShifts: shifts.map((x) => ({ id: x.id, number: x.number, cashierName: x.cashierName, openedAt: x.openedAt, hours: x.hours, expectedCash: x.totals.expectedCash, net: x.totals.net }))
+      };
+      res.json(overview);
+    })
+  );
+  app.get(
+    "/api/cashier/daily",
+    requirePermission("payments.create", "payments.refund", "finance.view", "shifts.read"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const from = stringParam(req.query.from) ?? `${today.slice(0, 8)}01`;
+      const to = stringParam(req.query.to) ?? today;
+      const range = dayRange(from, to);
+      if ("error" in range) return res.status(400).json({ message: range.error });
+      if (addDays2(from, 366) < to) return res.status(400).json({ message: "Davr ko'pi bilan bir yil bo'lishi mumkin" });
+      const days = cashDays(await storage.cashDayTotals(range), from, to);
+      res.json({ from, to, days, total: cashTotal(days) });
+    })
+  );
+  app.get(
+    "/api/cash-shifts/current",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      res.json(await storage.getCashDesk(req.user.id).catch((e) => emptyIfMissing(e, { shift: null, last: null })));
+    })
+  );
+  app.post(
+    "/api/cash-shifts",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const input = openShiftSchema.parse(req.body);
+      const desk = await storage.getCashDesk(req.user.id);
+      const shift = await storage.openShift(input, actorOf(req));
+      const left = desk.last?.carriedCash ?? null;
+      await audit(
+        req,
+        "create",
+        "cash_shift",
+        shift.id,
+        `Smena \u2116${shift.number} ochildi: kassada ${sum(shift.openingCash)}` + (left !== null && left !== shift.openingCash ? ` (oldingi Smena \u2116${desk.last.number} ${sum(left)} qoldirgan edi)` : "") + (shift.openingNote ? `. Izoh: ${shift.openingNote}` : "")
+      );
+      res.status(201).json(shift);
+    })
+  );
+  app.get(
+    "/api/cash-shifts",
+    requirePermission("payments.create", "shifts.read"),
+    handle(async (req, res) => {
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      let range = {};
+      if (from || to) {
+        const r = dayRange(from ?? "2000-01-01", to ?? "2999-12-31");
+        if ("error" in r) return res.status(400).json({ message: r.error });
+        range = r;
+      }
+      const all = hasPermission(req, "shifts.read");
+      const cashierId = all ? stringParam(req.query.cashierId) : req.user.id;
+      const rows = await storage.listShifts({ ...range, cashierId, open: req.query.status === "open" }).catch((e) => emptyIfMissing(e, []));
+      res.json(rows);
+    })
+  );
+  app.get(
+    "/api/cash-shifts/:id",
+    requirePermission("payments.create", "shifts.read"),
+    handle(async (req, res) => {
+      const shift = await storage.getShift(req.params.id);
+      if (!shift || !mayRead(req, shift)) return res.status(404).json({ message: "Smena topilmadi" });
+      res.json(shift);
+    })
+  );
+  app.post(
+    "/api/cash-shifts/:id/close",
+    requirePermission("payments.create", "shifts.manage"),
+    handle(async (req, res) => {
+      const input = closeShiftSchema.parse(req.body);
+      const before = await storage.getShift(req.params.id);
+      if (!before || !mayRead(req, before)) return res.status(404).json({ message: "Smena topilmadi" });
+      const own = before.cashierId === req.user.id;
+      if (own ? !handlesMoney(req) : !hasPermission(req, "shifts.manage")) {
+        return res.status(403).json({ message: "Boshqa kassirning smenasini yopish uchun ruxsatingiz yo'q" });
+      }
+      if (!before.closedAt) {
+        const problem = closeProblem(input, input.expectedCash);
+        if (problem) return res.status(400).json({ message: problem });
+      }
+      const shift = await storage.closeShift(req.params.id, input, actorOf(req));
+      await audit(req, "close", "cash_shift", shift.id, describeClose(shift) + (own ? "" : ` \u2014 ${actorOf(req).name} yopdi`));
+      res.json(shift);
+    })
+  );
+}
+
+// server/routes-billing.ts
+var DAY3 = /^\d{4}-\d{2}-\d{2}$/;
+var sum2 = (n) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
 function registerBillingRoutes(app) {
   app.get(
     "/api/bills",
@@ -14433,11 +18296,20 @@ function registerBillingRoutes(app) {
     handle(async (req, res) => {
       const from = stringParam(req.query.from);
       const to = stringParam(req.query.to);
-      if (from && !DAY2.test(from) || to && !DAY2.test(to)) return res.status(400).json({ message: "Sanani YYYY-MM-DD ko'rinishida kiriting" });
+      if (from && !DAY3.test(from) || to && !DAY3.test(to)) return res.status(400).json({ message: "Sanani YYYY-MM-DD ko'rinishida kiriting" });
       if (from && to && from > to) return res.status(400).json({ message: "Davr boshi oxiridan keyin bo'lishi mumkin emas" });
       const status = stringParam(req.query.status);
       if (status && !BILL_FILTERS.includes(status)) return res.status(400).json({ message: "Noma'lum filtr" });
       res.json(await storage.listBills({ from, to, status, patientId: stringParam(req.query.patientId) }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/debtors",
+    requirePermission("payments.create", "finance.view"),
+    handle(async (_req, res) => {
+      const today = todayKey();
+      const rows = await storage.listDebtors().catch((e) => emptyIfMissing(e, []));
+      res.json({ today, rows, summary: summarizeDebt(rows, today) });
     })
   );
   app.get(
@@ -14469,16 +18341,64 @@ function registerBillingRoutes(app) {
       const input = payBillSchema.parse(req.body);
       const before = await storage.getBill(req.params.visitId);
       if (!before) return res.status(404).json({ message: "Tashrif topilmadi" });
-      const out = await storage.payBill(req.params.visitId, input, actorOf(req));
+      const till = await tillActor(req, res);
+      if (!till) return;
+      const out = await storage.payBill(req.params.visitId, input, till);
       const receipt = out.bill.receipts.find((r) => r.id === out.receiptId);
       await audit(
         req,
         "payment",
         "invoice",
         out.bill.invoice.id,
-        `Hisobvaraq \u2116${out.bill.invoice.number}, kvitansiya \u2116${receipt.number}: ${sum(out.taken)} (${PAYMENT_METHOD_LABELS[input.method]}) \u2014 ${describeShares(receipt.shares, out.bill.lines)}${input.amount > out.taken ? `; qarzdan ortig'i ${sum(input.amount - out.taken)} qaytim` : ""}${out.bill.totals.due ? `; qoldi ${sum(out.bill.totals.due)}` : "; to'liq to'landi"}`
+        `Hisobvaraq \u2116${out.bill.invoice.number}, kvitansiya \u2116${receipt.number}: ${sum2(out.taken)} (${PAYMENT_METHOD_LABELS[input.method]}) \u2014 ${describeShares(receipt.shares, out.bill.lines)}${input.amount > out.taken ? `; qarzdan ortig'i ${sum2(input.amount - out.taken)} qaytim` : ""}${out.bill.totals.due ? `; qoldi ${sum2(out.bill.totals.due)}` : "; to'liq to'landi"}`
       );
       res.status(201).json({ bill: out.bill, receiptId: out.receiptId, taken: out.taken, change: input.amount - out.taken });
+    })
+  );
+  app.get(
+    "/api/receipts/:id/slip",
+    requirePermission("payments.create", "finance.view"),
+    handle(async (req, res) => {
+      const [slip, clinic, logo] = await Promise.all([storage.getReceiptSlip(req.params.id), storage.getSettings(), storage.getLogo()]);
+      if (!slip) return res.status(404).json({ message: "Kvitansiya topilmadi" });
+      res.json({ ...slip, clinic, logo: logo?.dataUrl ?? null });
+    })
+  );
+  app.post(
+    "/api/receipts/:id/print",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const slip = await storage.getReceiptSlip(req.params.id);
+      if (!slip) return res.status(404).json({ message: "Kvitansiya topilmadi" });
+      const printCount = await storage.markReceiptPrinted(req.params.id);
+      const r = slip.receipt;
+      await audit(
+        req,
+        "print",
+        "invoice",
+        r.invoiceId,
+        `Hisobvaraq \u2116${slip.invoiceNumber}, kvitansiya \u2116${r.number} (${sum2(r.amount)}) cheki ${printCount > 1 ? `qayta chop etildi \u2014 nusxa (${printCount}-marta)` : "chop etildi"}${r.voidedAt ? ", bekor qilingan kvitansiya" : ""}`
+      );
+      res.json({ printCount });
+    })
+  );
+  app.post(
+    "/api/bills/:visitId/discounts",
+    requirePermission("payments.discount"),
+    handle(async (req, res) => {
+      const input = discountBillSchema.parse(req.body);
+      const before = await storage.getBill(req.params.visitId);
+      if (!before) return res.status(404).json({ message: "Tashrif topilmadi" });
+      const out = await storage.discountBill(req.params.visitId, input, actorOf(req));
+      const d = out.discount;
+      await audit(
+        req,
+        "discount",
+        "invoice",
+        out.bill.invoice?.id ?? req.params.visitId,
+        `\u2116${out.bill.patient.patientNumber} ${out.bill.patient.fullName}, ${out.bill.visitDate}: chegirma ${describeDiscount(d.mode, d.value, d.total)} \u2014 ${d.lines.map((l) => `${l.title} ${sum2(l.amount)}`).join(" + ")}; qarz ${sum2(before.totals.due)} \u2192 ${sum2(out.bill.totals.due)}. Sabab: ${d.reason}`
+      );
+      res.status(201).json(out);
     })
   );
   app.post(
@@ -14489,11 +18409,1108 @@ function registerBillingRoutes(app) {
       const bill = await storage.voidReceipt(req.params.id, reason, actorOf(req));
       if (!bill) return res.status(404).json({ message: "Kvitansiya topilmadi" });
       const r = bill.receipts.find((x) => x.id === req.params.id);
-      await audit(req, "void", "invoice", bill.invoice.id, `Hisobvaraq \u2116${bill.invoice.number}, kvitansiya \u2116${r.number} (${sum(r.amount)}) bekor qilindi: ${reason}`);
+      await audit(req, "void", "invoice", bill.invoice.id, `Hisobvaraq \u2116${bill.invoice.number}, kvitansiya \u2116${r.number} (${sum2(r.amount)}) bekor qilindi: ${reason}`);
       res.json(bill);
     })
   );
 }
+
+// server/routes-refunds.ts
+init_schema();
+init_refund();
+var sum3 = (n) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
+var who = (r) => `Qaytarish \u2116${r.number} (${sum3(r.amount)}, ${PAYMENT_METHOD_LABELS[r.method]}) \u2014 \u2116${r.patientNumber} ${r.patientName}`;
+var LINK = "/cashier?tab=refunds";
+async function notifyApprovers(r, requesterId) {
+  try {
+    const users2 = (await storage.listUsers()).filter((u) => u.isActive && u.id !== requesterId);
+    for (const u of users2) {
+      const session2 = await toSessionUser(u);
+      if (!session2.permissions.includes("payments.refund")) continue;
+      await storage.createNotification({
+        userId: u.id,
+        kind: "refund_request",
+        title: `Qaytarish tasdiq kutmoqda: ${sum3(r.amount)}`,
+        body: `\u2116${r.patientNumber} ${r.patientName} \xB7 ${r.requestedByName ?? "\u2014"}: ${r.reason}`,
+        link: LINK,
+        entityId: r.id,
+        important: true,
+        dedupeKey: `refund_request:${r.id}:${u.id}`
+      });
+    }
+  } catch (err) {
+    log(`[refund] tasdiqlovchilarga xabar yuborilmadi \u2014 ${err instanceof Error ? err.message : err}`);
+  }
+}
+async function notifyRequester(r) {
+  if (!r.requestedBy) return;
+  try {
+    const approved = r.status === "approved";
+    await storage.createNotification({
+      userId: r.requestedBy,
+      kind: "refund_decision",
+      title: `Qaytarish \u2116${r.number} ${approved ? "tasdiqlandi" : "rad etildi"}`,
+      body: `${sum3(r.amount)} \xB7 \u2116${r.patientNumber} ${r.patientName} \xB7 ${r.decidedByName ?? "\u2014"}${r.decisionNote ? `: ${r.decisionNote}` : ""}${approved ? " \u2014 pulni Kassada bering" : ""}`,
+      link: LINK,
+      entityId: r.id,
+      important: !approved,
+      dedupeKey: `refund_decision:${r.id}`
+    });
+  } catch (err) {
+    log(`[refund] so'ragan xodimga xabar yuborilmadi \u2014 ${err instanceof Error ? err.message : err}`);
+  }
+}
+var mayCancel = (req, r) => hasPermission(req, "payments.refund") || r.requestedBy === req.user?.id && hasPermission(req, "payments.create");
+function registerRefundRoutes(app) {
+  app.get(
+    "/api/refunds",
+    requirePermission("payments.create", "payments.refund", "finance.view"),
+    handle(async (req, res) => {
+      const status = stringParam(req.query.status);
+      if (status && !REFUND_STATUSES.includes(status)) return res.status(400).json({ message: "Noma'lum holat" });
+      const from = stringParam(req.query.from);
+      const to = stringParam(req.query.to);
+      let range = {};
+      if (from || to) {
+        const r = dayRange(from ?? "2000-01-01", to ?? "2999-12-31");
+        if ("error" in r) return res.status(400).json({ message: r.error });
+        range = r;
+      }
+      res.json(await storage.listRefunds({ status, ...range }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/refunds/:id",
+    requirePermission("payments.create", "payments.refund", "finance.view"),
+    handle(async (req, res) => {
+      const r = await storage.getRefund(req.params.id);
+      if (!r) return res.status(404).json({ message: "Qaytarish topilmadi" });
+      res.json(r);
+    })
+  );
+  app.post(
+    "/api/bills/:visitId/refunds",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const input = requestRefundSchema.parse(req.body);
+      const r = await storage.requestRefund(req.params.visitId, input, actorOf(req));
+      if (!r) return res.status(404).json({ message: "Tashrif topilmadi" });
+      await audit(req, "create", "refund", r.id, `${who(r)} so'raldi. Sabab: ${r.reason}`);
+      await notifyApprovers(r, req.user?.id ?? null);
+      res.status(201).json(r);
+    })
+  );
+  for (const approve of [true, false]) {
+    app.post(
+      `/api/refunds/:id/${approve ? "approve" : "reject"}`,
+      requirePermission("payments.refund"),
+      handle(async (req, res) => {
+        const { note } = decideRefundSchema.parse(req.body ?? {});
+        if (!approve && !note) return res.status(400).json({ message: "Rad etish sababini yozing" });
+        const r = await storage.decideRefund(req.params.id, approve, note, actorOf(req));
+        if (!r) return res.status(404).json({ message: "Qaytarish topilmadi" });
+        await audit(req, approve ? "verify" : "return", "refund", r.id, `${who(r)} ${approve ? "tasdiqlandi" : "rad etildi"}${note ? `: ${note}` : ""}`);
+        await notifyRequester(r);
+        res.json(r);
+      })
+    );
+  }
+  app.post(
+    "/api/refunds/:id/pay",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const before = await storage.getRefund(req.params.id);
+      if (!before) return res.status(404).json({ message: "Qaytarish topilmadi" });
+      const till = await tillActor(req, res);
+      if (!till) return;
+      const r = await storage.payRefund(req.params.id, till);
+      await audit(req, "refund", "refund", r.id, `${who(r)} bemorga berildi (Smena \u2116${r.shiftNumber ?? "\u2014"}): ${(r.lines ?? []).map((l) => `${l.title} ${sum3(l.amount)}`).join(" + ")}`);
+      res.json(r);
+    })
+  );
+  app.post(
+    "/api/refunds/:id/cancel",
+    requirePermission("payments.create", "payments.refund"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const before = await storage.getRefund(req.params.id);
+      if (!before) return res.status(404).json({ message: "Qaytarish topilmadi" });
+      if (!mayCancel(req, before)) return res.status(403).json({ message: "Bu qaytarishni faqat so'ragan xodim yoki vakolatli shaxs bekor qiladi" });
+      const r = await storage.cancelRefund(req.params.id, reason, actorOf(req));
+      await audit(req, "void", "refund", r.id, `${who(r)} bekor qilindi (${REFUND_STATUS_LABELS[before.status].toLowerCase()} edi). Sabab: ${reason}`);
+      res.json(r);
+    })
+  );
+  app.get(
+    "/api/refunds/:id/slip",
+    requirePermission("payments.create", "payments.refund", "finance.view"),
+    handle(async (req, res) => {
+      const [refund, clinic, logo] = await Promise.all([storage.getRefund(req.params.id), storage.getSettings(), storage.getLogo()]);
+      if (!refund) return res.status(404).json({ message: "Qaytarish topilmadi" });
+      res.json({ refund, clinic, logo: logo?.dataUrl ?? null });
+    })
+  );
+  app.post(
+    "/api/refunds/:id/print",
+    requirePermission("payments.create"),
+    handle(async (req, res) => {
+      const r = await storage.getRefund(req.params.id);
+      if (!r) return res.status(404).json({ message: "Qaytarish topilmadi" });
+      if (r.status !== "paid") return res.status(409).json({ message: "Chek faqat bemorga berilgan qaytarish uchun chiqadi" });
+      const printCount = await storage.markRefundPrinted(req.params.id);
+      await audit(req, "print", "refund", r.id, `Qaytarish \u2116${r.number} (${sum3(r.amount)}) cheki ${printCount > 1 ? `qayta chop etildi \u2014 nusxa (${printCount}-marta)` : "chop etildi"}`);
+      res.json({ printCount });
+    })
+  );
+}
+
+// shared/finance-report.ts
+init_schema();
+var FINANCE_KIND_LABELS = { ...SERVICE_KIND_LABELS, statsionar: "Statsionar" };
+var blank = () => ({ count: 0, gross: 0, discount: 0, net: 0, paid: 0, due: 0 });
+function add(t2, r) {
+  t2.count += r.count;
+  t2.gross += r.gross;
+  t2.discount += r.discount;
+  t2.net += r.net;
+  t2.paid += r.paid;
+  t2.due += Math.max(0, r.net - r.paid);
+}
+var FINANCE_KINDS = ["konsultatsiya", "uzi", "muolaja", "boshqa", "laboratoriya", "statsionar"];
+function buildFinanceReport(input) {
+  const total = blank();
+  const kinds = /* @__PURE__ */ new Map();
+  const services2 = /* @__PURE__ */ new Map();
+  const doctors2 = /* @__PURE__ */ new Map();
+  for (const r of input.services) {
+    add(total, r);
+    const k = kinds.get(r.kind) ?? blank();
+    add(k, r);
+    kinds.set(r.kind, k);
+    const sKey = `${r.kind}|${r.name}`;
+    const s = services2.get(sKey) ?? { kind: r.kind, name: r.name, ...blank() };
+    add(s, r);
+    services2.set(sKey, s);
+    if (r.kind !== "laboratoriya" && r.doctorName) {
+      const d = doctors2.get(r.doctorName) ?? { doctorName: r.doctorName, ...blank() };
+      add(d, r);
+      doctors2.set(r.doctorName, d);
+    }
+  }
+  const collected = input.cash.net;
+  const profit = collected - input.expenses.total;
+  return {
+    range: input.range,
+    services: {
+      total,
+      byKind: FINANCE_KINDS.filter((k) => kinds.has(k)).map((k) => ({ kind: k, label: FINANCE_KIND_LABELS[k], ...kinds.get(k) })),
+      byService: [...services2.values()].sort((a, b) => b.net - a.net || b.count - a.count || a.name.localeCompare(b.name)),
+      byDoctor: [...doctors2.values()].sort((a, b) => b.net - a.net || b.count - a.count)
+    },
+    cash: input.cash,
+    days: input.days,
+    discounts: { total: total.discount, given: input.discountsGiven },
+    expenses: input.expenses,
+    result: { collected, expenses: input.expenses.total, profit, margin: collected > 0 ? Math.round(profit / collected * 100) : null },
+    debt: input.debt
+  };
+}
+
+// server/routes-finance.ts
+init_debt();
+init_storage_types();
+var addDays3 = (day, n) => {
+  const d = /* @__PURE__ */ new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+function registerFinanceRoutes(app) {
+  app.get(
+    "/api/reports/finance",
+    requirePermission("reports.view"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const from = stringParam(req.query.from) ?? `${today.slice(0, 8)}01`;
+      const to = stringParam(req.query.to) ?? today;
+      const range = dayRange(from, to);
+      if ("error" in range) return res.status(400).json({ message: range.error });
+      if (addDays3(from, 366) < to) return res.status(400).json({ message: "Davr ko'pi bilan bir yil bo'lishi mumkin" });
+      const [services2, cashRows, discountsGiven, expenses2, debtors] = await Promise.all([
+        storage.financeServices({ from, to }),
+        storage.cashDayTotals(range),
+        storage.countBillDiscounts(range).catch((e) => emptyIfMissing(e, 0)),
+        storage.getExpenseSummary(from, to),
+        storage.listDebtors().catch((e) => emptyIfMissing(e, []))
+      ]);
+      const days = cashDays(cashRows, from, to);
+      const debt = summarizeDebt(debtors, today);
+      res.json(
+        buildFinanceReport({
+          range: { from, to },
+          services: services2,
+          cash: cashTotal(days),
+          days,
+          discountsGiven,
+          expenses: { total: expenses2.total, count: expenses2.count, byCategory: expenses2.byCategory },
+          debt: { due: debt.due, debtors: debt.debtors }
+        })
+      );
+    })
+  );
+}
+
+// server/routes-inpatient.ts
+init_schema();
+init_case_history();
+
+// shared/inpatient-report.ts
+init_stay_bill();
+var pct = (num, den) => den > 0 ? Math.round(num / den * 1e3) / 10 : null;
+var round1 = (n) => Math.round(n * 10) / 10;
+function eachDay(from, to) {
+  const out = [];
+  const n = Math.min(dayDiff(from, to), 400);
+  for (let i = 0; i <= n; i++) {
+    const d = /* @__PURE__ */ new Date(`${from}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + i);
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+function buildInpatientReport(input) {
+  const days = eachDay(input.from, input.to).filter((d) => d <= input.today);
+  const wardOf = new Map(input.wards.map((w) => [w.id, w]));
+  const live = input.stays.filter((s) => s.status !== "cancelled");
+  const usableBeds = input.beds.filter((b) => b.usable);
+  const blank2 = () => ({ occupied: 0, available: 0, admitted: 0, discharged: 0, stayDays: [] });
+  const byDept = /* @__PURE__ */ new Map();
+  const byWard = /* @__PURE__ */ new Map();
+  const acc = (m, k) => {
+    const a = m.get(k) ?? blank2();
+    m.set(k, a);
+    return a;
+  };
+  const dayRows = days.map((day) => {
+    const cut = day === input.today ? input.now : input.endOfDay(day);
+    const occupiedBeds = /* @__PURE__ */ new Map();
+    for (const s of live) {
+      const p = s.periods.find((x) => Date.parse(x.fromAt) <= cut && (x.toAt === null || Date.parse(x.toAt) > cut));
+      if (p) occupiedBeds.set(p.bedId, p.wardId);
+    }
+    const capacityBeds = new Map(occupiedBeds);
+    for (const b of usableBeds) if (input.dayOf(b.createdAt) <= day) capacityBeds.set(b.id, b.wardId);
+    for (const wardId of capacityBeds.values()) {
+      const w = wardOf.get(wardId);
+      if (!w) continue;
+      acc(byWard, w.id).available++;
+      acc(byDept, w.departmentId).available++;
+    }
+    for (const wardId of occupiedBeds.values()) {
+      const w = wardOf.get(wardId);
+      if (!w) continue;
+      acc(byWard, w.id).occupied++;
+      acc(byDept, w.departmentId).occupied++;
+    }
+    const capacity = capacityBeds.size;
+    const occupied2 = occupiedBeds.size;
+    const admitted = live.filter((s) => input.dayOf(s.admittedAt) === day).length;
+    const discharged = live.filter((s) => s.dischargedAt && input.dayOf(s.dischargedAt) === day).length;
+    return { day, occupied: occupied2, capacity, occupancy: pct(occupied2, capacity), admitted, discharged };
+  });
+  const inRange = (iso2) => Boolean(iso2) && input.dayOf(iso2) >= input.from && input.dayOf(iso2) <= input.to;
+  const alosAll = [];
+  for (const s of live) {
+    const firstWard = wardOf.get(s.periods[0]?.wardId ?? "");
+    const lastWard = wardOf.get(s.periods[s.periods.length - 1]?.wardId ?? "");
+    if (inRange(s.admittedAt)) {
+      if (firstWard) acc(byWard, firstWard.id).admitted++;
+      acc(byDept, firstWard?.departmentId ?? s.departmentId).admitted++;
+    }
+    if (s.status === "discharged" && inRange(s.dischargedAt)) {
+      const length = Math.max(1, dayDiff(input.dayOf(s.admittedAt), input.dayOf(s.dischargedAt)));
+      alosAll.push(length);
+      if (lastWard) {
+        const w = acc(byWard, lastWard.id);
+        w.discharged++;
+        w.stayDays.push(length);
+      }
+      const d = acc(byDept, lastWard?.departmentId ?? s.departmentId);
+      d.discharged++;
+      d.stayDays.push(length);
+    }
+  }
+  const row = (id, name, beds2, a) => ({
+    id,
+    name,
+    beds: beds2,
+    occupiedBedDays: a.occupied,
+    availableBedDays: a.available,
+    occupancy: pct(a.occupied, a.available),
+    admitted: a.admitted,
+    discharged: a.discharged,
+    alos: a.stayDays.length ? round1(a.stayDays.reduce((x, y) => x + y, 0) / a.stayDays.length) : null
+  });
+  const departments2 = [...new Map(input.wards.map((w) => [w.departmentId, w.departmentName])).entries()];
+  const bedsIn = (pred) => usableBeds.filter(pred).length;
+  const occupied = dayRows.reduce((s, d) => s + d.occupied, 0);
+  const available = dayRows.reduce((s, d) => s + d.capacity, 0);
+  const peakDay = dayRows.filter((d) => d.occupancy !== null).sort((a, b) => b.occupancy - a.occupancy || a.day.localeCompare(b.day))[0];
+  return {
+    range: { from: input.from, to: input.to },
+    days: dayRows,
+    totals: {
+      occupancy: pct(occupied, available),
+      occupiedBedDays: occupied,
+      availableBedDays: available,
+      admitted: dayRows.reduce((s, d) => s + d.admitted, 0),
+      discharged: dayRows.reduce((s, d) => s + d.discharged, 0),
+      alos: alosAll.length ? round1(alosAll.reduce((x, y) => x + y, 0) / alosAll.length) : null,
+      inHospital: dayRows.length ? dayRows[dayRows.length - 1].occupied : 0,
+      peak: peakDay ? { day: peakDay.day, occupancy: peakDay.occupancy } : null
+    },
+    byDepartment: departments2.map(([id, name]) => row(id, name, bedsIn((b) => wardOf.get(b.wardId)?.departmentId === id), byDept.get(id) ?? blank2())).sort((a, b) => (b.occupancy ?? -1) - (a.occupancy ?? -1) || a.name.localeCompare(b.name)),
+    byWard: input.wards.map((w) => ({ ...row(w.id, w.name, bedsIn((b) => b.wardId === w.id), byWard.get(w.id) ?? blank2()), departmentName: w.departmentName })).sort((a, b) => a.departmentName.localeCompare(b.departmentName) || a.name.localeCompare(b.name, "uz", { numeric: true }))
+  };
+}
+
+// shared/patient-flow.ts
+function buildPatientFlowReport(input) {
+  const days = eachDay(input.from, input.to).filter((d) => d <= input.today);
+  const byDay = /* @__PURE__ */ new Map();
+  const slot = (d) => {
+    let s = byDay.get(d);
+    if (!s) byDay.set(d, s = { all: /* @__PURE__ */ new Set(), visit: /* @__PURE__ */ new Set(), lab: /* @__PURE__ */ new Set(), stay: /* @__PURE__ */ new Set() });
+    return s;
+  };
+  for (const e of input.events) {
+    if (e.day < input.from || e.day > input.to) continue;
+    const s = slot(e.day);
+    s.all.add(e.patientId);
+    s[e.kind].add(e.patientId);
+  }
+  const live = input.stays.filter((s) => s.status !== "cancelled");
+  for (const d of days) {
+    const start = input.startOfDay(d);
+    const end = input.endOfDay(d);
+    for (const st of live) {
+      if (Date.parse(st.admittedAt) > end) continue;
+      if (st.dischargedAt && Date.parse(st.dischargedAt) < start) continue;
+      const s = slot(d);
+      s.all.add(st.patientId);
+      s.stay.add(st.patientId);
+    }
+  }
+  const fresh = new Map(input.newPatients.map((n) => [n.day, n.count]));
+  const tests2 = new Map(input.tests.map((t2) => [t2.day, t2]));
+  const rows = days.map((d) => {
+    const s = byDay.get(d);
+    return {
+      day: d,
+      patients: s?.all.size ?? 0,
+      outpatients: s?.visit.size ?? 0,
+      labPatients: s?.lab.size ?? 0,
+      inpatients: s?.stay.size ?? 0,
+      newPatients: fresh.get(d) ?? 0,
+      testsOrdered: tests2.get(d)?.ordered ?? 0,
+      testsVerified: tests2.get(d)?.verified ?? 0
+    };
+  });
+  const everyone = /* @__PURE__ */ new Set();
+  const kinds = { visit: /* @__PURE__ */ new Set(), lab: /* @__PURE__ */ new Set(), stay: /* @__PURE__ */ new Set() };
+  for (const d of days) {
+    const s = byDay.get(d);
+    if (!s) continue;
+    s.all.forEach((p) => everyone.add(p));
+    s.visit.forEach((p) => kinds.visit.add(p));
+    s.lab.forEach((p) => kinds.lab.add(p));
+    s.stay.forEach((p) => kinds.stay.add(p));
+  }
+  const patientDays = rows.reduce((x, r) => x + r.patients, 0);
+  const busiest = rows.filter((r) => r.patients > 0).sort((a, b) => b.patients - a.patients || a.day.localeCompare(b.day))[0];
+  return {
+    range: { from: input.from, to: input.to },
+    days: rows,
+    totals: {
+      uniquePatients: everyone.size,
+      avgPerDay: rows.length ? Math.round(patientDays / rows.length * 10) / 10 : 0,
+      newPatients: rows.reduce((x, r) => x + r.newPatients, 0),
+      outpatients: kinds.visit.size,
+      labPatients: kinds.lab.size,
+      inpatients: kinds.stay.size,
+      testsOrdered: rows.reduce((x, r) => x + r.testsOrdered, 0),
+      testsVerified: rows.reduce((x, r) => x + r.testsVerified, 0),
+      busiest: busiest ? { day: busiest.day, patients: busiest.patients } : null
+    }
+  };
+}
+
+// server/routes-inpatient.ts
+init_prescription();
+init_epicrisis();
+init_patient_identity();
+init_procedures();
+init_inpatient();
+init_storage_types();
+var sum4 = (n) => `${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} so'm`;
+function registerInpatientRoutes(app) {
+  app.get(
+    "/api/wards",
+    requirePermission("inpatient.read"),
+    handle(async (_req, res) => {
+      res.json(await storage.listWards().catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.post(
+    "/api/wards",
+    requirePermission("beds.manage"),
+    handle(async (req, res) => {
+      const input = insertWardSchema.parse(req.body);
+      const w = await storage.createWard(input, actorOf(req));
+      await audit(req, "create", "ward", w.id, `Palata "${w.name}" qo'shildi: ${w.departmentName}${w.floor !== null ? `, ${w.floor}-qavat` : ""}, ${WARD_GENDER_LABELS[w.gender]}, yotoq-kun ${sum4(w.dayPrice)}`);
+      res.status(201).json(w);
+    })
+  );
+  app.patch(
+    "/api/wards/:id",
+    requirePermission("beds.manage"),
+    handle(async (req, res) => {
+      const patch = updateWardSchema.parse(req.body);
+      const before = await storage.getWard(req.params.id);
+      if (!before) return res.status(404).json({ message: "Palata topilmadi" });
+      const w = await storage.updateWard(req.params.id, patch, actorOf(req));
+      const changes = [];
+      if (before.name !== w.name) changes.push(`nomi "${before.name}" \u2192 "${w.name}"`);
+      if (before.departmentId !== w.departmentId) changes.push(`bo'lim ${before.departmentName} \u2192 ${w.departmentName}`);
+      if (before.floor !== w.floor) changes.push(`qavat ${before.floor ?? "\u2014"} \u2192 ${w.floor ?? "\u2014"}`);
+      if (before.gender !== w.gender) changes.push(`${WARD_GENDER_LABELS[before.gender]} \u2192 ${WARD_GENDER_LABELS[w.gender]}`);
+      if (before.dayPrice !== w.dayPrice) changes.push(`yotoq-kun ${sum4(before.dayPrice)} \u2192 ${sum4(w.dayPrice)}`);
+      if (before.isActive !== w.isActive) changes.push(w.isActive ? "faollashtirildi" : "faolsizlantirildi");
+      if ((before.note ?? "") !== (w.note ?? "")) changes.push("izoh");
+      if (changes.length) await audit(req, "update", "ward", w.id, `Palata "${w.name}": ${changes.join(", ")}`);
+      res.json(w);
+    })
+  );
+  app.delete(
+    "/api/wards/:id",
+    requirePermission("beds.manage"),
+    handle(async (req, res) => {
+      const before = await storage.getWard(req.params.id);
+      if (!before || !await storage.deleteWard(req.params.id)) return res.status(404).json({ message: "Palata topilmadi" });
+      await audit(req, "delete", "ward", req.params.id, `Palata "${before.name}" (${before.departmentName}) o'chirildi`);
+      res.status(204).end();
+    })
+  );
+  app.post(
+    "/api/wards/:id/beds",
+    requirePermission("beds.manage"),
+    handle(async (req, res) => {
+      const { count } = addBedsSchema.parse(req.body);
+      const before = await storage.getWard(req.params.id);
+      if (!before) return res.status(404).json({ message: "Palata topilmadi" });
+      const w = await storage.addBeds(req.params.id, count, actorOf(req));
+      const added = w.beds.filter((b) => !before.beds.some((x) => x.id === b.id)).map((b) => b.label);
+      await audit(req, "create", "bed", w.id, `Palata "${w.name}": ${added.length} ta yotoq qo'shildi (${added.join(", ")})`);
+      res.status(201).json(w);
+    })
+  );
+  app.patch(
+    "/api/beds/:id",
+    requirePermission("beds.manage"),
+    handle(async (req, res) => {
+      const patch = updateBedSchema.parse(req.body);
+      const b = await storage.updateBed(req.params.id, patch, actorOf(req));
+      if (!b) return res.status(404).json({ message: "Yotoq topilmadi" });
+      const parts = [patch.label !== void 0 && `raqami ${b.label}`, patch.isActive !== void 0 && (b.isActive ? "faollashtirildi" : "faolsizlantirildi"), patch.note !== void 0 && "izoh"].filter(Boolean);
+      await audit(req, "update", "bed", b.id, `Yotoq ${b.label}: ${parts.join(", ")}`);
+      res.json(b);
+    })
+  );
+  app.post(
+    "/api/beds/:id/state",
+    requirePermission("beds.state", "beds.manage"),
+    handle(async (req, res) => {
+      const { state, note } = bedStateSchema.parse(req.body);
+      const b = await storage.setBedState(req.params.id, state, note, actorOf(req));
+      if (!b) return res.status(404).json({ message: "Yotoq topilmadi" });
+      await audit(req, "update", "bed", b.id, `Yotoq ${b.label}: ${BED_STATE_LABELS[state].toLowerCase()}${note ? ` \u2014 ${note}` : ""}`);
+      res.json(b);
+    })
+  );
+  app.delete(
+    "/api/beds/:id",
+    requirePermission("beds.manage"),
+    handle(async (req, res) => {
+      const ward = (await storage.listWards()).find((w) => w.beds.some((b) => b.id === req.params.id));
+      const label = ward?.beds.find((b) => b.id === req.params.id)?.label;
+      if (!await storage.deleteBed(req.params.id)) return res.status(404).json({ message: "Yotoq topilmadi" });
+      await audit(req, "delete", "bed", req.params.id, `Palata "${ward?.name ?? "\u2014"}": yotoq ${label ?? "\u2014"} o'chirildi`);
+      res.status(204).end();
+    })
+  );
+  const place = (a) => a.current ? `palata ${a.current.wardName}, yotoq ${a.current.bedLabel}` : "\u2014";
+  app.get(
+    "/api/admissions",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      const status = stringParam(req.query.status);
+      if (status && !ADMISSION_STATUSES.includes(status)) return res.status(400).json({ message: "Noma'lum holat" });
+      res.json(await storage.listAdmissions({ status, patientId: stringParam(req.query.patientId) }).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.get(
+    "/api/admissions/:id",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      const a = await storage.getAdmission(req.params.id);
+      if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      res.json(a);
+    })
+  );
+  app.post(
+    "/api/admissions",
+    requirePermission("admissions.manage"),
+    handle(async (req, res) => {
+      const input = admitSchema.parse(req.body);
+      const a = await storage.admitPatient(input, actorOf(req));
+      await audit(req, "create", "admission", a.id, `Statsionar karta \u2116${a.number}: \u2116${a.patientNumber} ${a.patientName} yotqizildi \u2014 ${a.departmentName}, ${place(a)}; shifokor ${a.doctorName}${a.reason ? `. Sabab: ${a.reason}` : ""}`);
+      res.status(201).json(a);
+    })
+  );
+  app.post(
+    "/api/admissions/:id/transfer",
+    requirePermission("admissions.manage"),
+    handle(async (req, res) => {
+      const input = transferSchema.parse(req.body);
+      const before = await storage.getAdmission(req.params.id);
+      if (!before) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const a = await storage.transferAdmission(req.params.id, input, actorOf(req));
+      await audit(req, "update", "admission", a.id, `Statsionar karta \u2116${a.number} (\u2116${a.patientNumber} ${a.patientName}): ${place(before)} \u2192 ${place(a)}${input.note ? `. ${input.note}` : ""}`);
+      res.json(a);
+    })
+  );
+  app.post(
+    "/api/admissions/:id/cancel",
+    requirePermission("admissions.manage"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const a = await storage.cancelAdmission(req.params.id, reason, actorOf(req));
+      if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      await audit(req, "void", "admission", a.id, `Statsionar karta \u2116${a.number} (\u2116${a.patientNumber} ${a.patientName}) bekor qilindi. Sabab: ${reason}`);
+      res.json(a);
+    })
+  );
+  app.get(
+    "/api/inpatient/overview",
+    requirePermission("inpatient.read"),
+    handle(async (_req, res) => {
+      const today = todayKey();
+      const [wards2, active, discharged] = await Promise.all([
+        storage.listWards().catch((e) => emptyIfMissing(e, [])),
+        storage.listAdmissions({ status: "active" }).catch((e) => emptyIfMissing(e, [])),
+        storage.listAdmissions({ status: "discharged", limit: 200 }).catch((e) => emptyIfMissing(e, []))
+      ]);
+      const dischargedToday = discharged.filter((a) => a.dischargedAt && localDay(a.dischargedAt) === today).length;
+      res.json(buildInpatientOverview(wards2, active, dischargedToday, today, localDay));
+    })
+  );
+  app.post(
+    "/api/admissions/:id/discharge-plan",
+    requirePermission("admissions.manage", "records.write"),
+    handle(async (req, res) => {
+      const { date } = dischargePlanSchema.parse(req.body);
+      const a = await storage.planDischarge(req.params.id, date, { id: req.user?.id ?? null, name: req.user?.fullName ?? "Tizim" });
+      if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      await audit(req, "update", "admission", a.id, `Statsionar karta \u2116${a.number} (\u2116${a.patientNumber} ${a.patientName}): chiqarish ${date ? `rejasi ${date}` : "rejasi olib tashlandi"}`);
+      res.json(a);
+    })
+  );
+  const readsHistory = (req) => hasPermission(req, "records.read") || hasPermission(req, "inpatient.history") || hasPermission(req, "inpatient.observe") || hasPermission(req, "procedures.prescribe") || hasPermission(req, "procedures.perform");
+  app.get(
+    "/api/admissions/:id/history",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Kasallik tarixini ko'rish uchun ruxsatingiz yo'q" });
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const seesLab = hasPermission(req, "orders.read");
+      const [versions, observations, allergies, orders2, records] = await Promise.all([
+        storage.listCaseHistory(admission.id).catch((e) => emptyIfMissing(e, [])),
+        storage.listObservations(admission.id).catch((e) => emptyIfMissing(e, [])),
+        storage.listAllergies(admission.patientId).catch((e) => emptyIfMissing(e, [])),
+        seesLab ? storage.listOrders({ patientId: admission.patientId }) : Promise.resolve(null),
+        hasPermission(req, "records.read") ? storage.listRecords({ patientId: admission.patientId }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve([])
+      ]);
+      const from = admission.admittedAt;
+      const to = admission.dischargedAt ?? admission.cancelledAt ?? (/* @__PURE__ */ new Date()).toISOString();
+      const within = (t2) => t2 >= from && t2 <= to;
+      const firstDay = localDay(from);
+      const lastDay = localDay(to);
+      const view = {
+        admission,
+        current: versions[0] ?? null,
+        versionCount: versions.length,
+        observations,
+        allergies,
+        labResults: orders2 ? labResults(orders2.items.filter((o) => within(o.createdAt))) : null,
+        exams: records.filter((r) => r.status === "signed" && r.date >= firstDay && r.date <= lastDay).map((r) => ({
+          id: r.id,
+          date: r.date,
+          title: `${r.specialty} ko'rigi`,
+          doctorName: r.doctorName,
+          conclusion: r.examination ?? r.recommendations,
+          diagnosis: r.finalDiagnosis ?? r.preliminaryDiagnosis
+        })),
+        can: {
+          write: admission.status === "active" && hasPermission(req, "inpatient.history"),
+          observe: admission.status === "active" && hasPermission(req, "inpatient.observe"),
+          voidAny: hasPermission(req, "records.amend")
+        }
+      };
+      await logPatientView(req, { id: admission.patientId, patientNumber: admission.patientNumber, fullName: admission.patientName }, `kasallik tarixi ochildi (statsionar karta \u2116${admission.number})`);
+      res.json(view);
+    })
+  );
+  app.get(
+    "/api/admissions/:id/history/versions",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Kasallik tarixini ko'rish uchun ruxsatingiz yo'q" });
+      res.json(await storage.listCaseHistory(req.params.id).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.post(
+    "/api/admissions/:id/history",
+    requirePermission("inpatient.history"),
+    handle(async (req, res) => {
+      const { baseVersion, ...input } = saveCaseHistorySchema.parse(req.body);
+      const text2 = normalizeCase(input);
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const before = (await storage.listCaseHistory(admission.id))[0];
+      if (text2.diagnosisCode && text2.diagnosisCode !== before?.diagnosisCode) {
+        const [found] = await storage.getIcd([text2.diagnosisCode]).catch((e) => emptyIfMissing(e, []));
+        if (!found?.selectable) return res.status(400).json({ message: `MKB-10 katalogida tanlab bo'lmaydigan kod: ${text2.diagnosisCode}` });
+      }
+      const saved = await storage.saveCaseHistory(admission.id, baseVersion, text2, actorOf(req));
+      if (!saved) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const changed = caseChanges(before ? caseTextOf(before) : null, text2);
+      await audit(
+        req,
+        saved.version === 1 ? "create" : "update",
+        "admission",
+        admission.id,
+        `Statsionar karta \u2116${admission.number} (\u2116${admission.patientNumber} ${admission.patientName}): kasallik tarixi, ${saved.version}-versiya \u2014 ${changed.join(", ")}`
+      );
+      res.status(saved.version === 1 ? 201 : 200).json(saved);
+    })
+  );
+  app.post(
+    "/api/admissions/:id/observations",
+    requirePermission("inpatient.observe"),
+    handle(async (req, res) => {
+      const input = observationSchema.parse(req.body);
+      const vitals = Object.fromEntries(VITALS.map((v) => [v, input[v]]));
+      const bad = vitalsProblem(vitals);
+      if (bad) return res.status(400).json({ message: bad });
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const o = await storage.addObservation(
+        admission.id,
+        { observedAt: input.observedAt ?? (/* @__PURE__ */ new Date()).toISOString(), vitals, note: input.note, authorRole: req.user?.roleName ?? null },
+        actorOf(req)
+      );
+      if (!o) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const figures = VITALS.filter((v) => v !== "diastolic" && vitals[v] !== null).map(
+        (v) => v === "systolic" ? `AQB ${vitals.systolic}/${vitals.diastolic}` : `${VITAL_SPEC[v].short} ${formatVital(v, vitals[v])}`
+      );
+      await audit(
+        req,
+        "create",
+        "admission",
+        admission.id,
+        `Statsionar karta \u2116${admission.number} (\u2116${admission.patientNumber} ${admission.patientName}): kundalik kuzatuv${figures.length ? ` \u2014 ${figures.join(", ")}` : ""}${o.note ? " (izoh bilan)" : ""}`
+      );
+      res.status(201).json(o);
+    })
+  );
+  app.post(
+    "/api/observations/:id/void",
+    requirePermission("inpatient.observe", "records.amend"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const found = await storage.getObservation(req.params.id);
+      if (!found) return res.status(404).json({ message: "Kuzatuv topilmadi" });
+      const any = hasPermission(req, "records.amend");
+      if (!any && found.authorId !== req.user?.id) return res.status(403).json({ message: "Boshqa xodimning kuzatuvini faqat tuzatish huquqi bor shifokor bekor qiladi" });
+      const o = await storage.voidObservation(found.id, reason, any, actorOf(req));
+      if (!o) return res.status(404).json({ message: "Kuzatuv topilmadi" });
+      const admission = await storage.getAdmission(o.admissionId);
+      await audit(
+        req,
+        "update",
+        "admission",
+        o.admissionId,
+        `Statsionar karta \u2116${admission?.number ?? "?"}: kundalik kuzatuv (${o.authorName ?? "\u2014"}, ${localDay(o.observedAt)}) bekor qilindi \u2014 ${reason}`
+      );
+      res.json(o);
+    })
+  );
+  const localAt = (day, time) => /* @__PURE__ */ new Date(`${day}T${time}:00`);
+  const orderLabel = (o) => `${o.name}${o.dose ? ` ${o.dose}` : ""}${o.route ? `, ${ADMIN_ROUTE_LABELS[o.route]?.toLowerCase() ?? o.route}` : ""} \u2014 ${o.times.join(", ")}, ${o.days} kun`;
+  const taskLabel = (t2) => `Statsionar karta \u2116${t2.admissionNumber} (\u2116${t2.patientNumber} ${t2.patientName}): ${t2.name}${t2.dose ? ` ${t2.dose}` : ""}, ${localDay(t2.plannedAt)} ${new Date(t2.plannedAt).toTimeString().slice(0, 5)}`;
+  app.get(
+    "/api/admissions/:id/orders",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Tayinlovlarni ko'rish uchun ruxsatingiz yo'q" });
+      res.json(await storage.listInpatientOrders(req.params.id).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.post(
+    "/api/admissions/:id/orders",
+    requirePermission("procedures.prescribe"),
+    handle(async (req, res) => {
+      const input = inpatientOrderSchema.parse(req.body);
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      let name = input.name;
+      let unitPrice = null;
+      if (input.kind === "medicine") {
+        if (input.serviceId) return res.status(400).json({ message: "Dori xizmatlar katalogidan tanlanmaydi" });
+        if (input.itemId) {
+          const item = await storage.getInventoryItem(input.itemId);
+          if (!item || item.kind !== "medicine" || !item.isActive) return res.status(400).json({ message: "Dori ombor katalogida topilmadi yoki faol emas" });
+          name = item.name;
+          if (!input.issueQty) return res.status(400).json({ message: `Bir dozaga ombordan qancha ketishini kiriting (${item.unit})` });
+          unitPrice = item.salePrice !== null && item.salePrice !== void 0 ? Math.round(item.salePrice * input.issueQty) : null;
+        } else if (input.issueQty) {
+          return res.status(400).json({ message: "Ombordan miqdor faqat katalogdagi dori uchun" });
+        }
+      } else {
+        if (input.itemId || input.issueQty) return res.status(400).json({ message: "Muolaja ombor katalogidan tanlanmaydi" });
+        if (input.serviceId) {
+          const service = await storage.getService(input.serviceId);
+          if (!service || service.kind !== "muolaja" || !service.isActive) return res.status(400).json({ message: "Muolaja xizmatlar katalogida topilmadi yoki faol emas" });
+          name = service.name;
+          unitPrice = service.price;
+        }
+      }
+      const plan = { ...input, name, unitPrice, times: normalizeTimes(input.times) };
+      const problem = orderProblem(plan, todayKey(), localDay(admission.admittedAt));
+      if (problem) return res.status(400).json({ message: problem });
+      const slots = planSlots(plan, /* @__PURE__ */ new Date(), localAt).map((d) => d.toISOString());
+      if (slots.length === 0) return res.status(400).json({ message: ORDER_NOTHING_AHEAD });
+      const o = await storage.createInpatientOrder(admission.id, plan, slots, actorOf(req));
+      if (!o) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      await audit(req, "create", "admission", admission.id, `Statsionar karta \u2116${admission.number} (\u2116${admission.patientNumber} ${admission.patientName}): tayinlov \u2014 ${orderLabel(o)}, ${o.tasks.length} ta muolaja`);
+      res.status(201).json(o);
+    })
+  );
+  app.post(
+    "/api/inpatient-orders/:id/stop",
+    requirePermission("procedures.prescribe"),
+    handle(async (req, res) => {
+      const { reason } = voidPaymentSchema.parse(req.body);
+      const o = await storage.stopInpatientOrder(req.params.id, reason, actorOf(req));
+      if (!o) return res.status(404).json({ message: "Tayinlov topilmadi" });
+      const admission = await storage.getAdmission(o.admissionId);
+      await audit(req, "update", "admission", o.admissionId, `Statsionar karta \u2116${admission?.number ?? "?"}: tayinlov to'xtatildi \u2014 ${o.name}: ${reason}`);
+      res.json(o);
+    })
+  );
+  app.get(
+    "/api/procedure-tasks",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Muolajalarni ko'rish uchun ruxsatingiz yo'q" });
+      const day = stringParam(req.query.day) ?? todayKey();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ message: "Kunni to'g'ri kiriting" });
+      const rows = await storage.listProcedureTasks({ from: localAt(day, "00:00").toISOString(), to: localAt(addDays(day, 1), "00:00").toISOString(), admissionId: stringParam(req.query.admissionId) ?? void 0 }).catch((e) => emptyIfMissing(e, []));
+      res.json(sortTasks(rows));
+    })
+  );
+  const markTask = (status) => handle(async (req, res) => {
+    const note = status === "done" ? taskMarkSchema.parse(req.body).note : taskReasonSchema.parse(req.body).reason;
+    const t2 = await storage.markProcedureTask(req.params.id, { status, note }, actorOf(req));
+    if (!t2) return res.status(404).json({ message: "Muolaja topilmadi" });
+    const short = t2.stock ? Math.max(0, t2.stock.quantity - t2.stock.posted) : 0;
+    const stock = t2.stock ? `; ombordan ${t2.stock.posted} ${t2.stock.unit}${short > 1e-6 ? ` (kamomad ${Number(short.toFixed(3))} ${t2.stock.unit})` : ""}` : "";
+    await audit(req, "update", "admission", t2.admissionId, `${taskLabel(t2)} \u2014 ${TASK_STATUS_LABELS[status].toLowerCase()}${note ? `: ${note}` : ""}${stock}`);
+    res.json(t2);
+  });
+  app.post("/api/procedure-tasks/:id/done", requirePermission("procedures.perform"), markTask("done"));
+  app.post("/api/procedure-tasks/:id/missed", requirePermission("procedures.perform"), markTask("missed"));
+  app.post(
+    "/api/procedure-tasks/:id/revert",
+    requirePermission("procedures.perform"),
+    handle(async (req, res) => {
+      const { reason } = taskReasonSchema.parse(req.body);
+      const before = await storage.getProcedureTask(req.params.id);
+      if (!before) return res.status(404).json({ message: "Muolaja topilmadi" });
+      const t2 = await storage.revertProcedureTask(before.id, reason, actorOf(req));
+      if (!t2) return res.status(404).json({ message: "Muolaja topilmadi" });
+      await audit(req, "update", "admission", t2.admissionId, `${taskLabel(t2)} \u2014 "${TASK_STATUS_LABELS[before.status].toLowerCase()}" belgisi qaytarildi: ${reason}`);
+      res.json(t2);
+    })
+  );
+  app.get(
+    "/api/admissions/:id/charge",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!hasPermission(req, "payments.create") && !hasPermission(req, "finance.view")) return res.status(403).json({ message: "Statsionar hisobini ko'rish uchun ruxsatingiz yo'q" });
+      const found = await storage.getStayCharge(req.params.id);
+      if (!found) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      res.json({ ...found, due: Math.max(0, found.charge.amount - found.paid), credit: Math.max(0, found.paid - found.charge.amount) });
+    })
+  );
+  app.post(
+    "/api/admissions/:id/lab-orders",
+    requirePermission("procedures.prescribe"),
+    handle(async (req, res) => {
+      const { testIds, note } = stayLabOrderSchema.parse(req.body);
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      if (admission.status !== "active") return res.status(409).json({ message: "Statsionar karta yopilgan \u2014 buyurtma berib bo'lmaydi" });
+      if (!admission.visitId) return res.status(409).json({ message: "Statsionar kartaning hisobvarag'i yo'q \u2014 avval npm run db:stay-billing" });
+      const order = await storage.createOrder({
+        patientId: admission.patientId,
+        testIds,
+        discount: 0,
+        paidAmount: 0,
+        notes: [`Statsionar karta \u2116${admission.number}`, note].filter(Boolean).join(" \u2014 "),
+        referrer: req.user?.fullName ?? null,
+        createdBy: req.user?.id ?? null,
+        visitId: admission.visitId,
+        admissionId: admission.id
+      });
+      await audit(
+        req,
+        "create",
+        "order",
+        order.id,
+        `Statsionar karta \u2116${admission.number} (\u2116${admission.patientNumber} ${admission.patientName}): laboratoriya buyurtmasi #${order.orderNumber} \u2014 ${order.items.map((i) => i.testName).join(", ")}`
+      );
+      res.status(201).json(order);
+    })
+  );
+  async function epicrisisDraft(req, admission) {
+    const [versions, observations, orders2, patient, charge, labOrders, records] = await Promise.all([
+      storage.listCaseHistory(admission.id).catch((e) => emptyIfMissing(e, [])),
+      storage.listObservations(admission.id).catch((e) => emptyIfMissing(e, [])),
+      storage.listInpatientOrders(admission.id).catch((e) => emptyIfMissing(e, [])),
+      storage.getPatient(admission.patientId),
+      storage.getStayCharge(admission.id).catch(() => void 0),
+      hasPermission(req, "orders.read") ? storage.listOrders({ patientId: admission.patientId }) : Promise.resolve(null),
+      hasPermission(req, "records.read") ? storage.listRecords({ patientId: admission.patientId }).catch((e) => emptyIfMissing(e, [])) : Promise.resolve([])
+    ]);
+    const until = admission.dischargedAt ?? (/* @__PURE__ */ new Date()).toISOString();
+    const within = (t2) => t2 >= admission.admittedAt && t2 <= until;
+    const firstDay = localDay(admission.admittedAt);
+    const lastDay = localDay(until);
+    const current = versions[0] ?? null;
+    return buildEpicrisisDraft({
+      patient: { name: admission.patientName, age: patient ? patientAge(patient) : null },
+      admittedAt: admission.admittedAt,
+      until,
+      days: charge?.charge.days ?? 1,
+      departmentName: admission.departmentName,
+      places: admission.stays.map((x) => `palata ${x.wardName}`).filter((v, i, all) => all.indexOf(v) === i),
+      reason: admission.reason,
+      caseText: current ? caseTextOf(current) : null,
+      observations: observations.filter((o) => !o.voidedAt).sort((a, b) => a.observedAt.localeCompare(b.observedAt)),
+      treatments: orders2.map((o) => ({
+        name: o.name,
+        dose: o.dose,
+        route: o.route ? ADMIN_ROUTE_LABELS[o.route] ?? o.route : null,
+        kind: o.kind,
+        done: o.tasks.filter((t2) => t2.status === "done").length,
+        stopped: o.status === "stopped" && o.stopReason !== "Bemor chiqarildi"
+      })),
+      labs: labOrders ? labResults(labOrders.items.filter((o) => within(o.createdAt))) : [],
+      exams: records.filter((r) => r.status === "signed" && r.date >= firstDay && r.date <= lastDay).map((r) => ({ title: `${r.specialty} ko'rigi`, date: r.date, diagnosis: r.finalDiagnosis ?? r.preliminaryDiagnosis })),
+      dayLabel: (iso2) => {
+        const [y, m, d] = localDay(iso2).split("-");
+        return `${d}.${m}.${y}`;
+      }
+    });
+  }
+  app.get(
+    "/api/admissions/:id/epicrisis",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Epikrizni ko'rish uchun ruxsatingiz yo'q" });
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const versions = await storage.listEpicrisis(admission.id).catch((e) => emptyIfMissing(e, []));
+      const view = {
+        current: versions[0] ?? null,
+        versionCount: versions.length,
+        draft: await epicrisisDraft(req, admission),
+        can: {
+          write: admission.status === "active" && hasPermission(req, "inpatient.history"),
+          discharge: admission.status === "active" && hasPermission(req, "inpatient.discharge"),
+          amend: admission.status === "discharged" && hasPermission(req, "records.amend")
+        }
+      };
+      res.json(view);
+    })
+  );
+  app.get(
+    "/api/admissions/:id/epicrisis/versions",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Epikrizni ko'rish uchun ruxsatingiz yo'q" });
+      res.json(await storage.listEpicrisis(req.params.id).catch((e) => emptyIfMissing(e, [])));
+    })
+  );
+  app.post(
+    "/api/admissions/:id/epicrisis",
+    requirePermission("inpatient.history", "records.amend"),
+    handle(async (req, res) => {
+      const { baseVersion, reason, ...input } = saveEpicrisisSchema.parse(req.body);
+      const text2 = normalizeEpicrisis(input);
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      if (admission.status === "active" && !hasPermission(req, "inpatient.history")) return res.status(403).json({ message: "Epikriz yozish uchun ruxsatingiz yo'q" });
+      if (admission.status === "discharged" && !hasPermission(req, "records.amend")) return res.status(403).json({ message: "Chiqarilgan bemorning epikrizini faqat tuzatish huquqi bor shifokor o'zgartiradi" });
+      const before = (await storage.listEpicrisis(admission.id))[0];
+      if (text2.finalDiagnosisCode && text2.finalDiagnosisCode !== before?.finalDiagnosisCode) {
+        const [found] = await storage.getIcd([text2.finalDiagnosisCode]).catch((e) => emptyIfMissing(e, []));
+        if (!found?.selectable) return res.status(400).json({ message: `MKB-10 katalogida tanlab bo'lmaydigan kod: ${text2.finalDiagnosisCode}` });
+      }
+      const saved = await storage.saveEpicrisis(admission.id, baseVersion, text2, reason, actorOf(req));
+      if (!saved) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const changed = epicrisisChanges(before ? epicrisisTextOf(before) : null, text2);
+      await audit(
+        req,
+        saved.version === 1 ? "create" : "update",
+        "admission",
+        admission.id,
+        `Statsionar karta \u2116${admission.number} (\u2116${admission.patientNumber} ${admission.patientName}): epikriz, ${saved.version}-versiya \u2014 ${changed.join(", ")}${saved.reason ? `; tuzatish sababi: ${saved.reason}` : ""}`
+      );
+      res.status(saved.version === 1 ? 201 : 200).json(saved);
+    })
+  );
+  app.post(
+    "/api/admissions/:id/discharge",
+    requirePermission("inpatient.discharge"),
+    handle(async (req, res) => {
+      const { dischargedAt } = dischargeSchema.parse(req.body);
+      const a = await storage.dischargeAdmission(req.params.id, dischargedAt ?? (/* @__PURE__ */ new Date()).toISOString(), actorOf(req));
+      if (!a) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const charge = await storage.getStayCharge(a.id).catch(() => void 0);
+      const due = charge ? Math.max(0, charge.charge.amount - charge.paid) : 0;
+      await audit(
+        req,
+        "update",
+        "admission",
+        a.id,
+        `Statsionar karta \u2116${a.number} (\u2116${a.patientNumber} ${a.patientName}): bemor chiqarildi ${localDay(a.dischargedAt)}${charge ? `, ${charge.charge.days} yotoq-kun` : ""}${due ? `, hisobda qarz ${sum4(due)}` : ""}`
+      );
+      res.json(a);
+    })
+  );
+  app.get(
+    "/api/admissions/:id/epicrisis/document",
+    requirePermission("inpatient.read"),
+    handle(async (req, res) => {
+      if (!readsHistory(req)) return res.status(403).json({ message: "Epikrizni ko'rish uchun ruxsatingiz yo'q" });
+      const admission = await storage.getAdmission(req.params.id);
+      if (!admission) return res.status(404).json({ message: "Yotqizish topilmadi" });
+      const [epicrisis] = await storage.listEpicrisis(admission.id);
+      if (!epicrisis) return res.status(409).json({ message: "Epikriz hali yozilmagan" });
+      const [patient, allergies, clinic, logo, charge, icd] = await Promise.all([
+        storage.getPatient(admission.patientId),
+        storage.listAllergies(admission.patientId).catch((e) => emptyIfMissing(e, [])),
+        storage.getSettings(),
+        storage.getLogo(),
+        storage.getStayCharge(admission.id).catch(() => void 0),
+        epicrisis.finalDiagnosisCode ? storage.getIcd([epicrisis.finalDiagnosisCode]).catch((e) => emptyIfMissing(e, [])) : Promise.resolve([])
+      ]);
+      const doc = {
+        admission,
+        epicrisis,
+        icd: icd[0] ? { code: icd[0].code, nameRu: icd[0].nameRu, nameUz: icd[0].nameUz } : null,
+        patient: { birthDate: patient?.birthDate ?? null, age: patient ? patientAge(patient) : null, gender: patient?.gender ?? null, address: patient?.address ?? null },
+        allergies: allergies.filter((x) => x.isActive),
+        days: charge?.charge.days ?? 1,
+        clinic,
+        logo: logo?.dataUrl ?? null,
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        generatedBy: req.user.fullName
+      };
+      await audit(req, "export", "admission", admission.id, `Statsionar karta \u2116${admission.number} (\u2116${admission.patientNumber} ${admission.patientName}): epikriz chiqarildi (v${epicrisis.version})`);
+      res.json(doc);
+    })
+  );
+  app.get(
+    "/api/reports/inpatient",
+    requirePermission("reports.view"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const to = stringParam(req.query.to) ?? today;
+      const from = stringParam(req.query.from) ?? addDays(to, -29);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ message: "Davrni to'g'ri tanlang" });
+      if (addDays(from, 366) < to) return res.status(400).json({ message: "Davr ko'pi bilan bir yil" });
+      const endOfDay = (day) => (/* @__PURE__ */ new Date(`${day}T23:59:59.999`)).getTime();
+      const [wards2, stays] = await Promise.all([
+        storage.listWards().catch((e) => emptyIfMissing(e, [])),
+        storage.listAdmissions({ inHospitalBetween: { from: (/* @__PURE__ */ new Date(`${from}T00:00:00`)).toISOString(), to: new Date(endOfDay(to)).toISOString() }, limit: 2e4 }).catch((e) => emptyIfMissing(e, []))
+      ]);
+      res.json(
+        buildInpatientReport({
+          from,
+          to,
+          wards: wards2.map((w) => ({ id: w.id, name: w.name, departmentId: w.departmentId, departmentName: w.departmentName })),
+          beds: wards2.flatMap((w) => w.beds.map((b) => ({ id: b.id, wardId: w.id, createdAt: b.createdAt, usable: w.isActive && b.isActive && b.state !== "maintenance" }))),
+          stays: stays.map((a) => ({
+            id: a.id,
+            status: a.status,
+            admittedAt: a.admittedAt,
+            dischargedAt: a.dischargedAt,
+            departmentId: a.departmentId,
+            periods: a.stays.map((x) => ({ bedId: x.bedId, wardId: x.wardId, fromAt: x.fromAt, toAt: x.toAt }))
+          })),
+          endOfDay,
+          today,
+          now: Date.now(),
+          dayOf: localDay
+        })
+      );
+    })
+  );
+  app.get(
+    "/api/reports/patient-flow",
+    requirePermission("reports.view"),
+    handle(async (req, res) => {
+      const today = todayKey();
+      const to = stringParam(req.query.to) ?? today;
+      const from = stringParam(req.query.from) ?? addDays(to, -29);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ message: "Davrni to'g'ri tanlang" });
+      if (addDays(from, 366) < to) return res.status(400).json({ message: "Davr ko'pi bilan bir yil" });
+      const startOfDay = (day) => (/* @__PURE__ */ new Date(`${day}T00:00:00`)).getTime();
+      const endOfDay = (day) => (/* @__PURE__ */ new Date(`${day}T23:59:59.999`)).getTime();
+      const [activity, stays] = await Promise.all([
+        storage.listActivity(from, to),
+        storage.listAdmissions({ inHospitalBetween: { from: new Date(startOfDay(from)).toISOString(), to: new Date(endOfDay(to)).toISOString() }, limit: 2e4 }).catch((e) => emptyIfMissing(e, []))
+      ]);
+      res.json(
+        buildPatientFlowReport({
+          from,
+          to,
+          today,
+          ...activity,
+          stays: stays.map((a) => ({ patientId: a.patientId, status: a.status, admittedAt: a.admittedAt, dischargedAt: a.dischargedAt })),
+          startOfDay,
+          endOfDay
+        })
+      );
+    })
+  );
+}
+
+// server/routes.ts
+init_refund();
 
 // server/reagent-consumption.ts
 init_appointment();
@@ -14507,6 +19524,763 @@ async function consumeForOrder(orderId, orderNumber, actor) {
 }
 
 // server/routes.ts
+init_storage_types();
+
+// server/api-errors.ts
+init_storage_types();
+import { ZodError } from "zod";
+import { fromZodError } from "zod-validation-error";
+var INTERNAL_ERROR = "Ichki xatolik. Keyinroq urinib ko'ring";
+function apiErrorResponse(err) {
+  if (err instanceof ZodError) return { status: 400, message: fromZodError(err).toString() };
+  if (err instanceof StorageConflict) return { status: 409, message: err.message };
+  const e = err;
+  if (e?.code === "42P01") {
+    return { status: 503, message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyalarni ishga tushirishi kerak (npm run db:upgrade).", log: true };
+  }
+  if (e?.type === "entity.too.large") return { status: 413, message: "So'rov hajmi juda katta" };
+  if (e?.type === "entity.parse.failed") return { status: 400, message: "So'rov ma'lumoti noto'g'ri (JSON)" };
+  if (typeof e?.code === "string" && /^[0-9A-Z]{5}$/.test(e.code)) {
+    switch (e.code) {
+      case "23505":
+        return { status: 409, message: "Bunday yozuv allaqachon bor", log: true };
+      case "23503":
+        return { status: 409, message: "Bog'liq yozuv topilmadi yoki u boshqa yozuvlarda ishlatilmoqda", log: true };
+      case "23514":
+      case "23502":
+      case "22P02":
+      case "22001":
+        return { status: 400, message: "Ma'lumot talablarga mos emas", log: true };
+      case "40001":
+      case "40P01":
+        return { status: 409, message: "Bir vaqtda boshqa o'zgarish bo'ldi \u2014 qayta urinib ko'ring", log: true };
+      default:
+        return { status: 500, message: INTERNAL_ERROR, log: true };
+    }
+  }
+  if (err instanceof Error) {
+    if (/neon|fetch failed|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|connection terminated/i.test(`${err.name} ${err.message}`)) {
+      return { status: 503, message: "Ma'lumotlar bazasi bilan aloqa yo'q. Keyinroq urinib ko'ring", log: true };
+    }
+    return { status: 400, message: err.message };
+  }
+  return null;
+}
+
+// shared/monitoring.ts
+var LATENCY_BUCKETS = [50, 100, 250, 500, 1e3, 2500, 5e3];
+var HISTOGRAM_SIZE = LATENCY_BUCKETS.length + 1;
+var SLOW_P95_MS = 1e3;
+var MONITORING_RETENTION_DAYS = 30;
+function bucketOf(ms) {
+  const i = LATENCY_BUCKETS.findIndex((b) => ms <= b);
+  return i === -1 ? LATENCY_BUCKETS.length : i;
+}
+function percentileFromHistogram(hist, p, maxMs) {
+  const total = hist.reduce((s, n) => s + n, 0);
+  if (!total) return null;
+  const need = Math.ceil(total * p);
+  let seen = 0;
+  for (let i = 0; i < hist.length; i++) {
+    seen += hist[i];
+    if (seen >= need) return i < LATENCY_BUCKETS.length ? Math.min(LATENCY_BUCKETS[i], maxMs) : maxMs;
+  }
+  return maxMs;
+}
+function maskMessage(message) {
+  return message.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ":id").replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, ":email").replace(/\+?\d[\d\s-]{6,}\d/g, ":phone").replace(/\b\d+(\.\d+)?\b/g, ":n").replace(/\s+/g, " ").trim().slice(0, 300);
+}
+function maskPath(path3) {
+  return path3.split("?")[0].replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ":id").replace(/\/\d+(?=\/|$)/g, "/:n").slice(0, 160);
+}
+function errorFingerprint(source, where, name, message) {
+  return `${source}|${where}|${name}|${maskMessage(message)}`.slice(0, 500);
+}
+function summarizeRoutes(rows) {
+  const acc = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const k = `${r.method} ${r.route}`;
+    const a = acc.get(k) ?? { method: r.method, route: r.route, count: 0, totalMs: 0, maxMs: 0, errors: 0, hist: Array(HISTOGRAM_SIZE).fill(0) };
+    a.count += r.count;
+    a.totalMs += r.totalMs;
+    a.maxMs = Math.max(a.maxMs, r.maxMs);
+    a.errors += r.errors;
+    r.histogram.forEach((n, i) => a.hist[i] = (a.hist[i] ?? 0) + n);
+    acc.set(k, a);
+  }
+  return [...acc.values()].map((a) => {
+    const p95 = percentileFromHistogram(a.hist, 0.95, a.maxMs);
+    return {
+      method: a.method,
+      route: a.route,
+      count: a.count,
+      avgMs: a.count ? Math.round(a.totalMs / a.count) : 0,
+      p95Ms: p95,
+      maxMs: a.maxMs,
+      errors: a.errors,
+      errorRate: a.count ? Math.round(a.errors / a.count * 1e3) / 10 : 0,
+      slow: p95 !== null && p95 > SLOW_P95_MS
+    };
+  }).sort((x, y) => (y.p95Ms ?? 0) - (x.p95Ms ?? 0) || y.count - x.count);
+}
+function summarizeHours(rows, now, hours = 24) {
+  const byHour = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const a = byHour.get(r.hour) ?? { count: 0, errors: 0, totalMs: 0 };
+    a.count += r.count;
+    a.errors += r.errors;
+    a.totalMs += r.totalMs;
+    byHour.set(r.hour, a);
+  }
+  const out = [];
+  const start = new Date(now);
+  start.setUTCMinutes(0, 0, 0);
+  for (let i = hours - 1; i >= 0; i--) {
+    const hour = new Date(start.getTime() - i * 36e5).toISOString();
+    const a = byHour.get(hour);
+    out.push({ hour, count: a?.count ?? 0, errors: a?.errors ?? 0, avgMs: a && a.count ? Math.round(a.totalMs / a.count) : 0 });
+  }
+  return out;
+}
+function hourOf(at) {
+  const d = new Date(at);
+  d.setUTCMinutes(0, 0, 0);
+  return d.toISOString();
+}
+function trimStack(stack, frames = 6) {
+  if (!stack) return null;
+  const lines = stack.split("\n").slice(1).map((l) => l.trim()).filter((l) => l.startsWith("at ") && !l.includes("node_modules") && !l.includes("node:internal")).map((l) => l.replace(/\(.*[\\/](server|shared|client)[\\/]/, "($1/").replace(/file:\/\/\/?/, "")).slice(0, frames);
+  return lines.length ? lines.join("\n") : null;
+}
+
+// server/monitoring.ts
+var FLUSH_EVERY_MS = 6e4;
+var PRUNE_EVERY_MS = 6 * 36e5;
+var pending = /* @__PURE__ */ new Map();
+var lastFlush = Date.now();
+var lastPrune = 0;
+var flushing = null;
+var startedAt = Date.now();
+var QUIET = /* @__PURE__ */ new Set(["/api/health", "/api/session/ping", "/api/changes"]);
+function routeOf(req) {
+  const pattern = req.route?.path;
+  if (typeof pattern === "string") return `${req.baseUrl ?? ""}${pattern}`;
+  return maskPath(req.originalUrl ?? req.path);
+}
+function recordRequest(req, status, ms) {
+  const path3 = req.path;
+  if (!path3.startsWith("/api") || QUIET.has(path3)) return;
+  const route = routeOf(req);
+  const hour = hourOf(/* @__PURE__ */ new Date());
+  const key = `${hour}|${req.method}|${route}`;
+  const row = pending.get(key) ?? { hour, method: req.method, route, count: 0, totalMs: 0, maxMs: 0, errors: 0, histogram: Array(HISTOGRAM_SIZE).fill(0) };
+  row.count++;
+  row.totalMs += Math.round(ms);
+  row.maxMs = Math.max(row.maxMs, Math.round(ms));
+  if (status >= 500) row.errors++;
+  row.histogram[bucketOf(ms)]++;
+  pending.set(key, row);
+  if (Date.now() - lastFlush >= FLUSH_EVERY_MS) void flushMonitoring();
+}
+async function flushMonitoring() {
+  if (flushing) return flushing;
+  const rows = [...pending.values()];
+  pending.clear();
+  lastFlush = Date.now();
+  flushing = (async () => {
+    try {
+      if (rows.length) await storage.saveRequestStats(rows);
+      if (Date.now() - lastPrune >= PRUNE_EVERY_MS) {
+        lastPrune = Date.now();
+        await storage.pruneMonitoring(new Date(Date.now() - MONITORING_RETENTION_DAYS * 864e5).toISOString());
+      }
+    } catch (err) {
+      console.error("[monitoring] statistikani yozib bo'lmadi:", err.message);
+    } finally {
+      flushing = null;
+    }
+  })();
+  return flushing;
+}
+async function recordError(input) {
+  const e = input.err;
+  const name = typeof e?.name === "string" ? e.name : "Error";
+  const raw = typeof e?.message === "string" ? e.message : String(input.err);
+  const message = maskMessage(raw);
+  const event = {
+    fingerprint: errorFingerprint(input.source, input.where, name, raw),
+    source: input.source,
+    where: input.where,
+    name: name.slice(0, 80),
+    message,
+    stack: input.source === "server" ? trimStack(typeof e?.stack === "string" ? e.stack : void 0) : typeof e?.stack === "string" ? e.stack.split("\n").slice(0, 6).join("\n").slice(0, 1200) : null,
+    status: input.status ?? null,
+    role: input.role ?? null,
+    at: (/* @__PURE__ */ new Date()).toISOString(),
+    count: 1
+  };
+  try {
+    await Promise.race([storage.recordErrors([event]), new Promise((resolve) => setTimeout(resolve, 1500))]);
+  } catch (err) {
+    console.error("[monitoring] xatoni yozib bo'lmadi:", err.message);
+  }
+}
+var clientBudget = /* @__PURE__ */ new Map();
+function clientReportAllowed(userId) {
+  const now = Date.now();
+  const b = clientBudget.get(userId);
+  if (!b || now - b.since > 6e4) {
+    clientBudget.set(userId, { since: now, n: 1 });
+    if (clientBudget.size > 5e3) clientBudget.clear();
+    return true;
+  }
+  b.n++;
+  return b.n <= 20;
+}
+
+// server/routes-system.ts
+import { z as z2 } from "zod";
+
+// shared/backup.ts
+var BACKUP_STALE_HOURS = 36;
+var isGoodRun = (r) => r.status === "ok" && r.restoreChecked && r.restoreOk === true;
+function backupHealth(runs, now = /* @__PURE__ */ new Date()) {
+  const sorted = [...runs].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const lastGood = sorted.find(isGoodRun) ?? null;
+  const hoursSince = lastGood ? Math.round((now.getTime() - Date.parse(lastGood.startedAt)) / 36e5 * 10) / 10 : null;
+  if (sorted.length === 0) return { health: "none", lastGood, hoursSince };
+  if (!isGoodRun(sorted[0])) return { health: "failed", lastGood, hoursSince };
+  if (hoursSince !== null && hoursSince > BACKUP_STALE_HOURS) return { health: "stale", lastGood, hoursSince };
+  return { health: "ok", lastGood, hoursSince };
+}
+
+// server/realtime.ts
+init_realtime();
+var BUMP_WAIT_MS = 1500;
+var READ_CACHE_MS = 1e3;
+var cached = null;
+var warnedMissing = false;
+var missingTable = (err) => err?.code === "42P01";
+async function bump(topics) {
+  try {
+    await Promise.race([storage.bumpTopics(topics), new Promise((resolve) => setTimeout(resolve, BUMP_WAIT_MS))]);
+  } catch (err) {
+    if (missingTable(err)) {
+      if (!warnedMissing) console.warn("[realtime] change_topics jadvali yo'q \u2014 npm run db:realtime");
+      warnedMissing = true;
+    } else {
+      console.error("[realtime] versiyani oshirib bo'lmadi:", err.message);
+    }
+  } finally {
+    cached = null;
+  }
+}
+function bumpTopicsOnWrite() {
+  return (req, res, next) => {
+    const topics = topicsForWrite(req.method, req.path);
+    if (topics.length === 0) return next();
+    const end = res.end.bind(res);
+    let held = false;
+    res.end = ((...args) => {
+      if (held || res.statusCode >= 400) return end(...args);
+      held = true;
+      void bump(topics).finally(() => end(...args));
+      return res;
+    });
+    next();
+  };
+}
+function currentChanges() {
+  if (cached && Date.now() - cached.at < READ_CACHE_MS) return cached.value;
+  const value = storage.getTopicVersions().then((versions) => ({ live: true, versions })).catch((err) => {
+    if (missingTable(err)) return { live: false, versions: {} };
+    throw err;
+  });
+  cached = { at: Date.now(), value };
+  value.catch(() => {
+    if (cached?.value === value) cached = null;
+  });
+  return value;
+}
+
+// server/routes-system.ts
+var clientErrorSchema = z2.object({
+  name: z2.string().max(80).default("Error"),
+  message: z2.string().max(1e3),
+  stack: z2.string().max(4e3).nullish(),
+  path: z2.string().max(300)
+});
+async function databaseCheck() {
+  const t2 = Date.now();
+  try {
+    await Promise.race([storage.ping(), new Promise((_, reject) => setTimeout(() => reject(new Error("javob yo'q (5 s)")), 5e3))]);
+    return { ok: true, latencyMs: Date.now() - t2, error: null };
+  } catch (err) {
+    return { ok: false, latencyMs: null, error: err.message.includes("javob yo'q") ? "Javob yo'q (5 s)" : "Ulanib bo'lmadi" };
+  }
+}
+function registerSystemRoutes(app) {
+  app.get("/api/health", async (_req, res) => {
+    const db2 = await databaseCheck();
+    res.setHeader("Cache-Control", "no-store");
+    res.status(db2.ok ? 200 : 503).json({ ok: db2.ok });
+  });
+  app.get(
+    "/api/changes",
+    requireAuth,
+    handle(async (_req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.json(await currentChanges());
+    })
+  );
+  app.get(
+    "/api/system/status",
+    requirePermission("system.monitor"),
+    handle(async (_req, res) => {
+      await flushMonitoring();
+      const now = /* @__PURE__ */ new Date();
+      const since = hourOf(new Date(now.getTime() - 23 * 36e5));
+      const [database, stats, errors, runs] = await Promise.all([
+        databaseCheck(),
+        storage.listRequestStats(since).catch((e) => emptyIfMissing(e, [])),
+        storage.listErrorGroups({ limit: 50, includeResolved: true }).catch((e) => emptyIfMissing(e, [])),
+        usingPostgres ? storage.listBackupRuns(20).catch((e) => emptyIfMissing(e, [])) : Promise.resolve(null)
+      ]);
+      const routes = summarizeRoutes(stats);
+      const requests = routes.reduce((s, r) => s + r.count, 0);
+      const failed = routes.reduce((s, r) => s + r.errors, 0);
+      const totalMs = stats.reduce((s, r) => s + r.totalMs, 0);
+      const health = runs ? backupHealth(runs, now) : null;
+      const status = {
+        generatedAt: now.toISOString(),
+        version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? process.env.npm_package_version ?? "dev",
+        uptimeSeconds: Math.round((Date.now() - startedAt) / 1e3),
+        storage: usingPostgres ? "postgres" : "file",
+        database,
+        backup: health ? { health: health.health, hoursSince: health.hoursSince } : null,
+        last24h: {
+          requests,
+          errors: failed,
+          errorRate: requests ? Math.round(failed / requests * 1e3) / 10 : 0,
+          avgMs: requests ? Math.round(totalMs / requests) : 0,
+          slowRoutes: routes.filter((r) => (r.p95Ms ?? 0) > SLOW_P95_MS).length
+        },
+        hours: summarizeHours(stats, now),
+        routes: routes.slice(0, 40),
+        errors,
+        openErrors: errors.filter((e) => !e.resolvedAt).length
+      };
+      res.json(status);
+    })
+  );
+  app.post(
+    "/api/system/errors/:id/resolve",
+    requirePermission("system.monitor"),
+    handle(async (req, res) => {
+      const g = await storage.resolveErrorGroup(req.params.id, actorOf(req));
+      if (!g) return res.status(404).json({ message: "Xato topilmadi" });
+      await audit(req, "update", "system", g.id, `Xato hal qilindi deb belgilandi: ${g.where} \u2014 ${g.message.slice(0, 120)}`);
+      res.json(g);
+    })
+  );
+  app.post(
+    "/api/client-errors",
+    requireAuth,
+    handle(async (req, res) => {
+      if (!clientReportAllowed(req.user.id)) return res.status(429).json({ message: "Juda ko'p xabar" });
+      const input = clientErrorSchema.parse(req.body);
+      await recordError({ source: "client", where: maskPath(input.path), err: { name: input.name, message: input.message, stack: input.stack ?? void 0 }, status: null, role: req.user?.role ?? null });
+      res.sendStatus(204);
+    })
+  );
+}
+
+// server/assistant.ts
+import { z as z3 } from "zod";
+
+// shared/assistant.ts
+var ASSISTANT_NAME = "AI Hospital";
+var MAX_TURNS = 12;
+var MAX_MESSAGE_CHARS = 2e3;
+var PER_MINUTE = 12;
+var PER_DAY = 300;
+function maskPersonal(text2) {
+  return text2.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[id]").replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "[email]").replace(/\b[A-Z]{2}\s?\d{7}\b/g, "[pasport]").replace(/\+?\d[\d\s()-]{8,}\d/g, "[raqam]");
+}
+function prepareTurns(messages) {
+  const clean = messages.filter((m) => (m.role === "user" || m.role === "model") && typeof m.text === "string" && m.text.trim()).slice(-MAX_TURNS).map((m) => ({ role: m.role, text: maskPersonal(m.text.trim().slice(0, MAX_MESSAGE_CHARS)) }));
+  while (clean.length && clean[0].role !== "user") clean.shift();
+  return clean;
+}
+var PAGE_NAMES = {
+  "/home": "Bosh sahifa",
+  "/patients": "Bemorlar",
+  "/patients/:id": "Bemor kartasi",
+  "/orders": "Buyurtmalar",
+  "/results": "Natijalar",
+  "/queue": "Navbat",
+  "/cabinet": "Mening kabinetim",
+  "/cabinet/visit/:id": "Ko'rik oynasi",
+  "/inpatient": "Statsionar",
+  "/inpatient/stays/:id": "Kasallik tarixi",
+  "/cashier": "Kassa",
+  "/inventory": "Ombor",
+  "/qc": "Sifat nazorati",
+  "/reports": "Hisobotlar",
+  "/expenses": "Xarajatlar",
+  "/doctors": "Shifokorlar",
+  "/departments": "Bo'limlar",
+  "/services": "Xizmatlar",
+  "/devices": "Analizatorlar",
+  "/staff": "Xodimlar",
+  "/settings": "Sozlamalar"
+};
+function pageName(path3) {
+  const clean = path3.split("?")[0].replace(/\/[0-9a-f-]{36}(?=\/|$)/gi, "/:id").replace(/\/\d+(?=\/|$)/g, "/:id");
+  return PAGE_NAMES[clean] ?? "Tizim";
+}
+function textOfEvent(json2) {
+  const c = json2?.candidates?.[0];
+  return (c?.content?.parts ?? []).filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("");
+}
+
+// server/assistant-guide.ts
+var SYSTEM_GUIDE = `
+# NEOGEN CLINIC tizimi \u2014 foydalanish qo'llanmasi
+
+Tizim bitta bemorni barcha bo'limlar bo'ylab yagona karta va raqam (#12) bilan olib boradi.
+Ish tartibi (TZ): Bemor \u2192 Registratura \u2192 Shifokor \u2192 Laboratoriya \u2192 Natija \u2192 Shifokor \u2192 Davolash \u2192 Kassa.
+Statsionar: Registratura \u2192 Statsionar \u2192 Shifokor \u2192 Laboratoriya \u2192 Ombor \u2192 Kassa \u2192 Chiqarish.
+
+Umumiy qoidalar:
+- Har xodim o'z login va paroli bilan kiradi; menyuda faqat o'z roliga ruxsat etilgan sahifalar ko'rinadi.
+- Tibbiy va moliyaviy yozuvlar o'chirilmaydi: xato bo'lsa sabab bilan bekor qilinadi yoki "tuzatish" kiritiladi; hammasi amallar jurnaliga (auditga) yoziladi.
+- Sarlavhadagi yashil "Jonli" belgisi \u2014 boshqa xodimlar kiritgan o'zgarishlar bir necha soniyada ekranda o'zi paydo bo'ladi, sahifani yangilash shart emas.
+- Qo'ng'iroqcha \u2014 shaxsiy bildirishnomalar (masalan, shifokorga tahlil natijasi tayyorligi).
+- Ctrl+K (yoki "Qidiruv") \u2014 tezkor qidiruv: bemor, buyurtma, sahifa.
+- Uzoq vaqt faollik bo'lmasa seans avtomatik yopiladi (bir daqiqa oldin ogohlantiriladi, "Ishni davom ettirish" bosilsa davom etadi).
+- Telefon raqami: +998 XX XXX XX XX. Pul: so'mda, butun son.
+
+Rollar:
+- Super administrator \u2014 hamma narsa, xodimlar va rollar, sozlamalar.
+- Klinika rahbari \u2014 hisobotlar, qaytarish va chegirmani tasdiqlash, smenalar, statsionar boshqaruvi, tizim holati.
+- Registrator \u2014 bemorlar, navbat va qabulga yozish, tahlil buyurtma, to'lov qabul qilish, yotqizish.
+- Shifokor \u2014 kabinet, ko'rik yozuvi, tashxis, davolash, yo'llanmalar; statsionar shifokori \u2014 kasallik tarixi, tayinlovlar, epikriz, chiqarish.
+- Laborant \u2014 namuna, natija kiritish, QC natijalari, reagent sarfi.
+- Laboratoriya mudiri \u2014 natijalarni tasdiqlash, qaytarish, tuzatish, QC boshqaruvi, sarf normalarini tasdiqlash, buyurtmani bekor qilish.
+- Omborchi \u2014 mahsulotlar, kirim, chiqim, inventarizatsiya, sarf normalarini taklif qilish.
+- Statsionar hamshirasi \u2014 kuzatuv (harorat, bosim), dozani berish/belgilash, yotoq holati.
+- Kassa xodimi \u2014 smena, hisobvaraq, to'lov, qaytarish so'rovi.
+- Buxgalter \u2014 xarajatlar, moliyaviy hisobotlar, eksport.
+- Auditor \u2014 hamma narsani faqat ko'radi (o'zgartira olmaydi), amallar jurnali.
+
+## Bosh sahifa (/home)
+Maqsad: kunning holati bir qarashda. Registratura uchun: bugungi bemorlar, navbatdagilar, qabulga kelganlar, yangi kartalar, to'lov holati; ro'yxatlar "Qabulga kelganlar", "Navbatdagi bemorlar" (yonidagi "Keldi" tugmasi bilan), "Yangi bemorlar".
+Tugmalar: "Yangi bemor", "Yangi buyurtma", "Qabulga yozish", "Navbat". Excel/PDF \u2014 kunlik hisobot.
+
+## Bemorlar (/patients) \u2014 registrator
+Maqsad: bemorlar bazasi. Qidiruv: raqam (#12), ism, telefon, manzil, pasport yoki JShShIR.
+Yangi bemor qo'shish:
+1. "Yangi bemor" tugmasini bosing.
+2. F.I.Sh., telefon (+998 \u2026), jinsi, tug'ilgan sana yoki yoshi, manzilni kiriting; xohlasa pasport/JShShIR, favqulodda aloqa.
+3. "Saqlash". Tizim shu telefon yoki hujjat bilan karta bor-yo'qligini tekshiradi; takroriy bo'lsa ogohlantiradi \u2014 mavjud kartani tanlang, yangisini ochmang.
+Bemorga tezda tahlil buyurtma: qatordagi menyu (\u22EE) yoki bemor kartasidagi "Tahlil buyurtma".
+Ikki karta bitta odamniki bo'lsa: bemor kartasidagi birlashtirish tugmasi (yonidagi ikki strelkali belgi) \u2014 ma'lumotlar bitta kartaga o'tadi.
+
+## Bemor kartasi (/patients/:id)
+Maqsad: bemorning hammasi bitta joyda. Yuqorida: tashriflar soni, oxirgi tashrif, jami xizmatlar, qarzdorlik.
+Tablar: Tashriflar (kunlar bo'yicha qabullar, tahlillar va summalar), Tibbiy karta (allergiyalar, tashxislar tarixi, ko'riklar, lab natijalari), Qabullar, Statsionar, Natijalar dinamikasi (bir tahlilning vaqt bo'yicha grafigi), To'lovlar, Ma'lumotlar, Kirishlar tarixi (kim kartani ochgan).
+Tugmalar: "Qabulga yozish", "Tahlil buyurtma", "Tahrirlash".
+Allergiya \u2014 "Tibbiy karta" tabida qo'shiladi; u statsionar va ko'rik oynasida qizil ogohlantirish bo'lib turadi.
+
+## Navbat (/queue) \u2014 registrator
+Maqsad: shifokorlar qabuliga yozish va kunlik navbat. Sana tanlanadi, yuqorida: jami, kutmoqda, qabulda, yakunlandi, kelmadi/bekor. Shifokor bo'yicha filtr.
+Qabulga yozish:
+1. "Qabulga yozish" \u2192 bemorni tanlang (yo'q bo'lsa shu yerning o'zida yangi bemor qo'shing).
+2. Shifokor, kerak bo'lsa xizmat (masalan UZI), sana va bo'sh vaqtni tanlang.
+3. Saqlang \u2014 bemorga navbat raqami (\u2116) beriladi. Band vaqt va o'tib ketgan vaqtga yozib bo'lmaydi.
+Bemor kelganda: qatordagi "Keldi" \u2014 shu payt tashrif ochiladi va hisobvaraq paydo bo'ladi.
+Qatordagi menyu (\u22EE): kelmadi, bekor qilish (sabab majburiy), vaqtni o'zgartirish.
+Shifokor yo'llanmasi (UZI, konsultatsiya) bo'yicha yozish: bemor kartasi \u2192 yo'llanma \u2192 "Navbatga yozish".
+
+## Mening kabinetim (/cabinet) \u2014 shifokor
+Maqsad: shifokorning bugungi navbati. "Keyingi bemorni chaqirish" \u2014 navbatdagi kelgan bemorni qabulga oladi. Qatorda: "Chaqirish", "Ko'rik oynasi", "Kelmadi", "Navbatga qaytarish", "Qabulni yakunlash".
+Yangi tahlil natijalari bo'limi \u2014 siz yo'llagan bemorlarning tasdiqlangan natijalari.
+
+## Ko'rik oynasi (/cabinet/visit/:id) \u2014 shifokor
+Ko'rik yozuvi: shikoyatlar, anamnez, ob'ektiv holat, dastlabki va yakuniy tashxis (MKB-10 kodi ixtiyoriy), tavsiyalar. Yozganingiz avtomatik saqlanadi (qoralama).
+Davolash: "Dori" yoki "Muolaja" qatori qo'shiladi \u2014 nomi (ombor katalogidan yoki qo'lda), doza, qabul qilish yo'li, tartibi, necha kun/seans.
+Yo'llanma berish ("Yo'llanma berish"): Tahlil (laboratoriya \u2014 buyurtma darhol yaratiladi va laboratoriyaga tushadi), Tekshiruv (UZI, EKG \u2014 registratura navbatga yozadi), Konsultatsiya (boshqa mutaxassis).
+Tasdiqlash: shikoyat va kamida bitta tashxis to'ldirilgach "Tasdiqlash" yoki "Tasdiqlash va qabulni yakunlash". Tasdiqlangan yozuv qulflanadi; o'zgartirish faqat "Tuzatish kiritish" orqali, sabab bilan (versiyalar saqlanadi).
+"Retsept" \u2014 retsept chop etish, "Xulosa" \u2014 ko'rik xulosasi PDF (faqat tasdiqlangan yozuvdan).
+Tahlil natijalari ko'rik oynasining o'zida ko'rinadi; tayyor bo'lganda qo'ng'iroqchaga xabar keladi.
+
+## Buyurtmalar (/orders) \u2014 registrator, laboratoriya
+Maqsad: laboratoriya buyurtmalari ro'yxati (holat, to'lov, namuna bo'yicha filtr).
+Yangi tahlil buyurtma: "Yangi buyurtma" \u2192 bemor \u2192 tahlillarni tanlang (guruh yoki qidiruv) \u2192 kerak bo'lsa yo'naltirgan shifokor \u2192 saqlang. Narx narxlar ro'yxatidan olinadi; to'lov kassada (hisobvaraqda) qabul qilinadi.
+Buyurtma oynasi (qatorni bosing): tahlillar va natijalar, namuna holati, to'lovlar, "Natija kiritish", "Blanka", "Telegramga yuborish" (bemor botga ulangan bo'lsa).
+Bekor qilish: faqat bekor qilish huquqi borlar (laboratoriya mudiri, rahbar) \u2014 "Bekor qilish" \u2192 sababni yozing (kamida 5 belgi). Buyurtma o'chmaydi; to'langan bo'lsa pul kassada qaytarish uchun ko'rinadi.
+
+## Laboratoriya jarayoni: namuna \u2192 natija \u2192 tasdiq
+1. Namuna (laborant): buyurtma oynasida namuna paneli \u2014 "Namuna olindi", so'ng "Namunani qabul qilish" (sifati bilan). Yaroqsiz bo'lsa "Namunani rad etish" va sabab (gemoliz, miqdor yetarli emas \u2026). "Yorliq" \u2014 probirka yorlig'i (shtrix-kod).
+2. Natija (laborant): "Natijalar" sahifasi \u2192 "Kiritish" tabi \u2192 buyurtma \u2192 qiymatlarni kiriting; me'yordan chiqqanlari avtomatik belgilanadi (\u2191 \u2193) \u2192 "Saqlash".
+3. Tasdiq (laboratoriya mudiri): "Tasdiqlash" tabi \u2192 "Tekshirish" \u2192 hammasi to'g'ri bo'lsa "Tasdiqlash"; noto'g'ri qatorni "Qaytarish" (sabab bilan) \u2014 u laborantga qaytadi.
+4. Tasdiqlangan natija qulflanadi; xato bo'lsa mudir "Tuzatish" (sabab bilan, versiya saqlanadi). Faqat tasdiqlangan natija shifokorga, blankaga, Telegramga va tibbiy kartaga chiqadi.
+Reagentlar tasdiqlangan natija bo'yicha sarf normasiga ko'ra ombordan avtomatik yechiladi.
+
+## Natijalar (/results)
+Uchta navbat: Kiritish (natija kutayotganlar), Tasdiqlash (mudir tekshirishi kerak), Tayyor (tasdiqlangan, blanka chop etish/yuborish mumkin). Qidiruv: bemor, telefon, \u2116 yoki tahlil.
+
+## Kassa (/cashier) \u2014 kassa xodimi
+Avval smena: "Smenani ochish" \u2192 kassadagi boshlang'ich naqd summa. Smena ochilmasa to'lov qabul qilib bo'lmaydi.
+To'lov qabul qilish:
+1. "Hisobvaraqlar" tabi \u2192 bemorni toping (ism, raqam yoki telefon) \u2192 hisobvaraqni oching. Bitta tashrifning hamma xizmatlari (ko'rik, UZI, tahlillar, statsionar yotoq-kunlari, dori va muolajalar) bitta hisobvaraqda.
+2. "To'lov qabul qilish" \u2192 summa (to'liq yoki qisman) va to'lov usuli: naqd, karta (terminal), o'tkazma.
+3. Saqlang \u2014 kvitansiya raqamlanadi, "Chek"/"Chop etish". Qisman to'langan bo'lsa qolgani qarz bo'lib "Qarzdorlar"da ko'rinadi.
+Chegirma: "Chegirma berish" (registrator yoki rahbar huquqi bilan) \u2014 foiz yoki summa, butun hisobvaraqqa yoki bitta xizmatga, sabab majburiy; faqat to'lanmagan qismga.
+Qaytarish: hisobvaraqda ortiqcha pul bo'lsa (xizmat bekor qilingan) \u2014 kassir qaytarish so'raydi (sabab bilan) \u2192 rahbar tasdiqlaydi \u2192 kassir "Qaytarishlar" tabida pulni beradi.
+Xato to'lov o'chirilmaydi \u2014 sabab bilan bekor qilinadi (huquqi borlar).
+Smenani yopish: "Smenani yopish" \u2192 kassadagi naqdni sanab kiriting; tizim kutilgan summa bilan farqni ko'rsatadi; "Hisobot" \u2014 smena hisoboti.
+Boshqa tablar: Bosh sahifa (bugungi tushum, oy, qarz, qaytarishlar), Qarzdorlar, Smenalar, Kunlik tushum, Narxlar.
+
+## Statsionar (/inpatient)
+Tablar: Bosh sahifa (bemorlar, bo'sh/band o'rinlar, bandlik, yangi yotqizilganlar, chiqarilayotganlar, yotoqlar xaritasi), Bemorlar, Muolajalar, Palata va yotoqlar.
+Yotqizish (registrator/hamshira/rahbar): "Yotqizish" (yoki xaritada bo'sh yotoqni bosib "Shu yotoqqa yotqizish") \u2192 bemor, yotoq, qabul qiluvchi shifokor, sabab \u2192 "Bemorni yotqizish". Statsionar hisobvarag'i ochiladi, yotoq-kun narxi palatadan.
+Ko'chirish: bemor qatori \u2192 "Ko'chirish" \u2192 yangi yotoq. Eski yotoq tozalashga o'tadi.
+Chiqarish rejasi: bemor kartasida rejalashtirilgan chiqarish sanasi.
+Yotoq holati (hamshira): tayyor, tozalanmoqda, ta'mirda \u2014 "Palata va yotoqlar"da yotoqni bosib "Holatni saqlash".
+Palata/yotoq qo'shish (rahbar/admin): "Palata qo'shish", "Yotoq qo'shish"; palataga sutkalik narx beriladi.
+
+## Kasallik tarixi (/inpatient/stays/:id) \u2014 statsionar shifokori va hamshira
+Kasallik tarixi: shikoyatlar, anamnez, ob'ektiv holat, tashxis, davolash rejasi \u2014 har saqlash yangi versiya (avvalgilari "tarix"da).
+Kundalik kuzatuv (hamshira/shifokor): harorat, puls, bosim, SpO2, izoh \u2014 qo'shish; me'yordan chiqqani rang bilan belgilanadi. Xato yozuv sabab bilan bekor qilinadi.
+Tayinlovlar ("Tayinlovlar va muolajalar", shifokor): "Tayinlash" \u2192 dori (ombor katalogidan; bir dozaga necha birlik ketadi) yoki muolaja \u2192 doza, yo'li, kunlik vaqtlar, boshlanish kuni, necha kun. Tizim jadval tuzadi. "To'xtatish" \u2014 kursni muddatidan oldin to'xtatish (sabab).
+Dozani berish (hamshira): Statsionar \u2192 "Muolajalar" tabi (yoki kasallik tarixi) \u2192 "Bajarildi" \u2014 dori ombordan muddati yaqin partiyadan (FEFO) avtomatik yechiladi va hisobvaraqqa sotuv narxida qo'shiladi. Berilmasa "Bajarilmadi" (sabab). Xato belgi \u2014 "Qaytarish". Muolajani vaqtidan 2 soatdan oldin belgilab bo'lmaydi.
+Statsionarda tahlil: "Tahlil buyurish" \u2014 buyurtma laboratoriyaga tushadi, natijasi shu sahifada ko'rinadi.
+Hisob: "Statsionar hisobi" kartasi \u2014 yotoq-kunlar, muolajalar, dorilar, to'langan va qarz.
+Chiqarish: "Epikriz" \u2192 "Avto-to'ldirish" yotish davridan qoralama tuzadi (tashxis, berilgan davolash, tahlillar, dinamika) \u2192 tahrirlang, yakuniy tashxis, epikriz va tavsiyalarni to'ldiring \u2192 "Saqlash" \u2192 "Chiqarish". Chiqarilganda tayinlovlar to'xtaydi, yotoq tozalashga o'tadi. Epikrizni "Chop etish"/"Yuklab olish" (PDF). Chiqarilgandan keyin o'zgartirish \u2014 "Tuzatish kiritish" (sabab bilan).
+
+## Ombor (/inventory) \u2014 omborchi
+Tablar: Bosh sahifa (ombor qiymati, oylik kirim/chiqim, e'tibor talab qiladiganlar: muddati o'tgan/yaqin partiyalar, kam qolgan mahsulotlar), Mahsulotlar, Qoldiq va muddat, Kirim, Chiqim, Inventarizatsiya, Reagent sarfi, Hisobotlar.
+Yangi mahsulot: "Mahsulotlar" \u2192 qo'shish \u2192 nomi, turi (reagent, kalibrator, nazorat, probirka, shprits, sarf materiali, dori, dezinfeksiya), o'lchov birligi, minimal qoldiq; dori uchun sotuv narxi.
+Kirim: "Kirim" \u2192 "Yangi kirim" \u2192 yetkazib beruvchi, hujjat raqami, sana \u2192 "Qator qo'shish": mahsulot, LOT, yaroqlilik muddati, miqdor, xarid narxi \u2192 "Kirimni saqlash". Xato kirim \u2014 "Kirimni bekor qilish".
+Chiqim: "Chiqim" \u2192 bo'limga berish (qaysi bo'lim, kim oldi) yoki hisobdan chiqarish (muddati o'tgan, shikastlangan \u2014 sabab). Partiya FEFO bo'yicha avtomatik tanlanadi.
+Inventarizatsiya: yangi hujjat (sana, mahsulot turlari) \u2192 har qatorda sanalgan miqdorni kiriting \u2192 o'tkazish; farqlar qoldiqni to'g'rilaydi. "Dalolatnoma" \u2014 chop etish.
+Reagent sarfi: sarf normasi (bir tahlilga qancha reagent) \u2014 omborchi taklif qiladi, laboratoriya mudiri tasdiqlaydi; tasdiqlangan natijalar bo'yicha avtomatik yechiladi. Qo'shimcha sarf (qayta o'lchov, kalibrovka) laborant tomonidan sabab bilan yoziladi. Qoldiq yetmasa kamomad sifatida turadi va kirimdan keyin yopiladi.
+Hisobotlar: aylanma qaydnoma (davr boshi, kirim, chiqim, oxiri), bo'limlar bo'yicha chiqim; Excel/PDF.
+
+## Sifat nazorati (/qc) \u2014 laboratoriya
+Tablar: Ichki nazorat, Nazorat materiallari, Kalibratsiya, Texnik xizmat, Tashqi nazorat.
+Sozlash (mudir): "Nazorat materiallari" \u2014 material (nomi, LOT, daraja, muddati) va har tahlil/analizator uchun maqsad (o'rtacha va SD).
+Kunlik QC (laborant): "Ichki nazorat" \u2192 seriya \u2192 natijani kiriting. Levey-Jennings grafigi va Westgard qoidalari: ogohlantirish (sariq) yoki rad etish (qizil). Rad etilgan natijaga "chora" yoziladi (ko'rib chiqish).
+Kalibrovka, texnik xizmat (kunlik/haftalik/oylik/ta'mir), tashqi nazorat (EQA: bizning natija va belgilangan qiymat, z-ball) \u2014 tegishli tablarda yoziladi.
+
+## Analizatorlar (/devices)
+Qurilmalar ro'yxati (yo'nalish, ulanish, holat: faol, xizmatda, ishdan chiqqan). Xato jurnali: qurilmada xato bo'lsa yoziladi (daraja, kod, nima bo'ldi, ko'rilgan chora; kerak bo'lsa "ishdan chiqqan" deb belgilash), hal bo'lgach "hal qilindi". Analizatordan avtomatik natija olish hali ulanmagan \u2014 natijalar qo'lda kiritiladi.
+
+## Hisobotlar (/reports) \u2014 rahbar, buxgalter
+Tablar: Moliyaviy hisobot (sof tushum, xarajatlar, sof foyda, qarzdorlik; ko'rsatilgan xizmatlar turi bo'yicha: narx, chegirma, hisoblangan, to'langan, qarz), Bemorlar (kunlik oqim: yangi va takroriy, xizmat turlari), Laboratoriya (tahlillar soni, eng ko'p buyuriladiganlar, tasdiqlash vaqti), Statsionar (bandlik, o'rtacha yotish kuni, bo'lim va palatalar).
+Davr: Bu oy, O'tgan oy, Yil boshidan, 30 kun yoki ixtiyoriy. Yuqori o'ngdagi tugmalar \u2014 Excel va PDF.
+
+## Xarajatlar (/expenses) \u2014 buxgalter
+Xarajat qo'shish: tugma \u2192 toifa (Reaktivlar, Ish haqi, Ijara, Kommunal, Jihoz, Soliq, Boshqa), summa, to'lov usuli, kimga, sana, izoh. Xato xarajat sabab bilan bekor qilinadi (o'chirilmaydi). Davr va toifa bo'yicha filtr, jami summalar.
+
+## Shifokorlar, Bo'limlar, Xizmatlar, Xodimlar (admin, rahbar)
+- Shifokorlar: xodimni shifokor qilish \u2014 mutaxassislik, bo'lim, xona, ko'rik narxi, bitta qabul davomiyligi, haftalik ish jadvali.
+- Bo'limlar: ambulator, diagnostika, laboratoriya, statsionar.
+- Xizmatlar: konsultatsiya, UZI, muolaja va boshqa xizmatlar narxi; laboratoriya narxlari "Sozlamalar \u2192 Tahlillar"da.
+- Xodimlar: yangi xodim (login, parol, F.I.Sh., rol), bloklash, qulfni ochish, parolni tiklash, 2FA ni qayta o'rnatish, seanslarni yopish. "Rollar" \u2014 rol huquqlarini sozlash ("Ruxsatlarni sozlash").
+
+## Sozlamalar (/settings)
+Tablar: Klinika (nomi, manzil, telefon, logotip, Telegram bot), Tahlillar (laboratoriya katalogi va narxlari, me'yorlar), MKB-10, Tizim holati (rahbar: baza, zaxira, xatolar), Xavfsizlik.
+Parolni almashtirish: Sozlamalar \u2192 Xavfsizlik \u2192 "Parolni o'zgartirish" \u2014 joriy va yangi parol. Kuchli parol: 12+ belgi, harf, raqam va belgi aralash.
+2FA (ikki bosqichli kirish): Xavfsizlik \u2192 "Ikki bosqichli kirish" \u2192 telefonda Google/Microsoft Authenticator bilan QR kodni skanerlang \u2192 6 xonali kodni kiriting \u2192 zaxira kodlarni saqlab qo'ying.
+Faol seanslar \u2014 boshqa qurilmalardagi kirishlarni ko'rish va yopish. Seans siyosati \u2014 faolsizlik va umumiy muddat (admin). Amallar jurnali \u2014 kim nima qilgan (audit huquqi bilan). Zaxira nusxa \u2014 kechalik avtomatik zaxira holati.
+`;
+
+// server/assistant.ts
+var DEFAULT_MODELS = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-3.6-flash"];
+var COOLDOWN_MS = 6e4;
+var cooling = /* @__PURE__ */ new Map();
+var FIRST_TOKEN_MS = 2e4;
+var TOTAL_MS = 6e4;
+var API = "https://generativelanguage.googleapis.com/v1beta/models";
+var apiKey = () => process.env.GEMINI_API_KEY?.trim() || null;
+function modelOrder(now = Date.now()) {
+  const all = (process.env.GEMINI_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean).concat(DEFAULT_MODELS).filter((m, i, a) => a.indexOf(m) === i);
+  const ready = all.filter((m) => (cooling.get(m) ?? 0) <= now);
+  return ready.length ? [...ready, ...all.filter((m) => !ready.includes(m))] : all;
+}
+function coolDown(model, now = Date.now()) {
+  cooling.set(model, now + COOLDOWN_MS);
+}
+var chatSchema = z3.object({
+  messages: z3.array(z3.object({ role: z3.enum(["user", "model"]), text: z3.string().max(MAX_MESSAGE_CHARS * 2) })).min(1).max(60),
+  page: z3.string().max(200).default("/home")
+});
+var usage = /* @__PURE__ */ new Map();
+function assistantLimit(userId, now = Date.now()) {
+  const minute = Math.floor(now / 6e4);
+  const day = new Date(now).toISOString().slice(0, 10);
+  const u = usage.get(userId) ?? { minute, minuteCount: 0, day, dayCount: 0 };
+  if (u.minute !== minute) Object.assign(u, { minute, minuteCount: 0 });
+  if (u.day !== day) Object.assign(u, { day, dayCount: 0 });
+  if (u.minuteCount >= PER_MINUTE) return "Juda ko'p savol \u2014 bir daqiqadan keyin qayta urinib ko'ring.";
+  if (u.dayCount >= PER_DAY) return "Bugungi savollar chegarasiga yetdingiz. Ertaga davom etamiz.";
+  u.minuteCount++;
+  u.dayCount++;
+  usage.set(userId, u);
+  if (usage.size > 5e3) usage.clear();
+  return null;
+}
+function systemPrompt(user, page) {
+  return `Siz "${ASSISTANT_NAME}" \u2014 NEOGEN CLINIC klinikasi boshqaruv tizimining ichki yordamchisisiz.
+Vazifangiz: xodimlarga tizimdan qanday foydalanishni tushuntirish (qaysi sahifa, qaysi tugma, qanday tartibda), shuningdek ularning ishiga oid umumiy savollarga qisqa javob berish.
+
+Suhbatdosh: ${user.fullName}, roli \u2014 ${user.roleName}. Uning huquqlari (texnik nomlar): ${user.permissions.join(", ") || "yo'q"}.
+U hozir "${pageName(page)}" sahifasida.
+
+Qoidalar:
+1. Faqat o'zbek tilida (lotin yozuvida) javob bering, agar foydalanuvchi boshqa tilda yozmasa.
+2. Tizim haqidagi javoblarni FAQAT quyidagi qo'llanmaga asoslang. Qo'llanmada yo'q tugma, sahifa yoki imkoniyatni o'ylab topmang; bilmasangiz shunday deng va administrator yoki rahbarga murojaat qilishni maslahat bering.
+3. Qisqa va amaliy bo'ling: ko'pincha 3\u20137 qadamli raqamlangan ro'yxat. Tugma va tab nomlarini qo'shtirnoqda, aynan qo'llanmadagidek yozing.
+4. Foydalanuvchining roli bu ishni qila olmasa, buni ochiq ayting va kim qilishini ko'rsating.
+5. Sahifaga havola berish mumkin: [Bemorlar](/patients) ko'rinishida (faqat qo'llanmadagi yo'llar).
+6. Siz tizimda hech narsa qila olmaysiz va bemorlar ma'lumotini ko'rmaysiz \u2014 buni so'rashsa, qanday qilishni o'rgating.
+7. Faqat foydalanuvchi bemorning shaxsiy ma'lumotini (ism, telefon, hujjat) yozgan bo'lsa, bir gap bilan uni yozmaslikni eslating va takrorlamang; aks holda bu haqda gapirmang.
+8. Tashxis qo'yish yoki davolash tayinlash bo'yicha qaror bermang \u2014 klinik qaror shifokorniki; umumiy ma'lumot berish mumkin.
+9. Javobni darhol mazmundan boshlang: salomlashmang, o'zingizni tanishtirmang, ismingizni yozmang. Faqat "sen kimsan" kabi savolga qisqa javob bering: klinika tizimi bo'yicha yordamchi ekaningizni ayting.
+
+=== QO'LLANMA ===
+${SYSTEM_GUIDE}`;
+}
+async function open(model, key, payload) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), FIRST_TOKEN_MS);
+  try {
+    const r = await fetch(`${API}/${model}:streamGenerateContent?alt=sse`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify(payload),
+      signal: abort.signal
+    });
+    if (!r.ok || !r.body) {
+      const err = await r.json().catch(() => null);
+      return { ok: false, retry: [404, 429, 500, 503].includes(r.status), message: `${model}: ${r.status} ${err?.error?.message?.slice(0, 160) ?? ""}` };
+    }
+    clearTimeout(timer);
+    return { ok: true, body: r.body, model, abort };
+  } catch (e) {
+    return { ok: false, retry: true, message: `${model}: ${e.name === "AbortError" ? "javob kelmadi" : e.message}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+var INTRO = /^\s*\**AI Hospital\**\s*[—–-][^\n.]*\.?\s*/;
+async function pipeSse(body, write, signal) {
+  const reader = body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  let written = 0;
+  const flush = (block) => {
+    for (const line of block.split("\n")) {
+      if (!line.startsWith("data:")) continue;
+      let json2;
+      try {
+        json2 = JSON.parse(line.slice(5).trim());
+      } catch {
+        continue;
+      }
+      const err = json2.error;
+      if (err) throw new Error(err.message ?? "oqim uzildi");
+      let t2 = textOfEvent(json2);
+      if (written === 0 && t2) t2 = t2.replace(INTRO, "");
+      if (t2) {
+        write(t2);
+        written += t2.length;
+      }
+    }
+  };
+  while (!signal.aborted) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      flush(buf.slice(0, i));
+      buf = buf.slice(i + 2);
+    }
+  }
+  if (buf.trim()) flush(buf);
+  return written;
+}
+function registerAssistantRoutes(app) {
+  app.get("/api/assistant/status", requireAuth, (_req, res) => {
+    const status = { enabled: Boolean(apiKey()), name: ASSISTANT_NAME };
+    res.json(status);
+  });
+  app.post("/api/assistant/chat", requireAuth, async (req, res) => {
+    const key = apiKey();
+    if (!key) return res.status(503).json({ message: "AI yordamchi hali sozlanmagan (GEMINI_API_KEY yo'q). Administratorga murojaat qiling." });
+    const parsed = chatSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Savol noto'g'ri yuborildi" });
+    const turns = prepareTurns(parsed.data.messages);
+    if (!turns.length || turns[turns.length - 1].role !== "user") return res.status(400).json({ message: "Savolni yozing" });
+    const limited = assistantLimit(req.user.id);
+    if (limited) return res.status(429).json({ message: limited });
+    const payload = {
+      systemInstruction: { parts: [{ text: systemPrompt({ fullName: req.user.fullName, roleName: req.user.roleName ?? req.user.role, permissions: req.user.permissions ?? [] }, parsed.data.page) }] },
+      contents: turns.map((t2) => ({ role: t2.role, parts: [{ text: t2.text }] })),
+      generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }
+    };
+    const gone = new AbortController();
+    res.on("close", () => gone.abort());
+    const failures = [];
+    for (const model of modelOrder()) {
+      if (gone.signal.aborted) return;
+      const a = await open(model, key, payload);
+      if (!a.ok) {
+        failures.push(a.message);
+        if (a.retry) {
+          coolDown(model);
+          continue;
+        }
+        break;
+      }
+      gone.signal.addEventListener("abort", () => a.abort.abort());
+      const hardStop = setTimeout(() => a.abort.abort(), TOTAL_MS);
+      let started = false;
+      try {
+        const n = await pipeSse(
+          a.body,
+          (text2) => {
+            if (!started) {
+              started = true;
+              res.status(200);
+              res.setHeader("Content-Type", "text/plain; charset=utf-8");
+              res.setHeader("Cache-Control", "no-store");
+              res.setHeader("X-Accel-Buffering", "no");
+              res.setHeader("X-Assistant-Model", a.model);
+            }
+            res.write(text2);
+          },
+          a.abort.signal
+        );
+        if (n > 0) return void res.end();
+        failures.push(`${model}: bo'sh javob`);
+      } catch (e) {
+        if (started) return void res.end("\n\n_(Javob uzildi \u2014 qayta so'rab ko'ring.)_");
+        failures.push(`${model}: ${e.message}`);
+      } finally {
+        clearTimeout(hardStop);
+      }
+    }
+    console.warn("[assistant] javob olinmadi:", failures.join(" | "));
+    if (!res.headersSent) res.status(503).json({ message: "AI xizmati hozir band. Birozdan keyin qayta urinib ko'ring." });
+  });
+}
+
+// server/routes.ts
 init_consumption();
 async function registerRoutes(app) {
   setupAuth(app);
@@ -14516,9 +20290,11 @@ async function registerRoutes(app) {
     console.log(`[seed] ${seeded.createdTests} ta tahlil narxlar ro'yxatiga yuklandi`);
   }
   if (seeded.createdUsers) {
-    console.log("[seed] Standart foydalanuvchilar yaratildi \u2014 admin / admin123");
+    console.log(`[seed] Administrator yaratildi \u2014 login: admin, parol: ${SEEDED_ADMIN_PASSWORD} (birinchi kirishda almashtiring)`);
   }
-  if (telegramEnabled && telegramUsesWebhook) {
+  if (telegramEnabled && telegramUsesWebhook && !telegramWebhookSecured) {
+    console.error("[telegram] TELEGRAM_WEBHOOK_SECRET o'rnatilmagan \u2014 webhook YOQILMADI (soxta so'rovlardan himoya). Kalitni o'rnating va webhookni qayta ro'yxatdan o'tkazing.");
+  } else if (telegramEnabled && telegramUsesWebhook) {
     app.post("/api/telegram/webhook", telegramWebhook());
     console.log("[telegram] webhook yo'li: POST /api/telegram/webhook");
   } else if (!telegramEnabled) {
@@ -14586,7 +20362,7 @@ async function registerRoutes(app) {
   app.post("/api/login", loginRateLimit, (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ message: fromZodError(parsed.error).toString() });
+      return res.status(400).json({ message: fromZodError2(parsed.error).toString() });
     }
     handle(async (request, response) => {
       const account = await storage.getUserByUsername(parsed.data.username);
@@ -14654,15 +20430,15 @@ async function registerRoutes(app) {
   app.post("/api/login/mfa", (req, res, next) => {
     handle(async (request, response) => {
       const { code } = mfaCodeSchema.parse(request.body);
-      const pending = request.session.mfaPending;
+      const pending2 = request.session.mfaPending;
       const restart = (message) => {
         delete request.session.mfaPending;
         return response.status(401).json({ message, code: "MFA_EXPIRED" });
       };
-      if (!pending || Date.now() - pending.at > MFA_PENDING_TTL_MS) {
+      if (!pending2 || Date.now() - pending2.at > MFA_PENDING_TTL_MS) {
         return restart("Kirish muddati tugadi. Login va parolni qaytadan kiriting");
       }
-      const account = await storage.getUser(pending.userId);
+      const account = await storage.getUser(pending2.userId);
       if (!account || !account.isActive) return restart("Login yoki parol noto'g'ri");
       const remaining = lockRemainingMs(account.lockedUntil);
       if (remaining > 0) {
@@ -14701,8 +20477,8 @@ async function registerRoutes(app) {
             lockedUntil: decision.lockedUntil
           });
         }
-        pending.attempts += 1;
-        if (pending.attempts >= MFA_MAX_ATTEMPTS) {
+        pending2.attempts += 1;
+        if (pending2.attempts >= MFA_MAX_ATTEMPTS) {
           return restart("Juda ko'p noto'g'ri kod. Login va parolni qaytadan kiriting");
         }
         const left = decision.lockLevel > 0 ? 1 : ATTEMPTS_BEFORE_LOCK - decision.failedAttempts;
@@ -15150,7 +20926,13 @@ async function registerRoutes(app) {
     requirePermission("orders.create"),
     handle(async (req, res) => {
       const input = createOrderSchema.parse(req.body);
-      const order = await storage.createOrder({ ...input, createdBy: req.user?.id ?? null });
+      let shiftId = null;
+      if (input.paidAmount > 0) {
+        const till = await tillActor(req, res);
+        if (!till) return;
+        shiftId = till.shiftId ?? null;
+      }
+      const order = await storage.createOrder({ ...input, createdBy: req.user?.id ?? null, shiftId });
       await audit(
         req,
         "create",
@@ -15165,7 +20947,7 @@ async function registerRoutes(app) {
     "/api/orders/:id",
     requirePermission("orders.update", "orders.cancel"),
     handle(async (req, res) => {
-      const input = updateOrderSchema.parse(req.body);
+      const { cancelReason, ...input } = updateOrderSchema.parse(req.body);
       const before = await storage.getOrder(req.params.id);
       if (!before) return res.status(404).json({ message: "Buyurtma topilmadi" });
       const touchesCancel = input.status !== void 0 && input.status !== before.status && (input.status === "cancelled" || before.status === "cancelled");
@@ -15175,6 +20957,11 @@ async function registerRoutes(app) {
       }
       if (editsOther && !hasPermission(req, "orders.update")) {
         return res.status(403).json({ message: "Buyurtmani tahrirlash uchun ruxsatingiz yo'q" });
+      }
+      if (touchesCancel && (cancelReason?.length ?? 0) < ORDER_CANCEL_REASON_MIN) {
+        return res.status(400).json({
+          message: input.status === "cancelled" ? "Bekor qilish sababini yozing (kamida 5 belgi)" : "Qayta tiklash sababini yozing (kamida 5 belgi)"
+        });
       }
       const order = await storage.updateOrder(req.params.id, input, actorOf(req));
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
@@ -15186,7 +20973,7 @@ async function registerRoutes(app) {
         changes.push(`chegirma ${before.discount} \u2192 ${order.discount}`);
       }
       if (input.status && before.status !== order.status) {
-        changes.push(`holat ${before.status} \u2192 ${order.status}`);
+        changes.push(`holat ${before.status} \u2192 ${order.status}${touchesCancel && cancelReason ? ` (sabab: ${cancelReason})` : ""}`);
       }
       if (input.referrer !== void 0 && (before.referrer ?? "") !== (order.referrer ?? "")) {
         changes.push(`yo'naltirgan: ${order.referrer || "\u2014"}`);
@@ -15359,16 +21146,13 @@ async function registerRoutes(app) {
   );
   app.post(
     "/api/orders/:id/payments",
-    requirePermission("payments.create", "payments.refund"),
+    requirePermission("payments.create"),
     handle(async (req, res) => {
       const input = createPaymentSchema.parse(req.body);
-      const needed = input.amount < 0 ? "payments.refund" : "payments.create";
-      if (!hasPermission(req, needed)) {
-        return res.status(403).json({
-          message: needed === "payments.refund" ? "To'lovni qaytarish uchun ruxsatingiz yo'q" : "To'lov qabul qilish uchun ruxsatingiz yo'q"
-        });
-      }
-      const order = await storage.addPayment(req.params.id, input, actorOf(req));
+      if (input.amount < 0) return res.status(409).json({ message: REFUNDS_BY_REQUEST });
+      const till = await tillActor(req, res);
+      if (!till) return;
+      const order = await storage.addPayment(req.params.id, input, till);
       if (!order) return res.status(404).json({ message: "Buyurtma topilmadi" });
       const latest = order.payments?.[0];
       await audit(
@@ -15635,6 +21419,14 @@ async function registerRoutes(app) {
     })
   );
   app.get(
+    "/api/backup/runs",
+    requirePermission("backup.download"),
+    handle(async (_req, res) => {
+      const runs = await storage.listBackupRuns(20).catch((e) => emptyIfMissing(e, []));
+      res.json({ runs, ...backupHealth(runs), postgres: usingPostgres });
+    })
+  );
+  app.get(
     "/api/backup",
     requirePermission("backup.download"),
     handle(async (req, res) => {
@@ -15649,7 +21441,7 @@ async function registerRoutes(app) {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="medlab-backup-${stamp()}.json"`);
       res.setHeader("Cache-Control", "no-store");
-      await audit(req, "export", "backup", null, "To'liq zaxira nusxa yuklandi");
+      await audit(req, "export", "backup", null, "Asosiy ma'lumotlar eksporti (JSON) yuklandi");
       res.send(
         JSON.stringify(
           {
@@ -16292,36 +22084,38 @@ async function registerRoutes(app) {
   registerInventoryRoutes(app);
   registerConsumptionRoutes(app);
   registerBillingRoutes(app);
+  registerCashDeskRoutes(app);
+  registerRefundRoutes(app);
+  registerFinanceRoutes(app);
+  registerInpatientRoutes(app);
+  registerSystemRoutes(app);
+  registerAssistantRoutes(app);
   app.use("/api", (req, res, next) => {
     if (res.headersSent) return next();
     res.status(404).json({ message: `Bunday API yo'q: ${req.method} ${req.originalUrl.split("?")[0]}` });
   });
-  app.use("/api", (err, _req, res, next) => {
+  app.use("/api", async (err, req, res, next) => {
     if (res.headersSent) return next(err);
-    if (err instanceof ZodError) {
-      return res.status(400).json({ message: fromZodError(err).toString() });
-    }
-    if (err instanceof StorageConflict) {
-      return res.status(409).json({ message: err.message });
-    }
-    if (err?.code === "42P01") {
-      return res.status(503).json({
-        message: "Ma'lumotlar bazasi yangilanmagan. Administrator migratsiyalarni ishga tushirishi kerak (npm run db:upgrade)."
-      });
-    }
-    const bodyError = err?.type;
-    if (bodyError === "entity.too.large") return res.status(413).json({ message: "So'rov hajmi juda katta" });
-    if (bodyError === "entity.parse.failed") return res.status(400).json({ message: "So'rov ma'lumoti noto'g'ri (JSON)" });
-    if (err instanceof Error) {
-      return res.status(400).json({ message: err.message });
-    }
-    next(err);
+    const out = apiErrorResponse(err);
+    if (!out) return next(err);
+    if (out.log) console.error("[api]", err);
+    if (out.status >= 500) await recordError({ source: "server", where: `${req.method} ${routeOf(req)}`, err, status: out.status, role: req.user?.role ?? null });
+    res.status(out.status).json({ message: out.message });
   });
 }
 
 // server/app.ts
 async function createApp() {
   const app = express();
+  app.disable("x-powered-by");
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "same-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+    if (process.env.NODE_ENV === "production") res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    next();
+  });
   const json2 = express.json();
   const logoJson = express.json({ limit: "512kb" });
   app.use((req, res, next) => (req.path === "/api/settings/logo" ? logoJson : json2)(req, res, next));
@@ -16336,20 +22130,24 @@ async function createApp() {
       return originalResJson.apply(res, [bodyJson, ...args]);
     };
     res.on("finish", () => {
+      recordRequest(req, res.statusCode, Date.now() - start);
       if (!path3.startsWith("/api")) return;
       let logLine = `${req.method} ${path3} ${res.statusCode} in ${Date.now() - start}ms`;
-      if (capturedJsonResponse) logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      if (res.statusCode >= 400 && capturedJsonResponse && typeof capturedJsonResponse.message === "string") logLine += ` :: ${capturedJsonResponse.message}`;
       if (logLine.length > 120) logLine = logLine.slice(0, 119) + "\u2026";
       log(logLine);
     });
     next();
   });
+  app.use(bumpTopicsOnWrite());
   await registerRoutes(app);
-  app.use((err, _req, res, _next) => {
+  app.use(async (err, req, res, _next) => {
     const status = typeof err === "object" && err && "status" in err ? Number(err.status) : 500;
-    const message = err instanceof Error ? err.message : "Ichki xatolik";
     console.error("[error]", err);
-    if (!res.headersSent) res.status(status || 500).json({ message });
+    const code = status || 500;
+    if (code >= 500) await recordError({ source: "server", where: `${req.method} ${routeOf(req)}`, err, status: code, role: req.user?.role ?? null });
+    const message = code < 500 && err instanceof Error ? err.message : "Ichki xatolik. Keyinroq urinib ko'ring";
+    if (!res.headersSent) res.status(code).json({ message });
   });
   return app;
 }

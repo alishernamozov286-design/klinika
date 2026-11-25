@@ -324,7 +324,7 @@ export function AiAssistant() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="group fixed bottom-5 right-5 z-50 flex items-center gap-3 sm:bottom-6 sm:right-6"
+          className="group fixed bottom-5 right-5 z-40 flex items-center gap-3 sm:bottom-6 sm:right-6"
           aria-label={`${ASSISTANT_NAME} yordamchisini ochish`}
           data-testid="button-ai-open"
         >

@@ -5,7 +5,7 @@ import type { ClinicLogo } from "@shared/branding";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FLAG_LABELS, ageGender, formatDate, formatDateTime, formatLongDate, formatPhone, money } from "@/lib/format";
+import { FLAG_LABELS, ageGender, formatDate, formatDateTime, formatLongDate, formatPhone } from "@/lib/format";
 import { patientAge } from "@shared/patient-identity";
 import { LEGACY_VERIFIER, lineState } from "@shared/lab-verification";
 import { cn } from "@/lib/utils";
@@ -167,35 +167,8 @@ export function PrintDialog({
                 </p>
               )}
 
-              {/* payment summary */}
-              <div className="mt-6 flex justify-end">
-                <table className="text-sm">
-                  <tbody>
-                    <tr>
-                      <td className="pr-6 py-1 text-black/60">Jami summa:</td>
-                      <td className="py-1 text-right tabular font-semibold">{money(order.totalAmount)}</td>
-                    </tr>
-                    {order.discount > 0 && (
-                      <tr>
-                        <td className="pr-6 py-1 text-black/60">Chegirma:</td>
-                        <td className="py-1 text-right tabular">−{money(order.discount)}</td>
-                      </tr>
-                    )}
-                    <tr className="border-t border-black/25">
-                      <td className="pr-6 py-1 text-black/60">To'langan:</td>
-                      <td className="py-1 text-right tabular">{money(order.paidAmount)}</td>
-                    </tr>
-                    {order.totalAmount > order.paidAmount && (
-                      <tr>
-                        <td className="pr-6 py-1 font-semibold">Qarzdorlik:</td>
-                        <td className="py-1 text-right tabular font-bold">
-                          {money(order.totalAmount - order.paidAmount)}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              {/* TZ §6.3: the blank carries the results only. Money belongs on the receipt and the bill,
+                  not on a medical document the patient hands to another doctor. */}
 
               {/* signatures */}
               <div className="mt-12 flex items-end justify-between gap-6 text-sm print-avoid-break">
