@@ -81,12 +81,28 @@ export function ReceiptSlip({ view, printNumber, printedAt }: { view: ReceiptSli
       {view.shiftNumber !== null && <Row label="Smena" value={`№ ${view.shiftNumber}`} />}
       <Rule />
       <div className="space-y-1" data-testid="slip-lines">
-        {r.shares.map((s) => (
-          <div key={`${s.source}-${s.sourceId}`} className="flex justify-between gap-3">
-            <span className="min-w-0 break-words">{s.title}</span>
-            <span className="shrink-0 tabular">{money(s.amount, false)}</span>
-          </div>
-        ))}
+        {r.shares.map((s) => {
+          const items = view.items?.[`${s.source}:${s.sourceId}`] ?? [];
+          return (
+            <div key={`${s.source}-${s.sourceId}`}>
+              <div className="flex justify-between gap-3">
+                <span className="min-w-0 break-words">{s.title}</span>
+                <span className="shrink-0 tabular">{money(s.amount, false)}</span>
+              </div>
+              {/* A lab order's tests by name, at the price on the order (the line above is what was paid). */}
+              {items.length > 0 && (
+                <div className="mb-0.5 mt-0.5 space-y-px pl-2 text-[10px] leading-tight" data-testid="slip-items">
+                  {items.map((it, i) => (
+                    <div key={i} className="flex justify-between gap-2">
+                      <span className="min-w-0 break-words">· {it.name}</span>
+                      <span className="shrink-0 tabular">{money(it.price, false)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       <Rule />
       <div className="text-sm">

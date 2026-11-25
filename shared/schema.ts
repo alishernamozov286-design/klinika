@@ -38,7 +38,7 @@ import {
   type WriteoffReason,
 } from "./inventory";
 import { ADMIN_ROUTES, MAX_PRESCRIPTION_LINES, PRESCRIPTION_KINDS, type TreatmentEntry } from "./prescription";
-import { BILL_SOURCES, type BillLine, type BillSource, type BillTotals } from "./invoice";
+import { BILL_SOURCES, type BillItem, type BillLine, type BillSource, type BillTotals } from "./invoice";
 import type { ShiftEntry, ShiftTotals } from "./cash-shift";
 import type { RefundLine, RefundStatus } from "./refund";
 import { DISCOUNT_MODES, type DiscountLine, type DiscountMode } from "./discount";
@@ -2527,6 +2527,8 @@ export type ReceiptSlip = {
   visitDate: string;
   patient: { id: string; patientNumber: number; fullName: string };
   shiftNumber: number | null;
+  /** What each paid line is made of (a lab order's tests), by `source:sourceId`. */
+  items: Record<string, BillItem[]>;
 };
 /** The chek as the client draws it: the receipt and the clinic that issued it. */
 export type ReceiptSlipView = ReceiptSlip & { clinic: LabSettings; logo: string | null };

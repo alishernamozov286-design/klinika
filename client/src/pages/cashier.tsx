@@ -12,7 +12,7 @@ import { Link } from "wouter";
 import { AlertTriangle, Banknote, CheckCircle2, CircleDollarSign, CreditCard, Landmark, Loader2, Printer, Receipt, UserRound, Wallet, XCircle } from "lucide-react";
 import type { Bill, BillSummary, PaymentMethod } from "@shared/schema";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@shared/schema";
-import { BILL_STATUS_LABELS, lineDue, type BillFilter, type BillStatus } from "@shared/invoice";
+import { BILL_STATUS_LABELS, lineDue, type BillFilter, type BillStatus, type BillItem } from "@shared/invoice";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -289,6 +289,40 @@ function BillsDesk({ initialFilter = "all", initialPeriod = "today" }: { initial
 
 // ---------------------------------------------------------------- the bill
 
+/** How many of a line's tests show before "yana N ta" (all of them print). */
+const ITEMS_SHOWN = 5;
+
+/**
+ * A lab order's tests under its bill line: name and the price frozen when it
+ * was ordered. Long orders fold on screen; the printed bill lists every test.
+ */
+function LineItems({ items, lineKey }: { items: BillItem[]; lineKey: string }) {
+  const [all, setAll] = useState(false);
+  const folds = items.length > ITEMS_SHOWN + 1;
+  return (
+    <div className="mt-1.5" data-testid={`bill-items-${lineKey}`}>
+      <ul className="space-y-0.5 border-l-2 border-primary/20 pl-3 text-xs">
+        {items.map((it, i) => (
+          <li key={i} className={cn("flex items-baseline justify-between gap-4", folds && !all && i >= ITEMS_SHOWN && "hidden print:flex")}>
+            <span className="min-w-0 break-words">{it.name}</span>
+            <span className="shrink-0 tabular text-muted-foreground">{money(it.price)}</span>
+          </li>
+        ))}
+      </ul>
+      {folds && (
+        <button
+          type="button"
+          onClick={() => setAll((x) => !x)}
+          className="no-print ml-3 mt-1 text-xs font-medium text-primary hover:underline"
+          data-testid={`button-bill-items-${lineKey}`}
+        >
+          {all ? "Yig'ish" : `yana ${items.length - ITEMS_SHOWN} ta tahlil`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function BillDialog({ visitId, onClose }: { visitId: string | null; onClose: () => void }) {
   const { can } = useAuth();
   const { toast } = useToast();
@@ -415,6 +449,7 @@ export function BillDialog({ visitId, onClose }: { visitId: string | null; onClo
                               )}
                             </p>
                             <p className="text-xs text-muted-foreground">{l.detail}</p>
+                            {l.items && l.items.length > 0 && <LineItems items={l.items} lineKey={`${l.source}-${l.sourceId}`} />}
                           </TableCell>
                           <TableCell className="text-right">
                             <Money value={l.amount} />

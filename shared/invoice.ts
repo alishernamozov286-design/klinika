@@ -63,6 +63,9 @@ export function filterBills<T extends { totals: { due: number; status: BillStatu
   return rows;
 }
 
+/** One service inside a bill line — a lab order's tests, at the price frozen when ordered. */
+export type BillItem = { name: string; price: number };
+
 /** One line of a bill: what it is, what it costs, what has been paid on it. */
 export type BillLine = {
   source: BillSource;
@@ -78,6 +81,8 @@ export type BillLine = {
   discount: number;
   paid: number;
   cancelled: boolean;
+  /** What the line is made of, for the cashier and the receipt (a lab order's tests); absent for single services. */
+  items?: BillItem[];
 };
 
 /** What a line still owes (never negative). */
@@ -107,7 +112,7 @@ export function billTotals(lines: readonly Pick<BillLine, "amount" | "paid">[]):
 /** B7.2: what an appointment charges — its price frozen at booking less its discount. */
 export const appointmentCharge = (a: { price: number; discount?: number | null }) => Math.max(0, a.price - (a.discount ?? 0));
 
-type OrderForBill = { id: string; orderNumber: number; status: string; totalAmount: number; paidAmount: number; createdAt: string; tests: number; discount?: number | null };
+type OrderForBill = { id: string; orderNumber: number; status: string; totalAmount: number; paidAmount: number; createdAt: string; tests: number; discount?: number | null; items?: BillItem[] };
 type AppointmentForBill = {
   id: string;
   status: string;
@@ -159,6 +164,7 @@ export function buildBillLines(orders: readonly OrderForBill[], appointments: re
       discount: live ? (o.discount ?? 0) : 0,
       paid: o.paidAmount,
       cancelled: !live,
+      ...(o.items?.length ? { items: o.items } : {}),
     });
   }
   for (const s of stays) {
@@ -236,4 +242,11 @@ export function slipFigures(r: { amount: number; method: string; tendered: numbe
     paidInFull: r.dueAfter === 0,
     copy: printNumber > 1,
   };
+}
+
+/** Each line's items by `source:sourceId` — what a receipt shows under the lines it paid. */
+export function itemsBySource(lines: readonly BillLine[]): Record<string, BillItem[]> {
+  const out: Record<string, BillItem[]> = {};
+  for (const l of lines) if (l.items?.length) out[`${l.source}:${l.sourceId}`] = l.items;
+  return out;
 }

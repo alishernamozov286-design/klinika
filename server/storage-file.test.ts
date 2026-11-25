@@ -2652,6 +2652,11 @@ describe("receipt chek (B7.6)", () => {
     expect(b.receipt).toMatchObject({ amount: order.totalAmount - 10000, tendered: order.totalAmount, dueAfter: 0, note: "kupyura" });
     expect(b).toMatchObject({ invoiceNumber: 1, shiftNumber: shift.number, patient: { fullName: "Qodirov Jasur", patientNumber: patient.patientNumber } });
     expect(b.receipt.shares.map((s) => s.title)).toEqual([`Laboratoriya #${order.orderNumber}`]);
+    // The receipt lists the order's tests by name at the price frozen on the order.
+    const expectedItems = order.items.map((i) => ({ name: i.testName, price: i.price }));
+    expect(expectedItems).toHaveLength(2);
+    expect(b.items[`order:${order.id}`]).toEqual(expectedItems);
+    expect((await storage.getBill(order.visitId!))!.lines[0].items).toEqual(expectedItems);
 
     expect(await storage.markReceiptPrinted(second.receiptId)).toBe(1);
     expect(await storage.markReceiptPrinted(second.receiptId)).toBe(2);

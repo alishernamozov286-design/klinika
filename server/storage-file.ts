@@ -125,6 +125,7 @@ import {
   billTotals,
   buildBillLines,
   filterBills,
+  itemsBySource,
   type BillLine,
 } from "@shared/invoice";
 import {
@@ -3981,7 +3982,10 @@ export class FileStorage implements IStorage {
   private billLinesOf(visitId: string): BillLine[] {
     const orders = this.db.orders
       .filter((o) => o.visitId === visitId)
-      .map((o) => ({ ...o, tests: this.db.orderTests.filter((t) => t.orderId === o.id).length }));
+      .map((o) => {
+        const tests = this.db.orderTests.filter((t) => t.orderId === o.id);
+        return { ...o, tests: tests.length, items: tests.map((t) => ({ name: t.testName, price: t.price })) };
+      });
     const appts = this.db.appointments
       .filter((a) => a.visitId === visitId)
       .map((a) => {
@@ -5176,7 +5180,7 @@ export class FileStorage implements IStorage {
     if (!bill || !receipt) return undefined;
     const shiftId = this.db.payments.find((p) => p.invoicePaymentId === receiptId)?.shiftId;
     const { phone: _phone, ...patient } = bill.patient;
-    return { receipt, invoiceNumber: inv.number, visitDate: bill.visitDate, patient, shiftNumber: this.db.cashShifts.find((s) => s.id === shiftId)?.number ?? null };
+    return { receipt, invoiceNumber: inv.number, visitDate: bill.visitDate, patient, shiftNumber: this.db.cashShifts.find((s) => s.id === shiftId)?.number ?? null, items: itemsBySource(bill.lines) };
   }
 
   async markReceiptPrinted(receiptId: string): Promise<number | undefined> {

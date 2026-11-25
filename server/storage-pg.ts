@@ -184,6 +184,7 @@ import {
   billTotals,
   buildBillLines,
   filterBills,
+  itemsBySource,
   type BillLine,
 } from "@shared/invoice";
 import type { DailyFlow, DepartmentLine, MovementTotal } from "@shared/inventory-reports";
@@ -4970,6 +4971,9 @@ export class PgStorage implements IStorage {
         discount: orders.discount,
         createdAt: orders.createdAt,
         tests: sql<number>`(SELECT count(*)::int FROM order_tests ot WHERE ot.order_id = "orders"."id")`,
+        // The tests by name at the price frozen on the order, for the cashier and the receipt.
+        items: sql<{ name: string; price: number }[]>`(SELECT coalesce(jsonb_agg(jsonb_build_object('name', ot.test_name, 'price', ot.price) ORDER BY ot.id), '[]'::jsonb)
+                                                     FROM order_tests ot WHERE ot.order_id = "orders"."id")`,
       })
       .from(orders)
       .where(eq(orders.visitId, visitId))
@@ -4996,7 +5000,7 @@ export class PgStorage implements IStorage {
       .where(eq(appointments.visitId, visitId));
     const stayRows = await this.stayBills(exec, eq(admissions.visitId, visitId), lock);
     return buildBillLines(
-      orderRows.map((o) => ({ ...o, createdAt: iso(o.createdAt) ?? o.createdAt, tests: Number(o.tests) })),
+      orderRows.map((o) => ({ ...o, createdAt: iso(o.createdAt) ?? o.createdAt, tests: Number(o.tests), items: (o.items ?? []).map((t) => ({ name: String(t.name), price: Number(t.price) })) })),
       apptRows.map((a) => ({
         ...a,
         createdAt: iso(a.createdAt) ?? a.createdAt,
@@ -6386,7 +6390,7 @@ export class PgStorage implements IStorage {
     const receipt = bill?.receipts.find((r) => r.id === receiptId);
     if (!bill || !receipt || !bill.invoice) return undefined;
     const { phone: _phone, ...patient } = bill.patient;
-    return { receipt, invoiceNumber: bill.invoice.number, visitDate: bill.visitDate, patient, shiftNumber: row.shiftNumber === null ? null : Number(row.shiftNumber) };
+    return { receipt, invoiceNumber: bill.invoice.number, visitDate: bill.visitDate, patient, shiftNumber: row.shiftNumber === null ? null : Number(row.shiftNumber), items: itemsBySource(bill.lines) };
   }
 
   async markReceiptPrinted(receiptId: string): Promise<number | undefined> {

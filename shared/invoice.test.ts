@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocatePayment, billTotals, buildBillLines, describeShares, filterBills, lineCredit, lineDue, slipFigures, type BillLine } from "./invoice";
+import { allocatePayment, billTotals, buildBillLines, describeShares, filterBills, itemsBySource, lineCredit, lineDue, slipFigures, type BillLine } from "./invoice";
 import { payBillSchema } from "./schema";
 
 const line = (over: Partial<BillLine>): BillLine => ({
@@ -36,6 +36,20 @@ describe("patient bill (B7.1, TZ §9.1–9.2)", () => {
     expect(lines[1].detail).toBe("2 ta tahlil");
     const t = billTotals(lines);
     expect(t).toEqual({ amount: 125000, paid: 20000, due: 125000, credit: 20000, status: "partial" });
+  });
+
+  it("a lab line carries its tests by name and frozen price; other lines carry none", () => {
+    const tests = [
+      { name: "Glyukoza", price: 25000 },
+      { name: "ALT", price: 30000 },
+    ];
+    const lines = buildBillLines(
+      [{ id: "o1", orderNumber: 1042, status: "pending", totalAmount: 55000, paidAmount: 0, createdAt: "2026-11-20T10:00:00.000Z", tests: 2, items: tests }],
+      [{ id: "a1", status: "completed", price: 80000, paid: 0, startTime: "09:00", createdAt: "2026-11-20T08:00:00.000Z", serviceName: null, doctorName: "Rahimova D.", specialty: "Terapevt" }],
+    );
+    expect(lines.find((l) => l.source === "order")?.items).toEqual(tests);
+    expect(lines.find((l) => l.source === "appointment")?.items).toBeUndefined();
+    expect(itemsBySource(lines)).toEqual({ "order:o1": tests });
   });
 
   it("states", () => {
