@@ -1289,7 +1289,8 @@ function buildBillLines(orders2, appointments2, stays = []) {
       amount: live ? o.totalAmount : 0,
       discount: live ? o.discount ?? 0 : 0,
       paid: o.paidAmount,
-      cancelled: !live
+      cancelled: !live,
+      ...o.items?.length ? { items: o.items } : {}
     });
   }
   for (const s of stays) {
@@ -1327,6 +1328,11 @@ function describeShares(shares, lines) {
     const l = lines.find((x) => x.source === s.source && x.sourceId === s.sourceId);
     return `${l?.title ?? s.source} ${String(s.amount).replace(/\B(?=(\d{3})+(?!\d))/g, " ")}`;
   }).join(" + ");
+}
+function itemsBySource(lines) {
+  const out = {};
+  for (const l of lines) if (l.items?.length) out[`${l.source}:${l.sourceId}`] = l.items;
+  return out;
 }
 var BILL_SOURCES, BILLABLE_APPOINTMENT_STATUSES, BILL_PAID, RECEIPT_ALREADY_VOIDED, PAYMENT_IS_RECEIPT_SHARE, BILL_FILTERS, lineDue, lineCredit, appointmentCharge;
 var init_invoice = __esm({
@@ -8768,7 +8774,10 @@ var init_storage_pg = __esm({
           paidAmount: orders.paidAmount,
           discount: orders.discount,
           createdAt: orders.createdAt,
-          tests: sql2`(SELECT count(*)::int FROM order_tests ot WHERE ot.order_id = "orders"."id")`
+          tests: sql2`(SELECT count(*)::int FROM order_tests ot WHERE ot.order_id = "orders"."id")`,
+          // The tests by name at the price frozen on the order, for the cashier and the receipt.
+          items: sql2`(SELECT coalesce(jsonb_agg(jsonb_build_object('name', ot.test_name, 'price', ot.price) ORDER BY ot.id), '[]'::jsonb)
+                                                     FROM order_tests ot WHERE ot.order_id = "orders"."id")`
         }).from(orders).where(eq(orders.visitId, visitId)).orderBy(asc(orders.id));
         const orderRows = lock ? await orderQuery.for("update", { of: orders }) : await orderQuery;
         const apptRows = await exec.select({
@@ -8786,7 +8795,7 @@ var init_storage_pg = __esm({
         }).from(appointments).leftJoin(services, eq(services.id, appointments.serviceId)).leftJoin(doctors, eq(doctors.id, appointments.doctorId)).leftJoin(users, eq(users.id, doctors.userId)).where(eq(appointments.visitId, visitId));
         const stayRows = await this.stayBills(exec, eq(admissions.visitId, visitId), lock);
         return buildBillLines(
-          orderRows.map((o) => ({ ...o, createdAt: iso(o.createdAt) ?? o.createdAt, tests: Number(o.tests) })),
+          orderRows.map((o) => ({ ...o, createdAt: iso(o.createdAt) ?? o.createdAt, tests: Number(o.tests), items: (o.items ?? []).map((t2) => ({ name: String(t2.name), price: Number(t2.price) })) })),
           apptRows.map((a) => ({
             ...a,
             createdAt: iso(a.createdAt) ?? a.createdAt,
@@ -9866,7 +9875,7 @@ var init_storage_pg = __esm({
         const receipt = bill?.receipts.find((r) => r.id === receiptId);
         if (!bill || !receipt || !bill.invoice) return void 0;
         const { phone: _phone, ...patient } = bill.patient;
-        return { receipt, invoiceNumber: bill.invoice.number, visitDate: bill.visitDate, patient, shiftNumber: row.shiftNumber === null ? null : Number(row.shiftNumber) };
+        return { receipt, invoiceNumber: bill.invoice.number, visitDate: bill.visitDate, patient, shiftNumber: row.shiftNumber === null ? null : Number(row.shiftNumber), items: itemsBySource(bill.lines) };
       }
       async markReceiptPrinted(receiptId) {
         const [row] = await db.update(invoicePayments).set({ printCount: sql2`print_count + 1` }).where(eq(invoicePayments.id, receiptId)).returning({ printCount: invoicePayments.printCount });
@@ -13707,7 +13716,10 @@ var init_storage_file = __esm({
       }
       // ------------------------------------------------------------ bills (B7.1)
       billLinesOf(visitId) {
-        const orders2 = this.db.orders.filter((o) => o.visitId === visitId).map((o) => ({ ...o, tests: this.db.orderTests.filter((t2) => t2.orderId === o.id).length }));
+        const orders2 = this.db.orders.filter((o) => o.visitId === visitId).map((o) => {
+          const tests2 = this.db.orderTests.filter((t2) => t2.orderId === o.id);
+          return { ...o, tests: tests2.length, items: tests2.map((t2) => ({ name: t2.testName, price: t2.price })) };
+        });
         const appts = this.db.appointments.filter((a) => a.visitId === visitId).map((a) => {
           const doctor = this.db.doctors.find((d) => d.id === a.doctorId);
           const user = doctor ? this.db.users.find((u) => u.id === doctor.userId) : void 0;
@@ -14763,7 +14775,7 @@ var init_storage_file = __esm({
         if (!bill || !receipt) return void 0;
         const shiftId = this.db.payments.find((p) => p.invoicePaymentId === receiptId)?.shiftId;
         const { phone: _phone, ...patient } = bill.patient;
-        return { receipt, invoiceNumber: inv.number, visitDate: bill.visitDate, patient, shiftNumber: this.db.cashShifts.find((s) => s.id === shiftId)?.number ?? null };
+        return { receipt, invoiceNumber: inv.number, visitDate: bill.visitDate, patient, shiftNumber: this.db.cashShifts.find((s) => s.id === shiftId)?.number ?? null, items: itemsBySource(bill.lines) };
       }
       async markReceiptPrinted(receiptId) {
         const rec = this.db.invoicePayments.find((r) => r.id === receiptId);
