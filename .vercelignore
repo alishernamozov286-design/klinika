@@ -1,0 +1,11 @@
+# Never upload secrets or local data to Vercel (the CLI does not read .gitignore).
+.env
+.env.*
+!.env.example
+.data
+.local
+.claude
+.replit
+backups
+*.mlbk
+attached_assets
